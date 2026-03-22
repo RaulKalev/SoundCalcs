@@ -106,6 +106,13 @@ namespace SoundCalcs.Domain
         public double RenderedMaxVal { get; set; }
 
         /// <summary>
+        /// The visualization mode string (e.g. "SPL", "STI", "SPL_125") that
+        /// last wrote RenderedMinVal/MaxVal. Prevents stale SPL ranges from
+        /// being used when the legend switches to STI and vice-versa.
+        /// </summary>
+        public string RenderedMode { get; set; } = "";
+
+        /// <summary>
         /// True if the job was canceled before completion.
         /// </summary>
         public bool WasCanceled { get; set; }

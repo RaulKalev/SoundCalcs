@@ -51,4 +51,21 @@ namespace SoundCalcs.UI.Converters
             return null;
         }
     }
+
+    public class SizeToRectConverter : IMultiValueConverter
+    {
+        public static readonly SizeToRectConverter Instance = new SizeToRectConverter();
+
+        public object Convert(object[] values, Type targetType, object parameter, CultureInfo culture)
+        {
+            if (values.Length == 2 && values[0] is double w && values[1] is double h)
+                return new Rect(0, 0, w, h);
+            return new Rect(0, 0, 0, 0);
+        }
+
+        public object[] ConvertBack(object value, Type[] targetTypes, object parameter, CultureInfo culture)
+        {
+            throw new NotSupportedException();
+        }
+    }
 }

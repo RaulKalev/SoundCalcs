@@ -24,6 +24,12 @@ namespace SoundCalcs.Compute
                         mapping.ConeHalfAngleDeg,
                         mapping.OffAxisAttenuationDb);
 
+                case ProfileSourceType.WallMounted:
+                    return new SimpleConeProvider(
+                        mapping.OnAxisSplDb,
+                        mapping.ConeHalfAngleDeg,
+                        mapping.OffAxisAttenuationDb);
+
                 case ProfileSourceType.GllFile:
                     return new GllStubProvider(mapping.OnAxisSplDb, mapping.GllFilePath);
 

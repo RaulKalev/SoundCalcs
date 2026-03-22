@@ -176,29 +176,12 @@ namespace SoundCalcs.Visualization
             double originX = results.Min(r => r.Position.X);
             double originY = results.Min(r => r.Position.Y);
 
-            // Build clip polygons from room boundaries (if available)
-            var clipPolygons = new List<List<(double x, double y)>>();
-            if (output.Rooms != null)
-            {
-                foreach (var room in output.Rooms)
-                {
-                    if (room.Vertices != null && room.Vertices.Count >= 3)
-                    {
-                        var poly = room.Vertices.Select(v => (v.X, v.Y)).ToList();
-                        clipPolygons.Add(poly);
-                    }
-                }
-            }
-
-            // Group results by band for merged-polygon rendering
-            var bandResults = new Dictionary<int, List<ReceiverResult>>();
-            for (int i = 0; i < results.Count; i++)
-            {
-                int b = bandIndex[i];
-                if (!bandResults.ContainsKey(b))
-                    bandResults[b] = new List<ReceiverResult>();
-                bandResults[b].Add(results[i]);
-            }
+            // Build row-strip rectangles then merge vertically to minimise
+            // element count while keeping every region a simple rectangle
+            // (100% reliable in Revit, unlike complex boundary extraction).
+            var strips = BuildRowStrips(results, bandIndex, originX, originY,
+                gridSpacingM, halfM, numBands);
+            MergeStripsVertically(strips, numBands);
 
             using (Transaction tx = new Transaction(doc, "SoundCalcs: Render Heatmap"))
             {
@@ -215,6 +198,7 @@ namespace SoundCalcs.Visualization
                     else
                         regionTypeIds = EnsureFilledRegionTypes(doc, minVal, maxVal);
 
+                    double mToFt = UnitConversion.MetersToFeet;
                     int created = 0;
                     ElementId invisibleStyle = GetInvisibleLinesStyleId(doc);
 
@@ -223,19 +207,24 @@ namespace SoundCalcs.Visualization
                         ElementId typeId = regionTypeIds[band];
                         if (typeId == ElementId.InvalidElementId) continue;
 
-                        if (!bandResults.ContainsKey(band) || bandResults[band].Count == 0)
-                            continue;
-
-                        var loopGroups = BuildMergedLoops(
-                            bandResults[band], originX, originY,
-                            gridSpacingM, halfM, clipPolygons);
-
-                        foreach (var loopGroup in loopGroups)
+                        if (!strips.ContainsKey(band)) continue;
+                        foreach (var (x0, y0, x1, y1, z) in strips[band])
                         {
                             try
                             {
-                                var region = FilledRegion.Create(
-                                    doc, typeId, view.Id, loopGroup);
+                                var p0 = new XYZ(x0 * mToFt, y0 * mToFt, z * mToFt);
+                                var p1 = new XYZ(x1 * mToFt, y0 * mToFt, z * mToFt);
+                                var p2 = new XYZ(x1 * mToFt, y1 * mToFt, z * mToFt);
+                                var p3 = new XYZ(x0 * mToFt, y1 * mToFt, z * mToFt);
+
+                                var loop = new CurveLoop();
+                                loop.Append(Line.CreateBound(p0, p1));
+                                loop.Append(Line.CreateBound(p1, p2));
+                                loop.Append(Line.CreateBound(p2, p3));
+                                loop.Append(Line.CreateBound(p3, p0));
+
+                                var region = FilledRegion.Create(doc, typeId, view.Id,
+                                    new List<CurveLoop> { loop });
 
                                 if (invisibleStyle != ElementId.InvalidElementId)
                                     region.SetLineStyleId(invisibleStyle);
@@ -245,7 +234,7 @@ namespace SoundCalcs.Visualization
                             catch (Exception ex)
                             {
                                 Debug.WriteLine(
-                                    $"[SoundCalcs] Merged region create failed band {band}: {ex.Message}");
+                                    $"[SoundCalcs] Strip create failed band {band}: {ex.Message}");
                             }
                         }
                     }
@@ -255,6 +244,7 @@ namespace SoundCalcs.Visualization
                     // Write back the exact range used so the UI legend matches.
                     output.RenderedMinVal = minVal;
                     output.RenderedMaxVal = maxVal;
+                    output.RenderedMode = mode.ToString();
 
                     string modeLabel;
                     if (mode == VisualizationMode.STI)
@@ -738,6 +728,60 @@ namespace SoundCalcs.Visualization
             }
 
             return strips;
+        }
+
+        /// <summary>
+        /// Second pass over row-strips: merge vertically adjacent strips that share
+        /// the same x0 and x1 into taller rectangles. Reduces element count
+        /// roughly 5–10× compared to row-strips alone while keeping all regions
+        /// as simple rectangles (no complex boundary extraction).
+        /// </summary>
+        private static void MergeStripsVertically(
+            Dictionary<int, List<(double x0, double y0, double x1, double y1, double z)>> strips,
+            int numBands)
+        {
+            const double eps = 1e-6;
+
+            for (int b = 0; b < numBands; b++)
+            {
+                if (!strips.ContainsKey(b) || strips[b].Count <= 1) continue;
+
+                // Sort by x0, x1, then y0 so vertically stackable strips are adjacent
+                strips[b].Sort((a, c) =>
+                {
+                    int cmpX0 = a.x0.CompareTo(c.x0);
+                    if (cmpX0 != 0) return cmpX0;
+                    int cmpX1 = a.x1.CompareTo(c.x1);
+                    if (cmpX1 != 0) return cmpX1;
+                    return a.y0.CompareTo(c.y0);
+                });
+
+                var merged = new List<(double x0, double y0, double x1, double y1, double z)>();
+                var list = strips[b];
+
+                var cur = list[0];
+                for (int i = 1; i < list.Count; i++)
+                {
+                    var next = list[i];
+
+                    // Same column span and vertically touching?
+                    if (Math.Abs(cur.x0 - next.x0) < eps &&
+                        Math.Abs(cur.x1 - next.x1) < eps &&
+                        Math.Abs(cur.y1 - next.y0) < eps)
+                    {
+                        // Extend current strip downward (merge)
+                        cur = (cur.x0, cur.y0, cur.x1, next.y1, cur.z);
+                    }
+                    else
+                    {
+                        merged.Add(cur);
+                        cur = next;
+                    }
+                }
+                merged.Add(cur);
+
+                strips[b] = merged;
+            }
         }
 
         /// <summary>

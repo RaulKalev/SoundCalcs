@@ -629,9 +629,13 @@ namespace SoundCalcs.UI.ViewModels
                 List<(int Band, string ColorHex, string Label)> bands;
                 int bandIndex = GetOctaveBandIndex(_selectedVisualizationMode);
 
-                // Use the exact range the renderer used (written back after render).
-                // If not yet rendered, fall back to job output stats.
-                bool hasRenderedRange = _lastOutput.RenderedMaxVal > _lastOutput.RenderedMinVal;
+                // Use the exact range the renderer used (written back after render),
+                // but only when the rendered mode matches the current selection.
+                // This prevents stale SPL ranges from appearing in the STI legend.
+                bool hasRenderedRange = _lastOutput.RenderedMaxVal > _lastOutput.RenderedMinVal
+                    && string.Equals(_lastOutput.RenderedMode,
+                        _selectedVisualizationMode.ToString(),
+                        StringComparison.Ordinal);
 
                 if (_selectedVisualizationMode == VisualizationMode.STI)
                 {
@@ -791,10 +795,25 @@ namespace SoundCalcs.UI.ViewModels
                     SpeakerProfileMapping mapping = gvm.GetMapping();
                     foreach (SpeakerInstance inst in gvm.GetGroup().Instances)
                     {
+                        Vec3 facing = inst.FacingDirection;
+
+                        // Wall-mounted speakers: compute horizontal facing from user-set angle + tilt
+                        if (mapping.ProfileSource == ProfileSourceType.WallMounted)
+                        {
+                            double rad = mapping.OutputDirectionDeg * System.Math.PI / 180.0;
+                            double tiltRad = mapping.WallMountTiltDeg * System.Math.PI / 180.0;
+                            double cosT = System.Math.Cos(tiltRad);
+                            double sinT = System.Math.Sin(tiltRad);
+                            facing = new Vec3(
+                                System.Math.Cos(rad) * cosT,
+                                System.Math.Sin(rad) * cosT,
+                                -sinT);
+                        }
+
                         sources.Add(new ComputeSource
                         {
                             Position = inst.Position,
-                            FacingDirection = inst.FacingDirection,
+                            FacingDirection = facing,
                             Profile = mapping
                         });
                         FileLogger.Log($"Source: Id={inst.ElementId}, Pos={inst.Position}, " +

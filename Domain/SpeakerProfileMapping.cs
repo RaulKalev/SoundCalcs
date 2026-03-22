@@ -7,6 +7,7 @@ namespace SoundCalcs.Domain
     {
         SimpleOmni,
         SimpleConical,
+        WallMounted,
         GllFile
     }
 
@@ -47,5 +48,18 @@ namespace SoundCalcs.Domain
         /// Negative value (e.g., -12 dB). Only used when ProfileSource == SimpleConical.
         /// </summary>
         public double OffAxisAttenuationDb { get; set; } = -12.0;
+
+        // --- Wall Mounted ---
+        /// <summary>
+        /// Horizontal output direction in degrees (0 = East/+X, 90 = North/+Y, etc.).
+        /// Only used when ProfileSource == WallMounted.
+        /// </summary>
+        public double OutputDirectionDeg { get; set; } = 0.0;
+
+        /// <summary>
+        /// Downward tilt from horizontal in degrees (0 = straight out, 15 = tilted down).
+        /// Only used when ProfileSource == WallMounted.
+        /// </summary>
+        public double WallMountTiltDeg { get; set; } = 0.0;
     }
 }
