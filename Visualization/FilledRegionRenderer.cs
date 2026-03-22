@@ -176,11 +176,29 @@ namespace SoundCalcs.Visualization
             double originX = results.Min(r => r.Position.X);
             double originY = results.Min(r => r.Position.Y);
 
-            // Build row-strip rectangles: scan each grid row left→right merging
-            // consecutive same-band cells into single rectangles. This is simple,
-            // robust, and produces zero gaps between colour bands.
-            var strips = BuildRowStrips(results, bandIndex, originX, originY,
-                gridSpacingM, halfM, numBands);
+            // Build clip polygons from room boundaries (if available)
+            var clipPolygons = new List<List<(double x, double y)>>();
+            if (output.Rooms != null)
+            {
+                foreach (var room in output.Rooms)
+                {
+                    if (room.Vertices != null && room.Vertices.Count >= 3)
+                    {
+                        var poly = room.Vertices.Select(v => (v.X, v.Y)).ToList();
+                        clipPolygons.Add(poly);
+                    }
+                }
+            }
+
+            // Group results by band for merged-polygon rendering
+            var bandResults = new Dictionary<int, List<ReceiverResult>>();
+            for (int i = 0; i < results.Count; i++)
+            {
+                int b = bandIndex[i];
+                if (!bandResults.ContainsKey(b))
+                    bandResults[b] = new List<ReceiverResult>();
+                bandResults[b].Add(results[i]);
+            }
 
             using (Transaction tx = new Transaction(doc, "SoundCalcs: Render Heatmap"))
             {
@@ -197,7 +215,6 @@ namespace SoundCalcs.Visualization
                     else
                         regionTypeIds = EnsureFilledRegionTypes(doc, minVal, maxVal);
 
-                    double mToFt = UnitConversion.MetersToFeet;
                     int created = 0;
                     ElementId invisibleStyle = GetInvisibleLinesStyleId(doc);
 
@@ -206,37 +223,29 @@ namespace SoundCalcs.Visualization
                         ElementId typeId = regionTypeIds[band];
                         if (typeId == ElementId.InvalidElementId) continue;
 
-                        if (!strips.ContainsKey(band)) continue;
-                        foreach (var (x0, y0, x1, y1, z) in strips[band])
+                        if (!bandResults.ContainsKey(band) || bandResults[band].Count == 0)
+                            continue;
+
+                        var loopGroups = BuildMergedLoops(
+                            bandResults[band], originX, originY,
+                            gridSpacingM, halfM, clipPolygons);
+
+                        foreach (var loopGroup in loopGroups)
                         {
                             try
                             {
-                                var p0 = new XYZ(x0 * mToFt, y0 * mToFt, z * mToFt);
-                                var p1 = new XYZ(x1 * mToFt, y0 * mToFt, z * mToFt);
-                                var p2 = new XYZ(x1 * mToFt, y1 * mToFt, z * mToFt);
-                                var p3 = new XYZ(x0 * mToFt, y1 * mToFt, z * mToFt);
+                                var region = FilledRegion.Create(
+                                    doc, typeId, view.Id, loopGroup);
 
-                                var loop = new CurveLoop();
-                                loop.Append(Line.CreateBound(p0, p1));
-                                loop.Append(Line.CreateBound(p1, p2));
-                                loop.Append(Line.CreateBound(p2, p3));
-                                loop.Append(Line.CreateBound(p3, p0));
-
-                                var region = FilledRegion.Create(doc, typeId, view.Id,
-                                    new List<CurveLoop> { loop });
-
-                                // Set boundary lines to invisible
                                 if (invisibleStyle != ElementId.InvalidElementId)
-                                {
                                     region.SetLineStyleId(invisibleStyle);
-                                }
 
                                 created++;
                             }
                             catch (Exception ex)
                             {
                                 Debug.WriteLine(
-                                    $"[SoundCalcs] Strip create failed band {band}: {ex.Message}");
+                                    $"[SoundCalcs] Merged region create failed band {band}: {ex.Message}");
                             }
                         }
                     }
