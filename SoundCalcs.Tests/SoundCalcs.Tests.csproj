@@ -1,0 +1,45 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>SoundCalcs.Tests</RootNamespace>
+    <!-- Suppress platform warnings; compute code is pure math with no real Windows dependency -->
+    <NoWarn>CA1416</NoWarn>
+  </PropertyGroup>
+
+  <!-- xUnit test packages -->
+  <ItemGroup>
+    <PackageReference Include="xunit" Version="2.9.0" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+  </ItemGroup>
+
+  <!--
+    Directly compile the pure-C# compute/domain source files from the main project.
+    This avoids referencing the main .csproj which pulls in WPF, Windows Forms, and
+    Revit API assemblies that are unavailable in a portable test environment.
+  -->
+  <ItemGroup>
+    <!-- All domain model files (no Revit/WPF imports) -->
+    <Compile Include="../Domain/*.cs" />
+
+    <!-- File logger used by SPLCalculator diagnostics -->
+    <Compile Include="../IO/FileLogger.cs" />
+
+    <!-- Acoustic compute engine (pure math, no Revit references) -->
+    <Compile Include="../Compute/ISpeakerDirectivityProvider.cs" />
+    <Compile Include="../Compute/SimpleOmniProvider.cs" />
+    <Compile Include="../Compute/SimpleConeProvider.cs" />
+    <Compile Include="../Compute/GllStubProvider.cs" />
+    <Compile Include="../Compute/DirectivityProviderFactory.cs" />
+    <Compile Include="../Compute/SPLCalculator.cs" />
+    <Compile Include="../Compute/STICalculator.cs" />
+  </ItemGroup>
+
+</Project>
