@@ -18,7 +18,14 @@ namespace SoundCalcs.UI.ViewModels
     public enum VisualizationMode
     {
         SPL,
-        STI
+        STI,
+        SPL_125,
+        SPL_250,
+        SPL_500,
+        SPL_1k,
+        SPL_2k,
+        SPL_4k,
+        SPL_8k
     }
     public class MainViewModel : INotifyPropertyChanged
     {
@@ -45,7 +52,7 @@ namespace SoundCalcs.UI.ViewModels
             _speakerCategoryName = settings.AnalysisSettings.SpeakerCategoryName;
             UseMinSplThreshold = settings.AnalysisSettings.UseMinSplThreshold;
             MinSplThreshold = settings.AnalysisSettings.MinSplThresholdDb;
-            BackgroundNoiseDb = settings.AnalysisSettings.BackgroundNoiseDb;
+            LoadOctaveBandSettings(settings.AnalysisSettings);
             _savedMappings = settings.SpeakerMappings;
         }
 
@@ -234,6 +241,46 @@ namespace SoundCalcs.UI.ViewModels
 
             StatusMessage = $"{WallLineGroups.Count} line style(s), {allSegments.Count} segments, " +
                 $"area={boundary.Area:F1} m²";
+        }
+
+        /// <summary>
+        /// Auto-collect Wall elements from the host document and the selected linked model,
+        /// group them by wall type, estimate STC from thickness and type name, and populate
+        /// WallLineGroups. The user can then review and override the STC assignments.
+        /// </summary>
+        public void AutoDetectWalls()
+        {
+            Document doc = _uiApp.ActiveUIDocument?.Document;
+            if (doc == null) { StatusMessage = "No active document."; return; }
+
+            var collector = new RevitDataCollector(doc);
+            var allGroups = new List<WallLineGroup>();
+
+            // Host document walls
+            var hostGroups = collector.GetHostWallGroups();
+            allGroups.AddRange(hostGroups);
+
+            // Linked model walls (if a link is selected)
+            if (SelectedLink != null && SelectedLink.IsValid)
+            {
+                var linkGroups = collector.GetLinkWallGroups(SelectedLink.LinkInstanceId);
+                allGroups.AddRange(linkGroups);
+            }
+
+            if (allGroups.Count == 0)
+            {
+                StatusMessage = "No wall elements found in the model.";
+                return;
+            }
+
+            WallLineGroups.Clear();
+            foreach (var grp in allGroups)
+                WallLineGroups.Add(new WallLineGroupViewModel(grp));
+
+            int totalSegs = allGroups.Sum(g => g.SegmentCount);
+            FileLogger.Log($"AutoDetectWalls: {WallLineGroups.Count} types, {totalSegs} segments");
+            StatusMessage = $"Detected {WallLineGroups.Count} wall type(s), {totalSegs} segment(s). " +
+                "Review STC ratings in the table and re-run the analysis.";
         }
 
         /// <summary>
@@ -451,6 +498,57 @@ namespace SoundCalcs.UI.ViewModels
             set { _backgroundNoiseDb = value; OnPropertyChanged(nameof(BackgroundNoiseDb)); }
         }
 
+        // --- Per-octave-band RT60 properties ---
+        private double _rt60_125 = OctaveBands.DefaultRT60[0];
+        public double RT60_125 { get => _rt60_125; set { _rt60_125 = value; OnPropertyChanged(nameof(RT60_125)); } }
+        private double _rt60_250 = OctaveBands.DefaultRT60[1];
+        public double RT60_250 { get => _rt60_250; set { _rt60_250 = value; OnPropertyChanged(nameof(RT60_250)); } }
+        private double _rt60_500 = OctaveBands.DefaultRT60[2];
+        public double RT60_500 { get => _rt60_500; set { _rt60_500 = value; OnPropertyChanged(nameof(RT60_500)); } }
+        private double _rt60_1k = OctaveBands.DefaultRT60[3];
+        public double RT60_1k { get => _rt60_1k; set { _rt60_1k = value; OnPropertyChanged(nameof(RT60_1k)); } }
+        private double _rt60_2k = OctaveBands.DefaultRT60[4];
+        public double RT60_2k { get => _rt60_2k; set { _rt60_2k = value; OnPropertyChanged(nameof(RT60_2k)); } }
+        private double _rt60_4k = OctaveBands.DefaultRT60[5];
+        public double RT60_4k { get => _rt60_4k; set { _rt60_4k = value; OnPropertyChanged(nameof(RT60_4k)); } }
+        private double _rt60_8k = OctaveBands.DefaultRT60[6];
+        public double RT60_8k { get => _rt60_8k; set { _rt60_8k = value; OnPropertyChanged(nameof(RT60_8k)); } }
+
+        // --- Per-octave-band background noise properties ---
+        private double _noise_125 = OctaveBands.DefaultBackgroundNoise[0];
+        public double Noise_125 { get => _noise_125; set { _noise_125 = value; OnPropertyChanged(nameof(Noise_125)); } }
+        private double _noise_250 = OctaveBands.DefaultBackgroundNoise[1];
+        public double Noise_250 { get => _noise_250; set { _noise_250 = value; OnPropertyChanged(nameof(Noise_250)); } }
+        private double _noise_500 = OctaveBands.DefaultBackgroundNoise[2];
+        public double Noise_500 { get => _noise_500; set { _noise_500 = value; OnPropertyChanged(nameof(Noise_500)); } }
+        private double _noise_1k = OctaveBands.DefaultBackgroundNoise[3];
+        public double Noise_1k { get => _noise_1k; set { _noise_1k = value; OnPropertyChanged(nameof(Noise_1k)); } }
+        private double _noise_2k = OctaveBands.DefaultBackgroundNoise[4];
+        public double Noise_2k { get => _noise_2k; set { _noise_2k = value; OnPropertyChanged(nameof(Noise_2k)); } }
+        private double _noise_4k = OctaveBands.DefaultBackgroundNoise[5];
+        public double Noise_4k { get => _noise_4k; set { _noise_4k = value; OnPropertyChanged(nameof(Noise_4k)); } }
+        private double _noise_8k = OctaveBands.DefaultBackgroundNoise[6];
+        public double Noise_8k { get => _noise_8k; set { _noise_8k = value; OnPropertyChanged(nameof(Noise_8k)); } }
+
+        private double[] GetRT60Array() => new[] { _rt60_125, _rt60_250, _rt60_500, _rt60_1k, _rt60_2k, _rt60_4k, _rt60_8k };
+        private double[] GetNoiseArray() => new[] { _noise_125, _noise_250, _noise_500, _noise_1k, _noise_2k, _noise_4k, _noise_8k };
+
+        private void LoadOctaveBandSettings(AnalysisSettings s)
+        {
+            double[] rt = s.RT60ByBand ?? OctaveBands.DefaultRT60;
+            if (rt.Length >= OctaveBands.Count)
+            {
+                RT60_125 = rt[0]; RT60_250 = rt[1]; RT60_500 = rt[2]; RT60_1k = rt[3];
+                RT60_2k = rt[4]; RT60_4k = rt[5]; RT60_8k = rt[6];
+            }
+            double[] n = s.BackgroundNoiseByBand ?? OctaveBands.DefaultBackgroundNoise;
+            if (n.Length >= OctaveBands.Count)
+            {
+                Noise_125 = n[0]; Noise_250 = n[1]; Noise_500 = n[2]; Noise_1k = n[3];
+                Noise_2k = n[4]; Noise_4k = n[5]; Noise_8k = n[6];
+            }
+        }
+
         // ========================= RUN TAB =========================
 
         private bool _isRunning;
@@ -529,17 +627,58 @@ namespace SoundCalcs.UI.ViewModels
                     return items;
 
                 List<(int Band, string ColorHex, string Label)> bands;
+                int bandIndex = GetOctaveBandIndex(_selectedVisualizationMode);
+
+                // Use the exact range the renderer used (written back after render).
+                // If not yet rendered, fall back to job output stats.
+                bool hasRenderedRange = _lastOutput.RenderedMaxVal > _lastOutput.RenderedMinVal;
+
                 if (_selectedVisualizationMode == VisualizationMode.STI)
-                    bands = FilledRegionRenderer.GetStiLegendBands(_lastOutput.MinSti, _lastOutput.MaxSti);
+                {
+                    double lo = hasRenderedRange ? _lastOutput.RenderedMinVal : _lastOutput.MinSti;
+                    double hi = hasRenderedRange ? _lastOutput.RenderedMaxVal : _lastOutput.MaxSti;
+                    bands = FilledRegionRenderer.GetStiLegendBands(lo, hi);
+                }
+                else if (bandIndex >= 0
+                    && _lastOutput.MinSplDbByBand != null
+                    && _lastOutput.MaxSplDbByBand != null)
+                {
+                    string freq = OctaveBands.Labels[bandIndex];
+                    double lo = hasRenderedRange ? _lastOutput.RenderedMinVal : _lastOutput.MinSplDbByBand[bandIndex];
+                    double hi = hasRenderedRange ? _lastOutput.RenderedMaxVal : _lastOutput.MaxSplDbByBand[bandIndex];
+                    bands = FilledRegionRenderer.GetLegendBands(lo, hi, $" dB @ {freq} Hz");
+                }
                 else
-                    bands = FilledRegionRenderer.GetLegendBands(
-                        UseMinSplThreshold ? MinSplThreshold : _lastOutput.MinSplDb,
-                        _lastOutput.MaxSplDb);
+                {
+                    double lo = hasRenderedRange ? _lastOutput.RenderedMinVal
+                        : (UseMinSplThreshold ? MinSplThreshold : _lastOutput.MinSplDb);
+                    double hi = hasRenderedRange ? _lastOutput.RenderedMaxVal : _lastOutput.MaxSplDb;
+                    bands = FilledRegionRenderer.GetLegendBands(lo, hi);
+                }
 
                 foreach (var (_, hex, label) in bands)
                     items.Add(new LegendItem { ColorHex = hex, Label = label });
 
                 return items;
+            }
+        }
+
+        /// <summary>
+        /// Maps per-band VisualizationMode values to their OctaveBands index (0-6).
+        /// Returns -1 for SPL and STI (non-band modes).
+        /// </summary>
+        internal static int GetOctaveBandIndex(VisualizationMode mode)
+        {
+            switch (mode)
+            {
+                case VisualizationMode.SPL_125: return 0;
+                case VisualizationMode.SPL_250: return 1;
+                case VisualizationMode.SPL_500: return 2;
+                case VisualizationMode.SPL_1k:  return 3;
+                case VisualizationMode.SPL_2k:  return 4;
+                case VisualizationMode.SPL_4k:  return 5;
+                case VisualizationMode.SPL_8k:  return 6;
+                default: return -1;
             }
         }
 
@@ -611,7 +750,9 @@ namespace SoundCalcs.UI.ViewModels
                     SpeakerCategoryName = SpeakerCategoryName,
                     UseMinSplThreshold = UseMinSplThreshold,
                     MinSplThresholdDb = MinSplThreshold,
-                    BackgroundNoiseDb = BackgroundNoiseDb
+                    BackgroundNoiseDb = BackgroundNoiseDb,
+                    RT60ByBand = GetRT60Array(),
+                    BackgroundNoiseByBand = GetNoiseArray()
                 },
                 SpeakerMappings = SpeakerGroups.Select(g => g.GetMapping()).ToList()
             };
@@ -720,13 +861,26 @@ namespace SoundCalcs.UI.ViewModels
                 {
                     WallLineGroup grp = wvm.GetGroup();
                     int stc = grp.WallType?.StcRating ?? 0;
+                    FileLogger.Log($"  WallGroup '{grp.LineStyleName}': {grp.SegmentCount} segs, " +
+                        $"type='{grp.WallType?.DisplayName}', STC={stc}");
                     foreach (WallSegment2D seg in grp.Segments)
                     {
+                        // Extend each wall segment by 0.10m at each end to
+                        // bridge small gaps at corners and T-junctions where
+                        // detail line endpoints don't connect perfectly.
+                        Vec2 dir = (seg.End - seg.Start);
+                        double len = dir.Length;
+                        const double ext = 0.10; // meters
+                        Vec2 norm = len > 1e-6 ? dir * (1.0 / len) : Vec2.Zero;
+                        Vec2 extStart = seg.Start - norm * ext;
+                        Vec2 extEnd   = seg.End   + norm * ext;
+
                         computeWalls.Add(new ComputeWall
                         {
-                            Start = seg.Start,
-                            End = seg.End,
-                            StcRating = stc
+                            Start = extStart,
+                            End = extEnd,
+                            StcRating = stc,
+                            HalfThicknessM = Math.Max(seg.ThicknessM * 0.5, 0.05)
                         });
                     }
                 }
@@ -741,7 +895,12 @@ namespace SoundCalcs.UI.ViewModels
                     Receivers = receivers,
                     Rooms = analysisRooms,
                     Walls = computeWalls,
-                    Environment = new EnvironmentSettings { BackgroundNoiseDb = BackgroundNoiseDb }
+                    Environment = new EnvironmentSettings
+                    {
+                        BackgroundNoiseDb = BackgroundNoiseDb,
+                        RT60ByBand = GetRT60Array(),
+                        BackgroundNoiseByBand = GetNoiseArray()
+                    }
                 };
 
                 // Log elevation summary for debugging
@@ -761,11 +920,26 @@ namespace SoundCalcs.UI.ViewModels
                 // Save settings before running
                 SaveSettings();
 
-                // Run on background thread
+                // Run on background thread — capture dispatcher so progress
+                // updates marshal correctly even when SynchronizationContext is
+                // not the WPF DispatcherSynchronizationContext (Revit 2024 / net48).
+                var dispatcher = System.Windows.Application.Current?.Dispatcher
+                    ?? System.Windows.Threading.Dispatcher.CurrentDispatcher;
                 var progress = new Progress<double>(p =>
                 {
-                    Progress = p;
-                    StatusMessage = $"Computing... {p * 100:F0}%";
+                    if (dispatcher.CheckAccess())
+                    {
+                        Progress = p;
+                        StatusMessage = $"Computing... {p * 100:F0}%";
+                    }
+                    else
+                    {
+                        dispatcher.BeginInvoke(new Action(() =>
+                        {
+                            Progress = p;
+                            StatusMessage = $"Computing... {p * 100:F0}%";
+                        }));
+                    }
                 });
 
                 _jobRunner.Start(input, progress);
@@ -789,6 +963,15 @@ namespace SoundCalcs.UI.ViewModels
 
         private void OnJobCompleted(AcousticJobOutput output)
         {
+            // JobCompleted fires on the thread-pool; marshal to the UI thread
+            // so bound properties update reliably on both net48 and net8.
+            var dispatcher = System.Windows.Application.Current?.Dispatcher;
+            if (dispatcher != null && !dispatcher.CheckAccess())
+            {
+                dispatcher.BeginInvoke(new Action(() => OnJobCompleted(output)));
+                return;
+            }
+
             LastOutput = output;
             IsRunning = false;
 
@@ -838,8 +1021,14 @@ namespace SoundCalcs.UI.ViewModels
                     _renderer.Render(doc, view, output,
                         _selectedVisualizationMode,
                         UseMinSplThreshold ? MinSplThreshold : (double?)null);
-                    string modeLabel = _selectedVisualizationMode == VisualizationMode.STI ? "STI" : "SPL";
+                    int bi = GetOctaveBandIndex(_selectedVisualizationMode);
+                    string modeLabel = _selectedVisualizationMode == VisualizationMode.STI ? "STI"
+                        : bi >= 0 ? $"SPL @{OctaveBands.Labels[bi]} Hz"
+                        : "SPL";
                     SetStatusFromRevitThread($"{modeLabel} heatmap rendered: {output.Results.Count} points on '{view.Name}'");
+                    // Refresh legend so it shows the actual rendered min/max range
+                    System.Windows.Application.Current?.Dispatcher?.Invoke(
+                        () => OnPropertyChanged(nameof(LegendItems)));
                 }
                 catch (Exception ex)
                 {

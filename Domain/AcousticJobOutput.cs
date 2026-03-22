@@ -12,12 +12,19 @@ namespace SoundCalcs.Domain
         public Vec3 Position { get; set; }
 
         /// <summary>
-        /// Sound Pressure Level in dB at this receiver.
+        /// Sound Pressure Level in dB at this receiver (broadband).
+        /// Derived as energy sum of per-band values.
         /// </summary>
         public double SplDb { get; set; }
 
         /// <summary>
-        /// Placeholder for future STI value (0.0 - 1.0).
+        /// Per-octave-band SPL in dB (7 elements, 125 Hz – 8 kHz).
+        /// Indexed by <see cref="OctaveBands.CenterFrequencies"/>.
+        /// </summary>
+        public double[] SplDbByBand { get; set; }
+
+        /// <summary>
+        /// Speech Transmission Index (0.0 – 1.0), computed via IEC 60268-16 MTF.
         /// </summary>
         public double Sti { get; set; } = 0.0;
     }
@@ -79,6 +86,24 @@ namespace SoundCalcs.Domain
         /// Max STI across all results, for legend scaling.
         /// </summary>
         public double MaxSti { get; set; }
+
+        /// <summary>
+        /// Per-octave-band minimum SPL across all results, for legend scaling.
+        /// </summary>
+        public double[] MinSplDbByBand { get; set; }
+
+        /// <summary>
+        /// Per-octave-band maximum SPL across all results, for legend scaling.
+        /// </summary>
+        public double[] MaxSplDbByBand { get; set; }
+
+        /// <summary>
+        /// The exact min/max value used for colour banding in the last render.
+        /// Written back by FilledRegionRenderer so the UI legend always matches
+        /// what was drawn, regardless of threshold or filtering.
+        /// </summary>
+        public double RenderedMinVal { get; set; }
+        public double RenderedMaxVal { get; set; }
 
         /// <summary>
         /// True if the job was canceled before completion.

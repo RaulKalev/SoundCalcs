@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 
 namespace SoundCalcs.Domain
@@ -65,6 +66,21 @@ namespace SoundCalcs.Domain
             foreach (var w in All)
                 if (w.Key == key) return w;
             return Default;
+        }
+
+        /// <summary>
+        /// Returns the catalog entry whose STC rating is closest to <paramref name="stc"/>.
+        /// </summary>
+        public static WallTypeInfo FindClosestByStc(int stc)
+        {
+            WallTypeInfo best = All[0];
+            int bestDiff = int.MaxValue;
+            foreach (var w in All)
+            {
+                int diff = Math.Abs(w.StcRating - stc);
+                if (diff < bestDiff) { bestDiff = diff; best = w; }
+            }
+            return best;
         }
     }
 

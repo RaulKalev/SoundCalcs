@@ -100,5 +100,19 @@ namespace SoundCalcs.Domain
         }
 
         public override string ToString() => $"{Name} ({Vertices.Count} vertices, {Area:F1} m²)";
+
+        /// <summary>
+        /// Whether this room contains at least one speaker.
+        /// Set by <see cref="RoomDetector.MarkRoomsWithSpeakers"/>.
+        /// </summary>
+        public bool ContainsSpeaker { get; set; }
+
+        /// <summary>
+        /// Test whether a 3D speaker position (projected to XY) lies inside this room.
+        /// </summary>
+        public bool ContainsSpeakerPosition(Vec3 pos)
+        {
+            return ContainsPoint(new Vec2(pos.X, pos.Y));
+        }
     }
 }

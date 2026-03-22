@@ -405,6 +405,139 @@ namespace SoundCalcs.Revit
 
             return segments;
         }
+
+        // -----------------------------------------------------------------
+        // Auto wall detection from Revit wall elements
+        // -----------------------------------------------------------------
+
+        /// <summary>
+        /// Collect all Wall elements from the host document, grouped by wall type name.
+        /// Each group gets an STC rating estimated from the wall type name and thickness.
+        /// </summary>
+        public List<Domain.WallLineGroup> GetHostWallGroups()
+        {
+            return BuildWallGroupsFromDoc(_doc, pt => pt);
+        }
+
+        /// <summary>
+        /// Collect all Wall elements from the specified linked model, grouped by wall type name.
+        /// </summary>
+        public List<Domain.WallLineGroup> GetLinkWallGroups(int linkInstanceId)
+        {
+            Element linkElem = _doc.GetElement(RevitCompat.ToElementId(linkInstanceId));
+            RevitLinkInstance linkInstance = linkElem as RevitLinkInstance;
+            if (linkInstance == null) return new List<Domain.WallLineGroup>();
+
+            Document linkDoc = linkInstance.GetLinkDocument();
+            if (linkDoc == null) return new List<Domain.WallLineGroup>();
+
+            Transform xform = linkInstance.GetTotalTransform();
+            return BuildWallGroupsFromDoc(linkDoc, xform.OfPoint);
+        }
+
+        private static List<Domain.WallLineGroup> BuildWallGroupsFromDoc(
+            Document doc, Func<XYZ, XYZ> transformPt)
+        {
+            var groups = new Dictionary<string, Domain.WallLineGroup>();
+
+            using (var collector = new FilteredElementCollector(doc))
+            {
+                IList<Element> walls = collector
+                    .OfCategory(BuiltInCategory.OST_Walls)
+                    .WhereElementIsNotElementType()
+                    .ToElements();
+
+                foreach (Element elem in walls)
+                {
+                    Wall wall = elem as Wall;
+                    if (wall == null) continue;
+
+                    LocationCurve locCurve = wall.Location as LocationCurve;
+                    if (locCurve?.Curve == null) continue;
+
+                    Curve curve = locCurve.Curve;
+                    XYZ s = transformPt(curve.GetEndPoint(0));
+                    XYZ e = transformPt(curve.GetEndPoint(1));
+
+                    string typeName = wall.WallType?.Name ?? "Unknown";
+                    double thicknessM = UnitConversion.FtToM(wall.Width);
+
+                    if (!groups.TryGetValue(typeName, out Domain.WallLineGroup grp))
+                    {
+                        int estStc = EstimateStcForWall(typeName, thicknessM);
+                        grp = new Domain.WallLineGroup
+                        {
+                            LineStyleName = typeName,
+                            WallType = Domain.WallTypeCatalog.FindClosestByStc(estStc)
+                        };
+                        groups[typeName] = grp;
+                    }
+
+                    var seg = new Domain.WallSegment2D
+                    {
+                        Start = new Domain.Vec2(UnitConversion.FtToM(s.X), UnitConversion.FtToM(s.Y)),
+                        End   = new Domain.Vec2(UnitConversion.FtToM(e.X), UnitConversion.FtToM(e.Y)),
+                        BaseElevationM = UnitConversion.FtToM(s.Z),
+                        HeightM = 3.0,
+                        ThicknessM = thicknessM
+                    };
+                    grp.Segments.Add(seg);
+                    grp.SegmentCount++;
+                    grp.TotalLengthM += seg.Length;
+                }
+            }
+
+            return new List<Domain.WallLineGroup>(groups.Values);
+        }
+
+        /// <summary>
+        /// Estimate STC from wall type name keywords and physical thickness.
+        /// </summary>
+        private static int EstimateStcForWall(string typeName, double thicknessM)
+        {
+            string n = typeName.ToLowerInvariant();
+
+            bool isConcrete = n.Contains("concrete") || n.Contains("beton");
+            bool isMasonry  = n.Contains("brick") || n.Contains("masonry") ||
+                              n.Contains("cmu")   || n.Contains("block");
+            bool isStud     = n.Contains("stud")  || n.Contains("timber") ||
+                              n.Contains("gypsum")|| n.Contains("drywall") ||
+                              n.Contains("plasterboard");
+            bool isGlass    = n.Contains("glass") || n.Contains("glaz") ||
+                              n.Contains("curtain");
+
+            if (isGlass)    return 32;
+
+            if (isConcrete)
+            {
+                if (thicknessM >= 0.25) return 57;
+                if (thicknessM >= 0.18) return 55;
+                if (thicknessM >= 0.13) return 50;
+                return 45;
+            }
+
+            if (isMasonry)
+            {
+                if (thicknessM >= 0.25) return 55;
+                if (thicknessM >= 0.18) return 50;
+                return 45;
+            }
+
+            if (isStud)
+            {
+                if (thicknessM >= 0.15) return 45;
+                if (thicknessM >= 0.10) return 40;
+                return 35;
+            }
+
+            // Generic: thickness only
+            if (thicknessM >= 0.30) return 55;
+            if (thicknessM >= 0.20) return 50;
+            if (thicknessM >= 0.15) return 45;
+            if (thicknessM >= 0.10) return 40;
+            if (thicknessM >= 0.07) return 35;
+            return 30;
+        }
     }
 
 }

@@ -63,10 +63,13 @@ namespace SoundCalcs.Compute
                     JobSerializer.SaveInput(input);
 
                     var calculator = new SPLCalculator();
-                    var results = calculator.Calculate(input, token, progress);
+                    var (results, bandData) = calculator.Calculate(input, token, progress);
 
-                    // Compute simplified broadband STI from SPL + background noise
-                    STICalculator.Calculate(results, input.Environment.BackgroundNoiseDb);
+                    // Full IEC 60268-16 MTF-based STI computation
+                    STICalculator.Calculate(
+                        results, bandData,
+                        input.Environment.BackgroundNoiseByBand,
+                        input.Environment.RT60ByBand);
 
                     stopwatch.Stop();
 
@@ -88,6 +91,21 @@ namespace SoundCalcs.Compute
                         output.MaxSplDb = results.Max(r => r.SplDb);
                         output.MinSti = results.Min(r => r.Sti);
                         output.MaxSti = results.Max(r => r.Sti);
+
+                        // Per-band min/max for per-band heatmap visualization
+                        int numBands = OctaveBands.Count;
+                        output.MinSplDbByBand = new double[numBands];
+                        output.MaxSplDbByBand = new double[numBands];
+                        for (int k = 0; k < numBands; k++)
+                        {
+                            int band = k;
+                            output.MinSplDbByBand[k] = results.Min(r =>
+                                r.SplDbByBand != null && r.SplDbByBand.Length > band
+                                    ? r.SplDbByBand[band] : 0);
+                            output.MaxSplDbByBand[k] = results.Max(r =>
+                                r.SplDbByBand != null && r.SplDbByBand.Length > band
+                                    ? r.SplDbByBand[band] : 0);
+                        }
                     }
 
                     JobSerializer.SaveOutput(output);

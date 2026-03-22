@@ -27,6 +27,9 @@ namespace SoundCalcs.Domain
 
         /// <summary>Sound Transmission Class rating in dB.</summary>
         public int StcRating { get; set; }
+
+        /// <summary>Half the physical wall thickness in meters, for proximity blocking.</summary>
+        public double HalfThicknessM { get; set; } = 0.10;
     }
 
     /// <summary>
@@ -35,14 +38,24 @@ namespace SoundCalcs.Domain
     public class EnvironmentSettings
     {
         /// <summary>
-        /// Background noise level in dB SPL. Used in future STI calculations.
+        /// Broadband background noise in dB SPL (kept for backward compatibility).
         /// </summary>
         public double BackgroundNoiseDb { get; set; } = 35.0;
 
         /// <summary>
-        /// Air temperature in Celsius. Affects speed of sound (future).
+        /// Air temperature in Celsius. Used for speed of sound: c = 331.3 + 0.606 × T.
         /// </summary>
         public double TemperatureC { get; set; } = 20.0;
+
+        /// <summary>
+        /// Per-octave-band RT60 reverberation time in seconds (7 elements, 125 Hz – 8 kHz).
+        /// </summary>
+        public double[] RT60ByBand { get; set; } = (double[])OctaveBands.DefaultRT60.Clone();
+
+        /// <summary>
+        /// Per-octave-band background noise level in dB SPL (7 elements, 125 Hz – 8 kHz).
+        /// </summary>
+        public double[] BackgroundNoiseByBand { get; set; } = (double[])OctaveBands.DefaultBackgroundNoise.Clone();
     }
 
     /// <summary>

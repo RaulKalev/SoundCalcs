@@ -29,6 +29,11 @@ namespace SoundCalcs.UI
                 showWindow: () => { this.Show(); this.Activate(); });
         }
 
+        private void AutoDetectWalls_Click(object sender, RoutedEventArgs e)
+        {
+            _vm.AutoDetectWalls();
+        }
+
         // ============ Speakers Tab ============
 
         private void PickSpeaker_Click(object sender, RoutedEventArgs e)

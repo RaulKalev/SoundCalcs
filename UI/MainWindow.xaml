@@ -238,6 +238,10 @@
                         <WrapPanel Orientation="Horizontal" Margin="0,4">
                             <Button Content="Select Boundary" Style="{StaticResource BtnStyle}"
                                     Click="SelectBoundary_Click"/>
+                            <Button Content="Auto-Detect Walls" Style="{StaticResource BtnStyle}"
+                                    Margin="8,0,0,0"
+                                    Click="AutoDetectWalls_Click"
+                                    ToolTip="Reads Revit wall elements from the host and linked model and estimates STC ratings automatically"/>
                         </WrapPanel>
 
                         <TextBlock Style="{StaticResource SectionHeader}" Text="Selected Walls"
@@ -385,6 +389,8 @@
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
                         </Grid.RowDefinitions>
 
                         <TextBlock Grid.Row="0" Grid.Column="0" Style="{StaticResource LabelStyle}" Text="Grid Spacing (m):"/>
@@ -414,11 +420,33 @@
                         <TextBlock Grid.Row="3" Grid.Column="2" Style="{StaticResource LabelStyle}"
                                    Text="Hide areas below this dB level" FontSize="11" Margin="0,6,0,0"/>
 
-                        <TextBlock Grid.Row="4" Grid.Column="0" Style="{StaticResource LabelStyle}" Text="Background Noise (dB):" Margin="0,6,0,0"/>
-                        <TextBox Grid.Row="4" Grid.Column="1" Style="{StaticResource InputBoxStyle}"
-                                 Text="{Binding BackgroundNoiseDb, UpdateSourceTrigger=PropertyChanged}" Margin="0,6,0,0"/>
-                        <TextBlock Grid.Row="4" Grid.Column="2" Style="{StaticResource LabelStyle}"
-                                   Text="Ambient noise level for STI calculation" FontSize="11" Margin="0,6,0,0"/>
+                        <TextBlock Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="3"
+                                   Style="{StaticResource SectionHeader}" Text="Octave Band Settings (125 – 8k Hz)"
+                                   FontSize="12" Margin="0,10,0,4"/>
+
+                        <!-- RT60 per band -->
+                        <TextBlock Grid.Row="5" Grid.Column="0" Style="{StaticResource LabelStyle}" Text="RT60 (s):" Margin="0,4,0,0"/>
+                        <StackPanel Grid.Row="5" Grid.Column="1" Grid.ColumnSpan="2" Orientation="Horizontal" Margin="0,4,0,0">
+                            <TextBox Width="45" Style="{StaticResource InputBoxStyle}" Text="{Binding RT60_125, UpdateSourceTrigger=PropertyChanged}" ToolTip="125 Hz" Margin="0,0,3,0"/>
+                            <TextBox Width="45" Style="{StaticResource InputBoxStyle}" Text="{Binding RT60_250, UpdateSourceTrigger=PropertyChanged}" ToolTip="250 Hz" Margin="0,0,3,0"/>
+                            <TextBox Width="45" Style="{StaticResource InputBoxStyle}" Text="{Binding RT60_500, UpdateSourceTrigger=PropertyChanged}" ToolTip="500 Hz" Margin="0,0,3,0"/>
+                            <TextBox Width="45" Style="{StaticResource InputBoxStyle}" Text="{Binding RT60_1k, UpdateSourceTrigger=PropertyChanged}" ToolTip="1 kHz" Margin="0,0,3,0"/>
+                            <TextBox Width="45" Style="{StaticResource InputBoxStyle}" Text="{Binding RT60_2k, UpdateSourceTrigger=PropertyChanged}" ToolTip="2 kHz" Margin="0,0,3,0"/>
+                            <TextBox Width="45" Style="{StaticResource InputBoxStyle}" Text="{Binding RT60_4k, UpdateSourceTrigger=PropertyChanged}" ToolTip="4 kHz" Margin="0,0,3,0"/>
+                            <TextBox Width="45" Style="{StaticResource InputBoxStyle}" Text="{Binding RT60_8k, UpdateSourceTrigger=PropertyChanged}" ToolTip="8 kHz"/>
+                        </StackPanel>
+
+                        <!-- Background noise per band -->
+                        <TextBlock Grid.Row="6" Grid.Column="0" Style="{StaticResource LabelStyle}" Text="Noise (dB):" Margin="0,4,0,0"/>
+                        <StackPanel Grid.Row="6" Grid.Column="1" Grid.ColumnSpan="2" Orientation="Horizontal" Margin="0,4,0,0">
+                            <TextBox Width="45" Style="{StaticResource InputBoxStyle}" Text="{Binding Noise_125, UpdateSourceTrigger=PropertyChanged}" ToolTip="125 Hz" Margin="0,0,3,0"/>
+                            <TextBox Width="45" Style="{StaticResource InputBoxStyle}" Text="{Binding Noise_250, UpdateSourceTrigger=PropertyChanged}" ToolTip="250 Hz" Margin="0,0,3,0"/>
+                            <TextBox Width="45" Style="{StaticResource InputBoxStyle}" Text="{Binding Noise_500, UpdateSourceTrigger=PropertyChanged}" ToolTip="500 Hz" Margin="0,0,3,0"/>
+                            <TextBox Width="45" Style="{StaticResource InputBoxStyle}" Text="{Binding Noise_1k, UpdateSourceTrigger=PropertyChanged}" ToolTip="1 kHz" Margin="0,0,3,0"/>
+                            <TextBox Width="45" Style="{StaticResource InputBoxStyle}" Text="{Binding Noise_2k, UpdateSourceTrigger=PropertyChanged}" ToolTip="2 kHz" Margin="0,0,3,0"/>
+                            <TextBox Width="45" Style="{StaticResource InputBoxStyle}" Text="{Binding Noise_4k, UpdateSourceTrigger=PropertyChanged}" ToolTip="4 kHz" Margin="0,0,3,0"/>
+                            <TextBox Width="45" Style="{StaticResource InputBoxStyle}" Text="{Binding Noise_8k, UpdateSourceTrigger=PropertyChanged}" ToolTip="8 kHz"/>
+                        </StackPanel>
                     </Grid>
 
                     <Button Content="Save Settings" Style="{StaticResource SuccessBtnStyle}"
@@ -470,6 +498,7 @@
 
             <!-- ============ RESULTS TAB ============ -->
             <TabItem Header="Results">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                 <StackPanel Margin="12">
                     <TextBlock Style="{StaticResource SectionHeader}" Text="Visualization"/>
 
@@ -554,6 +583,7 @@
                         </ItemsControl>
                     </StackPanel>
                 </StackPanel>
+                </ScrollViewer>
             </TabItem>
         </TabControl>
 

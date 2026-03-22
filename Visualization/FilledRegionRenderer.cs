@@ -20,18 +20,18 @@ namespace SoundCalcs.Visualization
     public class FilledRegionRenderer
     {
         // -----------------------------------------------------------------------
-        // Color palette – 8 bands quiet (blue) → loud (red)
+        // Color palette – 8 bands quiet (red) → loud (green)
         // -----------------------------------------------------------------------
         private static readonly (string Name, byte R, byte G, byte B)[] BandColors =
         {
-            ("SC_SPL_0",   0,   0, 200),   // deep blue   (quiet)
-            ("SC_SPL_1",   0, 140, 220),   // sky blue
-            ("SC_SPL_2",   0, 200, 160),   // teal
-            ("SC_SPL_3",  60, 210,  60),   // green
+            ("SC_SPL_0", 210,   0,   0),   // red         (quiet / low)
+            ("SC_SPL_1", 255,  60,   0),   // orange-red
+            ("SC_SPL_2", 255, 150,   0),   // amber
+            ("SC_SPL_3", 255, 210,   0),   // yellow
             ("SC_SPL_4", 200, 220,   0),   // yellow-green
-            ("SC_SPL_5", 255, 180,   0),   // amber
-            ("SC_SPL_6", 255,  80,   0),   // orange-red
-            ("SC_SPL_7", 220,   0,   0),   // red         (loud)
+            ("SC_SPL_5", 140, 220,  30),   // lime
+            ("SC_SPL_6",  60, 200,  30),   // green
+            ("SC_SPL_7",   0, 160,   0),   // dark green  (loud / strong)
         };
 
         private const string RegionTypePrefix = "SC_SPL_";
@@ -47,6 +47,7 @@ namespace SoundCalcs.Visualization
 
         // Cached across calls within a session so we don't re-query the pattern every render
         private static ElementId _solidFillPatternId = ElementId.InvalidElementId;
+        private static ElementId _invisibleLinesStyleId = ElementId.InvalidElementId;
 
         // -----------------------------------------------------------------------
         // Public API
@@ -57,7 +58,7 @@ namespace SoundCalcs.Visualization
         /// Returns (bandIndex, colorHex, labelText) for each band.
         /// </summary>
         public static List<(int Band, string ColorHex, string Label)> GetLegendBands(
-            double minSpl, double maxSpl)
+            double minSpl, double maxSpl, string suffix = " dB")
         {
             int n = BandColors.Length;
             double range = maxSpl - minSpl;
@@ -69,10 +70,12 @@ namespace SoundCalcs.Visualization
                 (string _, byte r, byte g, byte b) = BandColors[i];
                 string hex = $"#{r:X2}{g:X2}{b:X2}";
                 double lo = minSpl + i * step;
-                double hi = minSpl + (i + 1) * step;
-                string label = $"{lo:F1} – {hi:F1} dB";
+                // Last band always extends to maxSpl exactly
+                double hi = (i == n - 1) ? maxSpl : minSpl + (i + 1) * step;
+                string label = $"{lo:F1} \u2013 {hi:F1}{suffix}";
                 items.Add((i, hex, label));
             }
+            items.Reverse(); // highest band first
             return items;
         }
 
@@ -93,11 +96,13 @@ namespace SoundCalcs.Visualization
                 (string _, byte r, byte g, byte b) = BandColors[i];
                 string hex = $"#{r:X2}{g:X2}{b:X2}";
                 double lo = minSti + i * step;
-                double hi = minSti + (i + 1) * step;
+                // Last band always extends to maxSti exactly
+                double hi = (i == n - 1) ? maxSti : minSti + (i + 1) * step;
                 string quality = i < StiLabels.Length ? StiLabels[i] : "";
                 string label = $"{lo:F2} \u2013 {hi:F2} ({quality})";
                 items.Add((i, hex, label));
             }
+            items.Reverse(); // highest band first
             return items;
         }
 
@@ -113,8 +118,16 @@ namespace SoundCalcs.Visualization
 
             // Filter out points below the minimum SPL threshold
             var results = output.Results;
+            int octaveBandIdx = MainViewModel.GetOctaveBandIndex(mode);
+            bool isPerBand = octaveBandIdx >= 0;
+
             if (mode == VisualizationMode.SPL && minSplThreshold.HasValue)
                 results = results.Where(r => r.SplDb >= minSplThreshold.Value).ToList();
+
+            // For per-band modes, filter out results without band data
+            if (isPerBand)
+                results = results.Where(r =>
+                    r.SplDbByBand != null && r.SplDbByBand.Length > octaveBandIdx).ToList();
 
             if (results.Count == 0)
             {
@@ -132,6 +145,11 @@ namespace SoundCalcs.Visualization
                 minVal = results.Min(r => r.Sti);
                 maxVal = results.Max(r => r.Sti);
             }
+            else if (isPerBand)
+            {
+                minVal = results.Min(r => r.SplDbByBand[octaveBandIdx]);
+                maxVal = results.Max(r => r.SplDbByBand[octaveBandIdx]);
+            }
             else
             {
                 minVal = minSplThreshold ?? results.Min(r => r.SplDb);
@@ -139,34 +157,30 @@ namespace SoundCalcs.Visualization
             }
             int numBands = BandColors.Length;
 
-            // --- Assign results to bands ---
-            var byBand = new List<ReceiverResult>[numBands];
-            for (int i = 0; i < numBands; i++)
-                byBand[i] = new List<ReceiverResult>();
-
-            foreach (ReceiverResult r in results)
+            // --- Assign each receiver a band index ---
+            int[] bandIndex = new int[results.Count];
+            for (int i = 0; i < results.Count; i++)
             {
-                double val = mode == VisualizationMode.STI ? r.Sti : r.SplDb;
-                byBand[SplToBand(val, minVal, maxVal, numBands)].Add(r);
+                double val;
+                ReceiverResult r = results[i];
+                if (mode == VisualizationMode.STI)
+                    val = r.Sti;
+                else if (isPerBand)
+                    val = r.SplDbByBand[octaveBandIdx];
+                else
+                    val = r.SplDb;
+                bandIndex[i] = SplToBand(val, minVal, maxVal, numBands);
             }
 
             // Stable grid origin for consistent quantisation across all bands
             double originX = results.Min(r => r.Position.X);
             double originY = results.Min(r => r.Position.Y);
 
-            // Build clip polygons from rooms (in metres) for boundary clipping
-            var clipPolygons = new List<List<(double x, double y)>>();
-            if (output.Rooms != null)
-            {
-                foreach (RoomPolygon room in output.Rooms)
-                {
-                    if (room.Vertices.Count < 3) continue;
-                    var poly = new List<(double x, double y)>(room.Vertices.Count);
-                    foreach (Vec2 v in room.Vertices)
-                        poly.Add((v.X, v.Y));
-                    clipPolygons.Add(poly);
-                }
-            }
+            // Build row-strip rectangles: scan each grid row left→right merging
+            // consecutive same-band cells into single rectangles. This is simple,
+            // robust, and produces zero gaps between colour bands.
+            var strips = BuildRowStrips(results, bandIndex, originX, originY,
+                gridSpacingM, halfM, numBands);
 
             using (Transaction tx = new Transaction(doc, "SoundCalcs: Render Heatmap"))
             {
@@ -175,37 +189,71 @@ namespace SoundCalcs.Visualization
                 {
                     ClearOldRegions(doc);
 
-                    ElementId[] regionTypeIds = mode == VisualizationMode.STI
-                        ? EnsureStiFilledRegionTypes(doc, minVal, maxVal)
-                        : EnsureFilledRegionTypes(doc, minVal, maxVal);
+                    ElementId[] regionTypeIds;
+                    if (mode == VisualizationMode.STI)
+                        regionTypeIds = EnsureStiFilledRegionTypes(doc, minVal, maxVal);
+                    else if (isPerBand)
+                        regionTypeIds = EnsureBandFilledRegionTypes(doc, minVal, maxVal, octaveBandIdx);
+                    else
+                        regionTypeIds = EnsureFilledRegionTypes(doc, minVal, maxVal);
+
+                    double mToFt = UnitConversion.MetersToFeet;
+                    int created = 0;
+                    ElementId invisibleStyle = GetInvisibleLinesStyleId(doc);
 
                     for (int band = 0; band < numBands; band++)
                     {
-                        if (byBand[band].Count == 0) continue;
-
                         ElementId typeId = regionTypeIds[band];
                         if (typeId == ElementId.InvalidElementId) continue;
 
-                        List<List<CurveLoop>> loopSets = BuildMergedLoops(
-                            byBand[band], originX, originY, gridSpacingM, halfM,
-                            clipPolygons);
-
-                        foreach (List<CurveLoop> loops in loopSets)
+                        if (!strips.ContainsKey(band)) continue;
+                        foreach (var (x0, y0, x1, y1, z) in strips[band])
                         {
                             try
                             {
-                                FilledRegion.Create(doc, typeId, view.Id, loops);
+                                var p0 = new XYZ(x0 * mToFt, y0 * mToFt, z * mToFt);
+                                var p1 = new XYZ(x1 * mToFt, y0 * mToFt, z * mToFt);
+                                var p2 = new XYZ(x1 * mToFt, y1 * mToFt, z * mToFt);
+                                var p3 = new XYZ(x0 * mToFt, y1 * mToFt, z * mToFt);
+
+                                var loop = new CurveLoop();
+                                loop.Append(Line.CreateBound(p0, p1));
+                                loop.Append(Line.CreateBound(p1, p2));
+                                loop.Append(Line.CreateBound(p2, p3));
+                                loop.Append(Line.CreateBound(p3, p0));
+
+                                var region = FilledRegion.Create(doc, typeId, view.Id,
+                                    new List<CurveLoop> { loop });
+
+                                // Set boundary lines to invisible
+                                if (invisibleStyle != ElementId.InvalidElementId)
+                                {
+                                    region.SetLineStyleId(invisibleStyle);
+                                }
+
+                                created++;
                             }
                             catch (Exception ex)
                             {
                                 Debug.WriteLine(
-                                    $"[SoundCalcs] FilledRegion.Create failed band {band}: {ex.Message}");
+                                    $"[SoundCalcs] Strip create failed band {band}: {ex.Message}");
                             }
                         }
                     }
 
                     tx.Commit();
-                    string modeLabel = mode == VisualizationMode.STI ? "STI" : "SPL";
+
+                    // Write back the exact range used so the UI legend matches.
+                    output.RenderedMinVal = minVal;
+                    output.RenderedMaxVal = maxVal;
+
+                    string modeLabel;
+                    if (mode == VisualizationMode.STI)
+                        modeLabel = "STI";
+                    else if (isPerBand)
+                        modeLabel = $"SPL @{OctaveBands.Labels[octaveBandIdx]} Hz";
+                    else
+                        modeLabel = "SPL";
                     Debug.WriteLine($"[SoundCalcs] {modeLabel} heatmap rendered. " +
                         $"{output.Results.Count} pts, range {minVal:F2}\u2013{maxVal:F2}");
                 }
@@ -274,8 +322,7 @@ namespace SoundCalcs.Visualization
                     .OfClass(typeof(FilledRegionType))
                     .Cast<FilledRegionType>())
                 {
-                    if (frt.Name.StartsWith(RegionTypePrefix, StringComparison.OrdinalIgnoreCase)
-                        || frt.Name.StartsWith(StiRegionTypePrefix, StringComparison.OrdinalIgnoreCase))
+                    if (IsSoundCalcsType(frt.Name))
                         ids.Add(frt.Id);
                 }
             }
@@ -439,6 +486,97 @@ namespace SoundCalcs.Visualization
             return typeIds;
         }
 
+        /// <summary>
+        /// Ensures per-octave-band FilledRegionTypes exist for a specific frequency band.
+        /// Uses prefix "SC_SPL_{freq}_" to distinguish from broadband and STI types.
+        /// </summary>
+        private static ElementId[] EnsureBandFilledRegionTypes(Document doc, double minSpl, double maxSpl, int bandIndex)
+        {
+            string freq = OctaveBands.Labels[bandIndex];
+            string prefix = $"SC_SPL_{freq}_";
+
+            int numBands = BandColors.Length;
+            double range = maxSpl - minSpl;
+            double step = numBands > 0 && range > 0 ? range / numBands : 0;
+
+            var bandNames = new string[numBands];
+            for (int i = 0; i < numBands; i++)
+            {
+                double lo = minSpl + i * step;
+                double hi = minSpl + (i + 1) * step;
+                bandNames[i] = $"{prefix}{lo:F1}-{hi:F1} dB";
+            }
+
+            FilledRegionType template = null;
+            using (var coll = new FilteredElementCollector(doc))
+            {
+                template = coll
+                    .OfClass(typeof(FilledRegionType))
+                    .Cast<FilledRegionType>()
+                    .FirstOrDefault(frt => !IsSoundCalcsType(frt.Name));
+            }
+
+            if (template == null)
+                throw new InvalidOperationException(
+                    "[SoundCalcs] No FilledRegionType in document to use as template.");
+
+            var existing = new Dictionary<string, FilledRegionType>(StringComparer.OrdinalIgnoreCase);
+            using (var coll = new FilteredElementCollector(doc))
+            {
+                foreach (FilledRegionType frt in coll
+                    .OfClass(typeof(FilledRegionType))
+                    .Cast<FilledRegionType>())
+                {
+                    if (frt.Name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                        existing[frt.Name] = frt;
+                }
+            }
+
+            ElementId solidFillId = GetSolidFillPatternId(doc);
+            var typeIds = new ElementId[numBands];
+
+            for (int i = 0; i < numBands; i++)
+            {
+                string name = bandNames[i];
+                (string _, byte r, byte g, byte b) = BandColors[i];
+
+                FilledRegionType frt = existing.TryGetValue(name, out FilledRegionType found)
+                    ? found
+                    : template.Duplicate(name) as FilledRegionType;
+
+                if (frt == null)
+                {
+                    typeIds[i] = ElementId.InvalidElementId;
+                    continue;
+                }
+
+                try
+                {
+                    if (solidFillId != ElementId.InvalidElementId)
+                        frt.ForegroundPatternId = solidFillId;
+                    frt.ForegroundPatternColor = new Color(r, g, b);
+                    frt.IsMasking = false;
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"[SoundCalcs] Band region type styling ({name}): {ex.Message}");
+                }
+
+                typeIds[i] = frt.Id;
+            }
+
+            return typeIds;
+        }
+
+        /// <summary>
+        /// Returns true if a FilledRegionType name belongs to SoundCalcs.
+        /// </summary>
+        private static bool IsSoundCalcsType(string name)
+        {
+            return name.StartsWith(RegionTypePrefix, StringComparison.OrdinalIgnoreCase)
+                || name.StartsWith(StiRegionTypePrefix, StringComparison.OrdinalIgnoreCase);
+        }
+
         private static ElementId GetSolidFillPatternId(Document doc)
         {
             if (_solidFillPatternId != ElementId.InvalidElementId)
@@ -462,9 +600,136 @@ namespace SoundCalcs.Visualization
             return ElementId.InvalidElementId;
         }
 
+        /// <summary>
+        /// Find the built-in "&lt;Invisible lines&gt;" GraphicsStyle element.
+        /// Cached across render calls within a session.
+        /// </summary>
+        private static ElementId GetInvisibleLinesStyleId(Document doc)
+        {
+            if (_invisibleLinesStyleId != ElementId.InvalidElementId)
+                return _invisibleLinesStyleId;
+
+            using (var coll = new FilteredElementCollector(doc))
+            {
+                foreach (GraphicsStyle gs in coll
+                    .OfClass(typeof(GraphicsStyle))
+                    .Cast<GraphicsStyle>())
+                {
+                    if (gs.GraphicsStyleCategory != null &&
+                        gs.GraphicsStyleCategory.Name.IndexOf("Invisible", StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        _invisibleLinesStyleId = gs.Id;
+                        return _invisibleLinesStyleId;
+                    }
+                }
+            }
+
+            Debug.WriteLine("[SoundCalcs] 'Invisible lines' style not found; boundaries will remain visible.");
+            return ElementId.InvalidElementId;
+        }
+
         // -----------------------------------------------------------------------
         // Geometry: merge grid cells into closed CurveLoops
         // -----------------------------------------------------------------------
+
+        /// <summary>
+        /// Build row-strip rectangles: for each grid row, merge consecutive
+        /// same-band cells into a single rectangle. Returns strips grouped by band.
+        /// Each strip is (x0, y0, x1, y1, z) in metres — ready for CurveLoop.
+        /// </summary>
+        private static Dictionary<int, List<(double x0, double y0, double x1, double y1, double z)>>
+            BuildRowStrips(
+                List<ReceiverResult> results,
+                int[] bandIndex,
+                double originX, double originY,
+                double gridSpacingM, double halfM,
+                int numBands)
+        {
+            // Map each receiver to (col, row, band, z)
+            var cellMap = new Dictionary<(int col, int row), (int band, double z)>(results.Count);
+
+            for (int i = 0; i < results.Count; i++)
+            {
+                ReceiverResult r = results[i];
+                int col = Quantise(r.Position.X, originX, gridSpacingM);
+                int row = Quantise(r.Position.Y, originY, gridSpacingM);
+                cellMap[(col, row)] = (bandIndex[i], r.Position.Z);
+            }
+
+            // Group cells by row
+            var byRow = new SortedDictionary<int, SortedDictionary<int, (int band, double z)>>();
+            foreach (var kv in cellMap)
+            {
+                int row = kv.Key.row;
+                int col = kv.Key.col;
+                if (!byRow.TryGetValue(row, out var rowCells))
+                {
+                    rowCells = new SortedDictionary<int, (int band, double z)>();
+                    byRow[row] = rowCells;
+                }
+                rowCells[col] = kv.Value;
+            }
+
+            // Scan each row: merge consecutive same-band columns into strips
+            var strips = new Dictionary<int, List<(double x0, double y0, double x1, double y1, double z)>>();
+            for (int b = 0; b < numBands; b++)
+                strips[b] = new List<(double, double, double, double, double)>();
+
+            foreach (var rowKv in byRow)
+            {
+                int row = rowKv.Key;
+                double yCenter = originY + row * gridSpacingM;
+                double y0 = yCenter - halfM;
+                double y1 = yCenter + halfM;
+
+                var cols = rowKv.Value;
+                int runBand = -1;
+                int runStartCol = 0;
+                int runEndCol = 0;
+                double runZ = 0;
+                bool inRun = false;
+
+                foreach (var colKv in cols)
+                {
+                    int col = colKv.Key;
+                    int band = colKv.Value.band;
+                    double z = colKv.Value.z;
+
+                    if (inRun && band == runBand && col == runEndCol + 1)
+                    {
+                        // Extend current run
+                        runEndCol = col;
+                    }
+                    else
+                    {
+                        // Flush previous run
+                        if (inRun)
+                        {
+                            double x0 = originX + runStartCol * gridSpacingM - halfM;
+                            double x1 = originX + runEndCol * gridSpacingM + halfM;
+                            strips[runBand].Add((x0, y0, x1, y1, runZ));
+                        }
+
+                        // Start new run
+                        runBand = band;
+                        runStartCol = col;
+                        runEndCol = col;
+                        runZ = z;
+                        inRun = true;
+                    }
+                }
+
+                // Flush final run
+                if (inRun)
+                {
+                    double x0 = originX + runStartCol * gridSpacingM - halfM;
+                    double x1 = originX + runEndCol * gridSpacingM + halfM;
+                    strips[runBand].Add((x0, y0, x1, y1, runZ));
+                }
+            }
+
+            return strips;
+        }
 
         /// <summary>
         /// Convert a band's receiver results into groups of CurveLoops suitable for
@@ -529,6 +794,15 @@ namespace SoundCalcs.Visualization
             }
 
             return result;
+        }
+
+        private static (int, int)[] EightNeighbours(int c, int r)
+        {
+            return new[]
+            {
+                (c - 1, r), (c + 1, r), (c, r - 1), (c, r + 1),
+                (c - 1, r - 1), (c - 1, r + 1), (c + 1, r - 1), (c + 1, r + 1)
+            };
         }
 
         private static (int, int)[] FourNeighbours(int c, int r)
@@ -682,6 +956,43 @@ namespace SoundCalcs.Visualization
             }
 
             return result.Count >= 3 ? result : pts;
+        }
+
+        /// <summary>
+        /// Chaikin corner-cutting subdivision. Each iteration replaces every edge
+        /// (P_i → P_{i+1}) with two new points at 25 % and 75 %, rounding off
+        /// staircase corners into smooth diagonals.  Closed-polygon variant.
+        /// </summary>
+        private static List<(double x, double y, double z)> ChaikinSmooth(
+            List<(double x, double y, double z)> pts, int iterations)
+        {
+            if (pts.Count < 3 || iterations <= 0) return pts;
+
+            var current = pts;
+            for (int iter = 0; iter < iterations; iter++)
+            {
+                int n = current.Count;
+                var next = new List<(double x, double y, double z)>(n * 2);
+
+                for (int i = 0; i < n; i++)
+                {
+                    var (x0, y0, z0) = current[i];
+                    var (x1, y1, z1) = current[(i + 1) % n];
+
+                    // Q = 0.75·P_i + 0.25·P_{i+1}
+                    next.Add((0.75 * x0 + 0.25 * x1,
+                              0.75 * y0 + 0.25 * y1,
+                              z0));
+                    // R = 0.25·P_i + 0.75·P_{i+1}
+                    next.Add((0.25 * x0 + 0.75 * x1,
+                              0.25 * y0 + 0.75 * y1,
+                              z0));
+                }
+
+                current = next;
+            }
+
+            return current;
         }
 
         // -----------------------------------------------------------------------

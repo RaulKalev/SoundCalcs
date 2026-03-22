@@ -53,8 +53,18 @@ namespace SoundCalcs.Domain
         public double MinSplThresholdDb { get; set; } = 65.0;
 
         /// <summary>
-        /// Background noise level in dB SPL, used for STI calculation.
+        /// Broadband background noise in dB SPL (kept for backward compatibility).
         /// </summary>
         public double BackgroundNoiseDb { get; set; } = 35.0;
+
+        /// <summary>
+        /// Per-octave-band RT60 reverberation time in seconds (7 elements, 125 Hz – 8 kHz).
+        /// </summary>
+        public double[] RT60ByBand { get; set; } = (double[])OctaveBands.DefaultRT60.Clone();
+
+        /// <summary>
+        /// Per-octave-band background noise level in dB SPL (7 elements, 125 Hz – 8 kHz).
+        /// </summary>
+        public double[] BackgroundNoiseByBand { get; set; } = (double[])OctaveBands.DefaultBackgroundNoise.Clone();
     }
 }
