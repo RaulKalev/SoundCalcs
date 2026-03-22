@@ -1,0 +1,73 @@
+using System.Collections.Generic;
+
+namespace SoundCalcs.Domain
+{
+    /// <summary>
+    /// Source description for the compute engine. Revit-free.
+    /// </summary>
+    public class ComputeSource
+    {
+        public Vec3 Position { get; set; }
+        public Vec3 FacingDirection { get; set; }
+
+        /// <summary>
+        /// Profile type + parameters for directivity lookup.
+        /// </summary>
+        public SpeakerProfileMapping Profile { get; set; }
+    }
+
+    /// <summary>
+    /// A wall segment for transmission-loss calculations.
+    /// Defined as a 2D line segment (plan view) with an STC rating.
+    /// </summary>
+    public class ComputeWall
+    {
+        public Vec2 Start { get; set; }
+        public Vec2 End { get; set; }
+
+        /// <summary>Sound Transmission Class rating in dB.</summary>
+        public int StcRating { get; set; }
+    }
+
+    /// <summary>
+    /// Environment settings for future use (background noise, humidity, etc.).
+    /// </summary>
+    public class EnvironmentSettings
+    {
+        /// <summary>
+        /// Background noise level in dB SPL. Used in future STI calculations.
+        /// </summary>
+        public double BackgroundNoiseDb { get; set; } = 35.0;
+
+        /// <summary>
+        /// Air temperature in Celsius. Affects speed of sound (future).
+        /// </summary>
+        public double TemperatureC { get; set; } = 20.0;
+    }
+
+    /// <summary>
+    /// Complete input for an acoustic computation job.
+    /// All positions in meters. No Revit types.
+    /// </summary>
+    public class AcousticJobInput
+    {
+        public string JobId { get; set; } = "";
+
+        public List<ComputeSource> Sources { get; set; } = new List<ComputeSource>();
+        public List<Polygon> Surfaces { get; set; } = new List<Polygon>();
+        public List<ReceiverPoint> Receivers { get; set; } = new List<ReceiverPoint>();
+        
+        /// <summary>
+        /// The room polygons used for this analysis. 
+        /// Passed through to output for visualization purposes (creating analysis surfaces).
+        /// </summary>
+        public List<RoomPolygon> Rooms { get; set; } = new List<RoomPolygon>();
+
+        /// <summary>
+        /// Wall segments with STC ratings for transmission-loss calculation.
+        /// </summary>
+        public List<ComputeWall> Walls { get; set; } = new List<ComputeWall>();
+
+        public EnvironmentSettings Environment { get; set; } = new EnvironmentSettings();
+    }
+}
