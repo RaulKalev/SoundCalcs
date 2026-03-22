@@ -209,16 +209,17 @@ namespace SoundCalcs.Tests
         [Fact]
         public void STI_MultipleReceivers_EachReceivesIndependentResult()
         {
-            // Receiver 0: near-perfect conditions → STI ≈ 1
-            // Receiver 1: poor conditions (high noise, no signal) → STI ≈ 0
+            // Receiver 0: perfect SNR (1e9 early vs −100 dB noise), zero RT60 → STI ≈ 1.0.
+            // Receiver 1: no signal, loud noise → STI ≈ 0.0.
+            // Each receiver must be processed independently.
             var results = new List<ReceiverResult> { MakeResult(0), MakeResult(1) };
             var bandData = new List<ReceiverBandData>
             {
-                MakeBandData(0, 1e9, 0),     // good
-                MakeBandData(1, 1.0, 1e9)    // very poor
+                MakeBandData(0, 1e9, 0),     // perfect signal, no reverb
+                MakeBandData(1, 1.0, 1e9)    // no signal, very poor
             };
-            var bgNoise = new double[] { 30, 30, 30, 30, 30, 30, 30 };
-            var rt60 = new double[] { 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5 };
+            var bgNoise = new double[] { -100, -100, -100, -100, -100, -100, -100 };
+            var rt60 = new double[7]; // zero RT60 → no reverberation degradation
 
             STICalculator.Calculate(results, bandData, bgNoise, rt60);
 
