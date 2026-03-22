@@ -30,6 +30,12 @@ namespace SoundCalcs.Domain
 
         /// <summary>Half the physical wall thickness in meters, for proximity blocking.</summary>
         public double HalfThicknessM { get; set; } = 0.10;
+
+        /// <summary>
+        /// Per-octave-band absorption coefficients for reflection calculations.
+        /// Null = use global default (backward compatible).
+        /// </summary>
+        public double[] AbsorptionByBand { get; set; }
     }
 
     /// <summary>
@@ -56,6 +62,11 @@ namespace SoundCalcs.Domain
         /// Per-octave-band background noise level in dB SPL (7 elements, 125 Hz – 8 kHz).
         /// </summary>
         public double[] BackgroundNoiseByBand { get; set; } = (double[])OctaveBands.DefaultBackgroundNoise.Clone();
+
+        /// <summary>
+        /// Speech weighting type for STI calculation (Male or Female).
+        /// </summary>
+        public SpeechWeightType SpeechWeightType { get; set; } = SpeechWeightType.Male;
     }
 
     /// <summary>
@@ -82,5 +93,10 @@ namespace SoundCalcs.Domain
         public List<ComputeWall> Walls { get; set; } = new List<ComputeWall>();
 
         public EnvironmentSettings Environment { get; set; } = new EnvironmentSettings();
+
+        /// <summary>
+        /// Calculation fidelity: Draft (fast) or Full (accurate).
+        /// </summary>
+        public CalculationQuality Quality { get; set; } = CalculationQuality.Full;
     }
 }

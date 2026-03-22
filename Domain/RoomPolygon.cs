@@ -108,6 +108,13 @@ namespace SoundCalcs.Domain
         public bool ContainsSpeaker { get; set; }
 
         /// <summary>
+        /// Ceiling height in meters. Derived from the tallest speaker’s
+        /// <c>ElevationFromLevelM</c> in this room (speakers are ceiling-mounted).
+        /// Falls back to 0 (use default) if no speakers are present.
+        /// </summary>
+        public double CeilingHeightM { get; set; }
+
+        /// <summary>
         /// Test whether a 3D speaker position (projected to XY) lies inside this room.
         /// </summary>
         public bool ContainsSpeakerPosition(Vec3 pos)

@@ -66,5 +66,47 @@ namespace SoundCalcs.Domain
         /// Per-octave-band background noise level in dB SPL (7 elements, 125 Hz – 8 kHz).
         /// </summary>
         public double[] BackgroundNoiseByBand { get; set; } = (double[])OctaveBands.DefaultBackgroundNoise.Clone();
+
+        /// <summary>
+        /// Global wall surface absorption preset. Applied to all walls (detail lines have no material).
+        /// Default = Drywall to match previous 0.10 single-value behavior.
+        /// </summary>
+        public WallAbsorptionPreset WallAbsorptionPreset { get; set; } = WallAbsorptionPreset.Drywall;
+
+        /// <summary>
+        /// Custom per-band absorption coefficients (only used when preset = Custom).
+        /// </summary>
+        public double[] CustomAbsorptionByBand { get; set; } = new double[] { 0.10, 0.10, 0.10, 0.10, 0.10, 0.10, 0.10 };
+
+        /// <summary>
+        /// Speech weighting type for STI calculation.
+        /// </summary>
+        public SpeechWeightType SpeechWeightType { get; set; } = SpeechWeightType.Male;
+
+        /// <summary>
+        /// Default wall height in meters (assigned to detail-line walls for 3D blocking).
+        /// Set to 0 to keep current 2D-only blocking behavior.
+        /// When > 0, walls are treated as surfaces from floor to floor + WallHeightM.
+        /// </summary>
+        public double WallHeightM { get; set; } = 0.0;
+    }
+
+    /// <summary>
+    /// Speech weighting for STI (male vs. female voice spectrum).
+    /// </summary>
+    public enum SpeechWeightType
+    {
+        Male,
+        Female
+    }
+
+    /// <summary>
+    /// Calculation fidelity level. Draft is faster (skips second-order and
+    /// ceiling/floor reflections); Full runs the complete acoustic model.
+    /// </summary>
+    public enum CalculationQuality
+    {
+        Draft,
+        Full
     }
 }

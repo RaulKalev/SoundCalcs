@@ -8,6 +8,7 @@ namespace SoundCalcs.Compute
     public class SimpleOmniProvider : ISpeakerDirectivityProvider
     {
         public double OnAxisSplAtOneMeter { get; }
+        public double DirectivityFactor => 1.0;
 
         public SimpleOmniProvider(double onAxisSplDb = 90.0)
         {
@@ -17,6 +18,11 @@ namespace SoundCalcs.Compute
         public double GetDirectivityGain(Vec3 facingDirection, Vec3 toReceiver)
         {
             // Omni: no directional attenuation
+            return 1.0;
+        }
+
+        public double GetDirectivityGainForBand(Vec3 facingDirection, Vec3 toReceiver, int bandIndex)
+        {
             return 1.0;
         }
     }

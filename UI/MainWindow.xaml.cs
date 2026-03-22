@@ -81,9 +81,14 @@ namespace SoundCalcs.UI
 
         // ============ Run Tab ============
 
-        private void StartJob_Click(object sender, RoutedEventArgs e)
+        private void StartDraft_Click(object sender, RoutedEventArgs e)
         {
-            _vm.StartJob();
+            _vm.StartJob(SoundCalcs.Domain.CalculationQuality.Draft);
+        }
+
+        private void StartFull_Click(object sender, RoutedEventArgs e)
+        {
+            _vm.StartJob(SoundCalcs.Domain.CalculationQuality.Full);
         }
 
         private void CancelJob_Click(object sender, RoutedEventArgs e)

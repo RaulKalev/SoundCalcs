@@ -21,5 +21,22 @@ namespace SoundCalcs.Compute
         /// On-axis SPL at 1 meter in dB.
         /// </summary>
         double OnAxisSplAtOneMeter { get; }
+
+        /// <summary>
+        /// Directivity factor Q. Ratio of on-axis intensity to average intensity
+        /// over all directions. Q=1 for omni, higher for directional speakers.
+        /// Used by Sabine reverberant field calculation.
+        /// </summary>
+        double DirectivityFactor { get; }
+
+        /// <summary>
+        /// Get directivity gain for a specific octave band.
+        /// Default implementation returns the broadband gain.
+        /// At higher frequencies speakers typically beam more narrowly.
+        /// </summary>
+        /// <param name="facingDirection">Normalized forward axis of the speaker.</param>
+        /// <param name="toReceiver">Normalized direction from speaker to receiver.</param>
+        /// <param name="bandIndex">Octave band index (0=125 Hz .. 6=8 kHz).</param>
+        double GetDirectivityGainForBand(Vec3 facingDirection, Vec3 toReceiver, int bandIndex);
     }
 }

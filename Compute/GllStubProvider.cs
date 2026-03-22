@@ -10,6 +10,7 @@ namespace SoundCalcs.Compute
     public class GllStubProvider : ISpeakerDirectivityProvider
     {
         public double OnAxisSplAtOneMeter { get; }
+        public double DirectivityFactor => _fallback.DirectivityFactor;
 
         private readonly SimpleConeProvider _fallback;
 
@@ -31,6 +32,11 @@ namespace SoundCalcs.Compute
         public double GetDirectivityGain(Vec3 facingDirection, Vec3 toReceiver)
         {
             return _fallback.GetDirectivityGain(facingDirection, toReceiver);
+        }
+
+        public double GetDirectivityGainForBand(Vec3 facingDirection, Vec3 toReceiver, int bandIndex)
+        {
+            return _fallback.GetDirectivityGainForBand(facingDirection, toReceiver, bandIndex);
         }
     }
 }

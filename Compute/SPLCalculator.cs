@@ -44,12 +44,10 @@ namespace SoundCalcs.Compute
         /// </summary>
         private const double EarlyLateThresholdS = 0.050;
 
-        /// <summary>
-        /// Default wall surface absorption coefficient (fraction of energy absorbed
-        /// per reflection). Typical drywall ≈ 0.05–0.10, concrete ≈ 0.02.
-        /// Reflection coefficient = 1 − α.
-        /// </summary>
-        private const double WallAbsorptionCoeff = 0.10;
+        // Per-band global wall absorption (set at start of Calculate)
+        private double[] _globalAbsorption;
+        // Per-band air absorption computed from temperature (set at start of Calculate)
+        private double[] _airAbsorption;
 
         /// <summary>
         /// Pre-computed first-order image source: a real source reflected
@@ -60,7 +58,17 @@ namespace SoundCalcs.Compute
             public Vec2 ImagePos;        // Reflected position (2D)
             public int SourceIndex;       // Index of the real source
             public int WallIndex;         // Index of the reflecting wall
-            public double ReflectionCoeff; // (1 − α)  linear pressure²
+            public double[] ReflectionCoeffByBand; // (1 − α_k) per octave band
+        }
+
+        /// <summary>
+        /// Ceiling or floor image source: source mirrored across a horizontal plane.
+        /// </summary>
+        private struct HorizontalImageSource
+        {
+            public Vec3 ImagePos3D;       // Full 3D mirrored position
+            public int SourceIndex;
+            public double[] ReflectionCoeffByBand;
         }
 
         /// <summary>
@@ -104,20 +112,36 @@ namespace SoundCalcs.Compute
             // Speed of sound from temperature
             double speedOfSound = 331.3 + 0.606 * input.Environment.TemperatureC;
 
+            // Compute temperature-dependent air absorption (ISO 9613-1)
+            _airAbsorption = OctaveBands.ComputeAirAbsorption(input.Environment.TemperatureC);
+
+            // Resolve global wall absorption from preset
+            _globalAbsorption = OctaveBands.AbsorptionPresets.ContainsKey(WallAbsorptionPreset.Drywall)
+                ? OctaveBands.AbsorptionPresets[WallAbsorptionPreset.Drywall]
+                : new double[] { 0.10, 0.10, 0.10, 0.10, 0.10, 0.10, 0.10 };
+
             // Build directivity providers for each source
             var providers = new ISpeakerDirectivityProvider[input.Sources.Count];
             for (int i = 0; i < input.Sources.Count; i++)
                 providers[i] = DirectivityProviderFactory.Create(input.Sources[i].Profile);
 
             // --- Reverberant field pre-computation (Sabine room acoustics) ---
-            // Estimate room volume from room polygons × default ceiling height.
+            // Estimate room volume from room polygons × ceiling height.
+            // Ceiling height is derived from the tallest speaker in each room
+            // (speakers are ceiling-mounted), falling back to default if unknown.
             // Per-band room constant R_k = 0.161·V / T60_k determines how much
             // source energy builds up as a diffuse reverberant field.
-            double roomAreaM2 = 0;
+            double roomVolumeM3 = 0;
             if (input.Rooms != null)
+            {
                 foreach (var room in input.Rooms)
-                    roomAreaM2 += room.Area;
-            double roomVolumeM3 = roomAreaM2 * DefaultCeilingHeightM;
+                {
+                    double ceilingH = room.CeilingHeightM > 0.5
+                        ? room.CeilingHeightM
+                        : DefaultCeilingHeightM;
+                    roomVolumeM3 += room.Area * ceilingH;
+                }
+            }
             bool hasReverb = roomVolumeM3 > 1.0;
 
             double[] roomConstant = null;
@@ -134,23 +158,33 @@ namespace SoundCalcs.Compute
                     roomConstant[k] = Math.Max(0.161 * roomVolumeM3 / t60, 1.0);
                 }
 
-                // Reverberant p² at any point = source p²(1m) × 16π / R_k  (Q≈1)
+                // Reverberant p² at any point = source p²(1m) × 16π / (Q × R_k)
                 reverbBySource = new double[input.Sources.Count][];
                 for (int s = 0; s < input.Sources.Count; s++)
                 {
                     reverbBySource[s] = new double[nb];
                     double srcBb = Math.Pow(10.0, providers[s].OnAxisSplAtOneMeter / 10.0);
                     double perBand = srcBb / nb;
+                    double Q = Math.Max(providers[s].DirectivityFactor, 1.0);
                     for (int k = 0; k < nb; k++)
-                        reverbBySource[s][k] = perBand * 16.0 * Math.PI / roomConstant[k];
+                        reverbBySource[s][k] = perBand * 16.0 * Math.PI / (Q * roomConstant[k]);
                 }
             }
 
             // --- First-order image sources (reflections off wall surfaces) ---
             // Mirror each real source across each wall to create virtual sources.
             // Per-receiver we check if the reflected path is geometrically valid.
-            double reflCoeff = 1.0 - WallAbsorptionCoeff; // energy reflection
             var imageSources = new List<ImageSource>();
+
+            // Resolve per-band absorption for each wall
+            double[][] wallAbsorption = new double[walls.Count][];
+            for (int w = 0; w < walls.Count; w++)
+            {
+                if (walls[w].AbsorptionByBand != null && walls[w].AbsorptionByBand.Length == OctaveBands.Count)
+                    wallAbsorption[w] = walls[w].AbsorptionByBand;
+                else
+                    wallAbsorption[w] = _globalAbsorption;
+            }
 
             for (int s = 0; s < input.Sources.Count; s++)
             {
@@ -160,17 +194,106 @@ namespace SoundCalcs.Compute
                     Vec2 mirrored = ReflectPointAcrossSegment(srcXY, walls[w].Start, walls[w].End);
                     if (double.IsNaN(mirrored.X)) continue; // degenerate wall
 
+                    double[] reflCoeffs = new double[OctaveBands.Count];
+                    for (int k = 0; k < OctaveBands.Count; k++)
+                        reflCoeffs[k] = 1.0 - wallAbsorption[w][k];
+
                     imageSources.Add(new ImageSource
                     {
                         ImagePos = mirrored,
                         SourceIndex = s,
                         WallIndex = w,
-                        ReflectionCoeff = reflCoeff
+                        ReflectionCoeffByBand = reflCoeffs
                     });
                 }
             }
 
+            // --- Second-order image sources (mirror first-order images across other walls) ---
+            // Skipped in Draft mode for performance.
+            bool isDraft = input.Quality == CalculationQuality.Draft;
+            if (!isDraft)
+            {
+                int firstOrderCount = imageSources.Count;
+                for (int i = 0; i < firstOrderCount; i++)
+                {
+                    ImageSource img1 = imageSources[i];
+                    for (int w = 0; w < walls.Count; w++)
+                    {
+                        if (w == img1.WallIndex) continue; // don't re-reflect off same wall
+
+                        Vec2 mirrored2 = ReflectPointAcrossSegment(img1.ImagePos, walls[w].Start, walls[w].End);
+                        if (double.IsNaN(mirrored2.X)) continue;
+
+                        // Second bounce absorption = first bounce × second wall absorption
+                        double[] reflCoeffs2 = new double[OctaveBands.Count];
+                        for (int k = 0; k < OctaveBands.Count; k++)
+                            reflCoeffs2[k] = img1.ReflectionCoeffByBand[k] * (1.0 - wallAbsorption[w][k]);
+
+                        imageSources.Add(new ImageSource
+                        {
+                            ImagePos = mirrored2,
+                            SourceIndex = img1.SourceIndex,
+                            WallIndex = w,
+                            ReflectionCoeffByBand = reflCoeffs2
+                        });
+                    }
+                }
+            }
+
             var imageSourceArray = imageSources.ToArray();
+
+            // --- Ceiling and floor image sources ---
+            // Mirror each source across horizontal planes (floor and ceiling).
+            // Skipped in Draft mode for performance.
+            var horizImages = new List<HorizontalImageSource>();
+            double floorZ = 0;
+            double ceilingZ = DefaultCeilingHeightM;
+            if (!isDraft)
+            {
+                if (input.Rooms != null && input.Rooms.Count > 0)
+                {
+                    floorZ = input.Rooms[0].FloorElevationM;
+                    double maxCeil = 0;
+                    foreach (var room in input.Rooms)
+                    {
+                        double ch = room.CeilingHeightM > 0.5
+                            ? room.CeilingHeightM
+                            : DefaultCeilingHeightM;
+                        if (ch > maxCeil) maxCeil = ch;
+                        if (room.FloorElevationM < floorZ) floorZ = room.FloorElevationM;
+                    }
+                    ceilingZ = floorZ + maxCeil;
+                }
+
+                // Use global absorption for floor/ceiling surfaces
+                double[] horizReflCoeffs = new double[OctaveBands.Count];
+                for (int k = 0; k < OctaveBands.Count; k++)
+                    horizReflCoeffs[k] = 1.0 - _globalAbsorption[k];
+
+                for (int s = 0; s < input.Sources.Count; s++)
+                {
+                    Vec3 srcPos = input.Sources[s].Position;
+
+                    // Ceiling reflection: mirror Z across ceiling plane
+                    double ceilImageZ = 2.0 * ceilingZ - srcPos.Z;
+                    horizImages.Add(new HorizontalImageSource
+                    {
+                        ImagePos3D = new Vec3(srcPos.X, srcPos.Y, ceilImageZ),
+                        SourceIndex = s,
+                        ReflectionCoeffByBand = horizReflCoeffs
+                    });
+
+                    // Floor reflection: mirror Z across floor plane
+                    double floorImageZ = 2.0 * floorZ - srcPos.Z;
+                    horizImages.Add(new HorizontalImageSource
+                    {
+                        ImagePos3D = new Vec3(srcPos.X, srcPos.Y, floorImageZ),
+                        SourceIndex = s,
+                        ReflectionCoeffByBand = horizReflCoeffs
+                    });
+                }
+            }
+            var horizImageArray = horizImages.ToArray();
 
             var resultsBag = new ConcurrentBag<ReceiverResult>();
             var bandDataBag = new ConcurrentBag<ReceiverBandData>();
@@ -178,14 +301,29 @@ namespace SoundCalcs.Compute
             int wallHitReceivers = 0;  // diagnostic: how many receivers had ≥1 wall crossing
             int loggedSamples = 0;     // diagnostic: limit per-receiver logs
 
-            Parallel.ForEach(input.Receivers, new ParallelOptions
+            // Pre-provision ThreadPool threads to avoid slow ramp-up on .NET Framework
+            int cpuCount = Environment.ProcessorCount;
+            ThreadPool.GetMinThreads(out int prevWorker, out int prevIO);
+            if (prevWorker < cpuCount)
+                ThreadPool.SetMinThreads(cpuCount, prevIO);
+
+            FileLogger.Log($"[SPLCalc] Quality={input.Quality}, ImageSources={imageSourceArray.Length} " +
+                $"(1st-order={imageSources.Count - (isDraft ? 0 : imageSourceArray.Length - imageSources.Count)}), " +
+                $"HorizImages={horizImageArray.Length}, CPUs={cpuCount}");
+
+            Parallel.ForEach(
+                Partitioner.Create(0, input.Receivers.Count, Math.Max(1, input.Receivers.Count / (cpuCount * 4))),
+                new ParallelOptions
             {
                 CancellationToken = cancellationToken,
-                MaxDegreeOfParallelism = Environment.ProcessorCount
+                MaxDegreeOfParallelism = -1
             },
-            (receiver) =>
+            (range) =>
             {
+                for (int ri = range.Item1; ri < range.Item2; ri++)
+                {
                 cancellationToken.ThrowIfCancellationRequested();
+                ReceiverPoint receiver = input.Receivers[ri];
 
                 int numBands = OctaveBands.Count;
                 int numSources = input.Sources.Count;
@@ -218,13 +356,11 @@ namespace SoundCalcs.Compute
 
                     Vec3 toReceiver = delta / distance;
 
-                    // Directivity gain (frequency-independent)
-                    double directivityGain = provider.GetDirectivityGain(
-                        source.FacingDirection.Normalized(), toReceiver);
+                    Vec3 facingNorm = source.FacingDirection.Normalized();
 
-                    // Base pressure ratio from distance + directivity
-                    double pressureRatio = (RefDistanceM / distance) * directivityGain;
-                    double basePower = pressureRatio * pressureRatio;
+                    // Base distance attenuation (directivity applied per-band below)
+                    double distRatio = RefDistanceM / distance;
+                    double distPower = distRatio * distRatio;
 
                     // Wall transmission loss (broadband STC sum)
                     double wallStcSum = SumWallStc(
@@ -247,18 +383,27 @@ namespace SoundCalcs.Compute
 
                     // Source broadband SPL → per-band source power
                     double broadbandLinear = Math.Pow(10.0, provider.OnAxisSplAtOneMeter / 10.0);
-                    // Per-band source SPL = broadband - 10*log10(7), in linear: /7
-                    double perBandSourceLinear = broadbandLinear / numBands;
+                    double[] spectrumShape = source.Profile?.SpectrumShapeByBand;
+                    bool hasSpectrum = spectrumShape != null && spectrumShape.Length == numBands;
 
                     for (int k = 0; k < numBands; k++)
                     {
+                        // Per-band source power: flat split + optional spectrum shape offset
+                        double perBandSourceLinear = broadbandLinear / numBands;
+                        if (hasSpectrum)
+                            perBandSourceLinear *= Math.Pow(10.0, spectrumShape[k] / 10.0);
+
+                        // Per-band directivity (higher freqs beam more narrowly)
+                        double bandGain = provider.GetDirectivityGainForBand(facingNorm, toReceiver, k);
+                        double basePower = distPower * bandGain * bandGain;
+
                         // Per-band wall TL: nominal STC contour value minus field penalty.
                         // StcBandOffsets[k] maps the rated STC to each frequency per ASTM E413.
                         double bandTlDb = Math.Max(0, wallStcSum + OctaveBands.StcBandOffsets[k]
                             - FieldPenaltyDb);
 
-                        // Air absorption for this band
-                        double airLossDb = OctaveBands.AirAbsorption[k] * distance;
+                        // Air absorption for this band (temperature-dependent)
+                        double airLossDb = _airAbsorption[k] * distance;
 
                         // Total per-band loss in linear
                         double totalLossDb = Math.Min(bandTlDb + airLossDb, MaxTotalLossDb);
@@ -299,44 +444,114 @@ namespace SoundCalcs.Compute
                     reflArrivalTimes[r] = reflDistance / speedOfSound;
                     reflValid[r] = true;
 
-                    // Distance attenuation (no directivity for reflected path —
-                    // reflected energy is diffuse)
-                    double pressureRatio = RefDistanceM / reflDistance;
-                    double basePower = pressureRatio * pressureRatio;
-
-                    // Check both legs of the reflected path for wall crossings:
-                    // Leg 1: source → reflection point (incoming)
-                    // Leg 2: reflection point → receiver (outgoing)
-                    // Both exclude the reflecting wall itself.
-                    Vec2 reflPt = img.ImagePos + imgToRecv * tWall;
+                    // Source directivity toward the reflection point
                     Vec2 srcXY = new Vec2(input.Sources[img.SourceIndex].Position.X,
                                           input.Sources[img.SourceIndex].Position.Y);
+                    Vec2 reflPt = img.ImagePos + imgToRecv * tWall;
+                    Vec3 srcPos = input.Sources[img.SourceIndex].Position;
+                    Vec3 toReflPt = new Vec3(reflPt.X - srcPos.X, reflPt.Y - srcPos.Y, 0);
+                    double toReflLen = toReflPt.Length;
+                    Vec3 toReflDir = toReflLen > 1e-9 ? toReflPt / toReflLen : Vec3.Zero;
+                    Vec3 srcFacing = input.Sources[img.SourceIndex].FacingDirection.Normalized();
+                    ISpeakerDirectivityProvider provider = providers[img.SourceIndex];
+
+                    // Distance attenuation (per-band directivity applied in loop below)
+                    double reflDistRatio = RefDistanceM / reflDistance;
+                    double reflDistPower = reflDistRatio * reflDistRatio;
+
+                    // Check both legs of the reflected path for wall crossings
                     double incomingStc = SumWallStcExcluding(
                         srcXY, reflPt, walls, img.WallIndex);
                     double outgoingStc = SumWallStcExcluding(
                         reflPt, recvXY, walls, img.WallIndex);
                     double otherStc = incomingStc + outgoingStc;
 
-                    ISpeakerDirectivityProvider provider = providers[img.SourceIndex];
                     double broadbandLinear = Math.Pow(10.0, provider.OnAxisSplAtOneMeter / 10.0);
-                    double perBandSourceLinear = broadbandLinear / numBands;
 
                     for (int k = 0; k < numBands; k++)
                     {
+                        double perBandSourceLinear = broadbandLinear / numBands;
+
+                        // Per-band directivity at source→reflectionPoint angle
+                        double reflBandGain = provider.GetDirectivityGainForBand(srcFacing, toReflDir, k);
+                        double basePower = reflDistPower * reflBandGain * reflBandGain;
+
                         double bandTlDb = Math.Max(0, otherStc + OctaveBands.StcBandOffsets[k]
                             - FieldPenaltyDb);
-                        double airLossDb = OctaveBands.AirAbsorption[k] * reflDistance;
+                        double airLossDb = _airAbsorption[k] * reflDistance;
                         double totalLossDb = Math.Min(bandTlDb + airLossDb, MaxTotalLossDb);
                         double lossFactor = Math.Pow(10.0, -totalLossDb / 10.0);
 
-                        double pw = perBandSourceLinear * basePower * lossFactor * img.ReflectionCoeff;
+                        double pw = perBandSourceLinear * basePower * lossFactor * img.ReflectionCoeffByBand[k];
                         reflBandPower[r][k] = pw;
                         totalByBand[k] += pw;
                     }
                 }
 
+                // --- Ceiling/floor reflections ---
+                int numHorizImages = horizImageArray.Length;
+                double[] horizArrivalTimes = new double[numHorizImages];
+                double[][] horizBandPower = new double[numHorizImages][];
+
+                for (int h = 0; h < numHorizImages; h++)
+                {
+                    horizBandPower[h] = new double[numBands];
+                    HorizontalImageSource himg = horizImageArray[h];
+
+                    Vec3 delta3D = receiver.Position - himg.ImagePos3D;
+                    double hDist = delta3D.Length;
+                    if (hDist < MinDistanceM) hDist = MinDistanceM;
+
+                    horizArrivalTimes[h] = hDist / speedOfSound;
+
+                    double hDistRatio = RefDistanceM / hDist;
+                    double hDistPower = hDistRatio * hDistRatio;
+
+                    // Directivity: source direction toward the reflection point on the surface
+                    Vec3 srcPos = input.Sources[himg.SourceIndex].Position;
+                    Vec3 srcFacing = input.Sources[himg.SourceIndex].FacingDirection.Normalized();
+                    // The reflection point is at (srcPos.X, srcPos.Y, reflSurfaceZ)
+                    // For ceiling: surfaceZ = ceilingZ, for floor: surfaceZ = floorZ
+                    // The image is at (srcX, srcY, 2*surfaceZ - srcZ)
+                    // surfaceZ = (imageZ + srcZ) / 2
+                    double surfaceZ = (himg.ImagePos3D.Z + srcPos.Z) * 0.5;
+                    Vec3 toSurface = new Vec3(0, 0, surfaceZ - srcPos.Z);
+                    // For horizontal surface, the XY component toward receiver matters too
+                    Vec3 reflPt3D = new Vec3(
+                        (srcPos.X + receiver.Position.X) * 0.5,
+                        (srcPos.Y + receiver.Position.Y) * 0.5,
+                        surfaceZ); // approximate
+                    Vec3 toRefl = (reflPt3D - srcPos);
+                    double trLen = toRefl.Length;
+                    Vec3 toReflDir = trLen > 1e-9 ? toRefl / trLen : Vec3.Zero;
+                    ISpeakerDirectivityProvider hProvider = providers[himg.SourceIndex];
+
+                    // Check wall blocking on XY projection of reflected path
+                    double hWallStc = SumWallStc(
+                        new Vec2(srcPos.X, srcPos.Y), recvXY, walls);
+
+                    double hBroadband = Math.Pow(10.0, hProvider.OnAxisSplAtOneMeter / 10.0);
+
+                    for (int k = 0; k < numBands; k++)
+                    {
+                        double perBandSrc = hBroadband / numBands;
+                        double hBandGain = hProvider.GetDirectivityGainForBand(srcFacing, toReflDir, k);
+                        double hBasePower = hDistPower * hBandGain * hBandGain;
+
+                        double bandTlDb = Math.Max(0, hWallStc + OctaveBands.StcBandOffsets[k]
+                            - FieldPenaltyDb);
+                        double airLossDb = _airAbsorption[k] * hDist;
+                        double totalLossDb = Math.Min(bandTlDb + airLossDb, MaxTotalLossDb);
+                        double lossFactor = Math.Pow(10.0, -totalLossDb / 10.0);
+
+                        double pw = perBandSrc * hBasePower * lossFactor * himg.ReflectionCoeffByBand[k];
+                        horizBandPower[h][k] = pw;
+                        totalByBand[k] += pw;
+                    }
+                }
+
                 // --- Early/late classification ---
-                // Find earliest arrival across direct + reflected paths
+                // Find earliest arrival across direct + reflected + ceiling/floor paths
                 double earliestArrival = double.MaxValue;
                 for (int s = 0; s < numSources; s++)
                 {
@@ -347,6 +562,11 @@ namespace SoundCalcs.Compute
                 {
                     if (reflValid[r] && reflArrivalTimes[r] < earliestArrival)
                         earliestArrival = reflArrivalTimes[r];
+                }
+                for (int h = 0; h < numHorizImages; h++)
+                {
+                    if (horizArrivalTimes[h] < earliestArrival)
+                        earliestArrival = horizArrivalTimes[h];
                 }
 
                 var bandData = new ReceiverBandData
@@ -379,6 +599,18 @@ namespace SoundCalcs.Compute
                         target[k] += reflBandPower[r][k];
                 }
 
+                // Ceiling/floor reflected sources
+                for (int h = 0; h < numHorizImages; h++)
+                {
+                    bool isEarly = (horizArrivalTimes[h] - earliestArrival) <= EarlyLateThresholdS;
+                    double[] target = isEarly
+                        ? bandData.EarlyLinearByBand
+                        : bandData.LateLinearByBand;
+
+                    for (int k = 0; k < numBands; k++)
+                        target[k] += horizBandPower[h][k];
+                }
+
                 // --- Reverberant field → late energy ---
                 // The diffuse reverberant field from each source adds late
                 // (noise) energy that degrades STI. Reverberant energy is
@@ -402,13 +634,13 @@ namespace SoundCalcs.Compute
                 {
                     splDbByBand[k] = totalByBand[k] > 0
                         ? Math.Round(10.0 * Math.Log10(totalByBand[k]), 2)
-                        : 0.0;
+                        : -100.0;
                     totalLinearPower += totalByBand[k];
                 }
 
                 double splDb = totalLinearPower > 0
                     ? 10.0 * Math.Log10(totalLinearPower)
-                    : 0.0;
+                    : -100.0;
 
                 resultsBag.Add(new ReceiverResult
                 {
@@ -466,6 +698,7 @@ namespace SoundCalcs.Compute
                 int done = Interlocked.Increment(ref completed);
                 if (done % Math.Max(1, totalReceivers / 100) == 0)
                     progress?.Report((double)done / totalReceivers);
+                } // end for ri in range
             });
 
             // Sort by index for deterministic output

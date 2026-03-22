@@ -768,7 +768,7 @@ namespace SoundCalcs.UI.ViewModels
         /// <summary>
         /// Start the SPL computation job.
         /// </summary>
-        public void StartJob()
+        public void StartJob(CalculationQuality quality = CalculationQuality.Full)
         {
             if (IsRunning) return;
 
@@ -861,6 +861,26 @@ namespace SoundCalcs.UI.ViewModels
                 FileLogger.Log($"Analysis: {analysisRooms.Count} boundary region(s), " +
                     $"{sources.Count} speakers, {receivers.Count} receiver points");
 
+                // Derive ceiling height per room from the tallest speaker in each room.
+                // Speakers are typically ceiling-mounted, so their elevation ≈ ceiling.
+                foreach (RoomPolygon room in analysisRooms)
+                {
+                    double maxElevation = 0;
+                    foreach (SpeakerGroupViewModel gvm in SpeakerGroups)
+                    {
+                        foreach (SpeakerInstance inst in gvm.GetGroup().Instances)
+                        {
+                            if (room.ContainsSpeakerPosition(inst.Position))
+                            {
+                                double h = inst.ElevationFromLevelM;
+                                if (h > maxElevation) maxElevation = h;
+                            }
+                        }
+                    }
+                    if (maxElevation > 0.5)
+                        room.CeilingHeightM = maxElevation;
+                }
+
                 if (SelectedLink.IsValid)
                     surfaces = collector.ExtractSurfacesFromLink(SelectedLink.LinkInstanceId);
 
@@ -914,6 +934,7 @@ namespace SoundCalcs.UI.ViewModels
                     Receivers = receivers,
                     Rooms = analysisRooms,
                     Walls = computeWalls,
+                    Quality = quality,
                     Environment = new EnvironmentSettings
                     {
                         BackgroundNoiseDb = BackgroundNoiseDb,
@@ -934,7 +955,7 @@ namespace SoundCalcs.UI.ViewModels
                         $"Receiver Z=[{rcvMinZ:F3}..{rcvMaxZ:F3}]m");
                 }
 
-                StatusMessage = $"Job started: {sources.Count} sources, {receivers.Count} receivers...";
+                StatusMessage = $"Job started ({quality}): {sources.Count} sources, {receivers.Count} receivers...";
 
                 // Save settings before running
                 SaveSettings();
@@ -1003,6 +1024,7 @@ namespace SoundCalcs.UI.ViewModels
             {
                 StatusMessage = $"Results ready: {DateTime.Now:HH:mm:ss}";
                 LastRunSummary = $"{output.ReceiverCount} points | " +
+                    $"{output.Quality} | " +
                     $"SPL: {output.MinSplDb:F1} - {output.MaxSplDb:F1} dB | " +
                     $"STI: {output.MinSti:F2} - {output.MaxSti:F2} | " +
                     $"Time: {output.ComputeTimeSeconds:F1}s | " +

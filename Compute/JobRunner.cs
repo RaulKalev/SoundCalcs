@@ -69,7 +69,8 @@ namespace SoundCalcs.Compute
                     STICalculator.Calculate(
                         results, bandData,
                         input.Environment.BackgroundNoiseByBand,
-                        input.Environment.RT60ByBand);
+                        input.Environment.RT60ByBand,
+                        input.Environment.SpeechWeightType);
 
                     stopwatch.Stop();
 
@@ -82,7 +83,8 @@ namespace SoundCalcs.Compute
                         ReceiverCount = results.Count,
                         Results = results,
                         Rooms = input.Rooms,
-                        WasCanceled = false
+                        WasCanceled = false,
+                        Quality = input.Quality
                     };
 
                     if (results.Count > 0)

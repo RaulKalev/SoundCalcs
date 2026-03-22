@@ -266,6 +266,13 @@
                 <Setter Property="BorderBrush" Value="#66DC6B6B"/>
             </Style>
 
+            <!-- Accent / draft button (amber) -->
+            <Style x:Key="AccentBtnStyle" TargetType="Button" BasedOn="{StaticResource BtnStyle}">
+                <Setter Property="Background" Value="#FFCA8A04"/>
+                <Setter Property="Foreground" Value="White"/>
+                <Setter Property="BorderBrush" Value="#FFCA8A04"/>
+            </Style>
+
             <!-- DataGrid column header -->
             <Style x:Key="DgHeaderStyle" TargetType="DataGridColumnHeader">
                 <Setter Property="Background" Value="{DynamicResource SecondaryBackgroundBrush}"/>
@@ -607,12 +614,18 @@
                     <TextBlock Style="{StaticResource SectionHeader}" Text="Computation"/>
 
                     <StackPanel Orientation="Horizontal" Margin="0,8">
-                        <Button Content="Start Analysis" Style="{StaticResource SuccessBtnStyle}"
-                                Click="StartJob_Click"
-                                IsEnabled="{Binding CanRun}"/>
+                        <Button Content="Quick Draft" Style="{StaticResource AccentBtnStyle}"
+                                Click="StartDraft_Click"
+                                IsEnabled="{Binding CanRun}"
+                                ToolTip="Fast preview — skips second-order and ceiling/floor reflections"/>
+                        <Button Content="Full Analysis" Style="{StaticResource SuccessBtnStyle}"
+                                Click="StartFull_Click"
+                                IsEnabled="{Binding CanRun}"
+                                Margin="8,0,0,0"/>
                         <Button Content="Cancel" Style="{StaticResource DangerBtnStyle}"
                                 Click="CancelJob_Click"
-                                IsEnabled="{Binding IsRunning}"/>
+                                IsEnabled="{Binding IsRunning}"
+                                Margin="8,0,0,0"/>
                     </StackPanel>
 
                     <Border Style="{StaticResource Separator}"/>

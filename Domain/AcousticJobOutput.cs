@@ -116,5 +116,10 @@ namespace SoundCalcs.Domain
         /// True if the job was canceled before completion.
         /// </summary>
         public bool WasCanceled { get; set; }
+
+        /// <summary>
+        /// The calculation quality level used for this run.
+        /// </summary>
+        public CalculationQuality Quality { get; set; } = CalculationQuality.Full;
     }
 }
