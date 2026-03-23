@@ -112,8 +112,10 @@ namespace SoundCalcs.Compute
             // Speed of sound from temperature
             double speedOfSound = 331.3 + 0.606 * input.Environment.TemperatureC;
 
-            // Compute temperature-dependent air absorption (ISO 9613-1)
-            _airAbsorption = OctaveBands.ComputeAirAbsorption(input.Environment.TemperatureC);
+            // Compute temperature- and humidity-dependent air absorption (ISO 9613-1)
+            _airAbsorption = OctaveBands.ComputeAirAbsorption(
+                input.Environment.TemperatureC,
+                input.Environment.RelativeHumidityPct);
 
             // Resolve global wall absorption from preset
             _globalAbsorption = OctaveBands.AbsorptionPresets.ContainsKey(WallAbsorptionPreset.Drywall)
@@ -647,11 +649,23 @@ namespace SoundCalcs.Compute
                     ? 10.0 * Math.Log10(totalLinearPower)
                     : -100.0;
 
+                // Compute A-weighted SPL (IEC 61672-1): sum bands with A-weighting offsets
+                double aWeightedLinear = 0.0;
+                for (int k = 0; k < numBands; k++)
+                {
+                    if (totalByBand[k] > 0)
+                        aWeightedLinear += Math.Pow(10.0, OctaveBands.AWeightingDb[k] / 10.0) * totalByBand[k];
+                }
+                double splDbA = aWeightedLinear > 0
+                    ? Math.Round(10.0 * Math.Log10(aWeightedLinear), 2)
+                    : -100.0;
+
                 resultsBag.Add(new ReceiverResult
                 {
                     ReceiverIndex = receiver.Index,
                     Position = receiver.Position,
                     SplDb = Math.Round(splDb, 2),
+                    SplDbA = splDbA,
                     SplDbByBand = splDbByBand
                 });
 

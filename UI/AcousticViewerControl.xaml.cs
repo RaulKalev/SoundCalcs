@@ -355,6 +355,8 @@ namespace SoundCalcs.UI
             if (JobOutput == null || JobOutput.Results.Count == 0) return;
 
             bool isSti     = Mode == VisualizationMode.STI;
+            bool isSplA    = Mode == VisualizationMode.SPL_A;
+            bool isC80     = Mode == VisualizationMode.C80;
             int  bandIdx   = MainViewModel.GetOctaveBandIndex(Mode);
             bool isPerBand = bandIdx >= 0;
 
@@ -367,6 +369,8 @@ namespace SoundCalcs.UI
                 var vals = new double[results.Count];
                 for (int i = 0; i < results.Count; i++)
                     vals[i] = isSti     ? results[i].Sti
+                            : isSplA    ? results[i].SplDbA
+                            : isC80     ? results[i].C80Db
                             : isPerBand ? results[i].SplDbByBand[bandIdx]
                             : results[i].SplDb;
 
@@ -374,11 +378,13 @@ namespace SoundCalcs.UI
                 System.Array.Sort(sorted);
                 _heatMinVal = sorted[Math.Max(0, (int)(sorted.Length * 0.02))];
                 _heatMaxVal = sorted[Math.Min(sorted.Length - 1, (int)(sorted.Length * 0.98))];
-                if (_heatMaxVal - _heatMinVal < (isSti ? 0.05 : 3.0))
+                double minRange = isSti ? 0.05 : (isC80 ? 1.0 : 3.0);
+                double halfRange = isSti ? 0.25 : (isC80 ? 5.0 : 15.0);
+                if (_heatMaxVal - _heatMinVal < minRange)
                 {
                     double mid = (_heatMinVal + _heatMaxVal) * 0.5;
-                    _heatMinVal = mid - (isSti ? 0.25 : 15.0);
-                    _heatMaxVal = mid + (isSti ? 0.25 : 15.0);
+                    _heatMinVal = mid - halfRange;
+                    _heatMaxVal = mid + halfRange;
                 }
 
                 _heatBitmap?.Dispose();
@@ -498,9 +504,11 @@ namespace SoundCalcs.UI
             if (_heatBitmap == null) return;  // nothing rendered yet
 
             bool isSti    = Mode == VisualizationMode.STI;
+            bool isSplA   = Mode == VisualizationMode.SPL_A;
+            bool isC80Leg = Mode == VisualizationMode.C80;
             int  bandIdx  = MainViewModel.GetOctaveBandIndex(Mode);
             bool isPerBand = bandIdx >= 0;
-            string unit   = isSti ? "" : " dB";
+            string unit   = isSti ? "" : isSplA ? " dBA" : isC80Leg ? " dB" : " dB";
 
             // Use the same range that was used to build the heatmap bitmap
             double minVal = _heatMinVal;
@@ -531,8 +539,10 @@ namespace SoundCalcs.UI
             header.TextSize = 10f;
             header.Color    = new SKColor(0xAA, 0xAA, 0xAA);
 
-            string modeLabel = isSti ? "STI" : isPerBand
-                ? $"SPL {OctaveBands.Labels[bandIdx]} Hz"
+            string modeLabel = isSti ? "STI"
+                : isSplA   ? "dBA"
+                : isC80Leg ? "C80"
+                : isPerBand ? $"SPL {OctaveBands.Labels[bandIdx]} Hz"
                 : "SPL";
             canvas.DrawText(modeLabel, ox, oy + 1f, header);
 

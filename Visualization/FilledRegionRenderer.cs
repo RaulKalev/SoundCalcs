@@ -145,6 +145,16 @@ namespace SoundCalcs.Visualization
                 minVal = results.Min(r => r.Sti);
                 maxVal = results.Max(r => r.Sti);
             }
+            else if (mode == VisualizationMode.SPL_A)
+            {
+                minVal = minSplThreshold ?? results.Min(r => r.SplDbA);
+                maxVal = results.Max(r => r.SplDbA);
+            }
+            else if (mode == VisualizationMode.C80)
+            {
+                minVal = results.Min(r => r.C80Db);
+                maxVal = results.Max(r => r.C80Db);
+            }
             else if (isPerBand)
             {
                 minVal = results.Min(r => r.SplDbByBand[octaveBandIdx]);
@@ -165,6 +175,10 @@ namespace SoundCalcs.Visualization
                 ReceiverResult r = results[i];
                 if (mode == VisualizationMode.STI)
                     val = r.Sti;
+                else if (mode == VisualizationMode.SPL_A)
+                    val = r.SplDbA;
+                else if (mode == VisualizationMode.C80)
+                    val = r.C80Db;
                 else if (isPerBand)
                     val = r.SplDbByBand[octaveBandIdx];
                 else
@@ -197,6 +211,7 @@ namespace SoundCalcs.Visualization
                         regionTypeIds = EnsureBandFilledRegionTypes(doc, minVal, maxVal, octaveBandIdx);
                     else
                         regionTypeIds = EnsureFilledRegionTypes(doc, minVal, maxVal);
+                    // SPL_A and C80 reuse the broadband FilledRegionTypes (same color ramp)
 
                     double mToFt = UnitConversion.MetersToFeet;
                     int created = 0;
@@ -249,6 +264,10 @@ namespace SoundCalcs.Visualization
                     string modeLabel;
                     if (mode == VisualizationMode.STI)
                         modeLabel = "STI";
+                    else if (mode == VisualizationMode.SPL_A)
+                        modeLabel = "SPL (A-weighted, dBA)";
+                    else if (mode == VisualizationMode.C80)
+                        modeLabel = "Clarity C80";
                     else if (isPerBand)
                         modeLabel = $"SPL @{OctaveBands.Labels[octaveBandIdx]} Hz";
                     else

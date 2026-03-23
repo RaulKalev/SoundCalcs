@@ -88,6 +88,11 @@ namespace SoundCalcs.UI
             _vm.SaveSettings();
         }
 
+        private void EstimateRT60_Click(object sender, RoutedEventArgs e)
+        {
+            _vm.EstimateRT60();
+        }
+
         // ============ Run Tab ============
 
         private void StartDraft_Click(object sender, RoutedEventArgs e)

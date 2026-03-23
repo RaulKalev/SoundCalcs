@@ -144,5 +144,44 @@ namespace SoundCalcs.Compute
                 results[i].Sti = Math.Round(Math.Max(0, Math.Min(1, sti)), 3);
             }
         }
+
+        /// <summary>
+        /// Compute Clarity (C80) and Definition (D50) for each receiver.
+        /// Both metrics are derived from the early/late energy split already
+        /// produced by SPLCalculator, weighted across speech-relevant octave bands
+        /// (500 Hz and 1 kHz, indices 2 and 3).
+        ///
+        /// C80 (dB) = 10·log₁₀(E_early / E_late)   — higher = clearer speech
+        /// D50      = E_early / (E_early + E_late)   — range 0–1, target > 0.5
+        /// </summary>
+        public static void ComputeC80D50(
+            List<ReceiverResult> results,
+            List<ReceiverBandData> bandData)
+        {
+            // Speech-critical bands: 500 Hz (index 2) and 1 kHz (index 3)
+            int[] speechBands = { 2, 3 };
+
+            for (int i = 0; i < results.Count; i++)
+            {
+                ReceiverBandData bd = bandData[i];
+                double earlySum = 0, lateSum = 0;
+
+                foreach (int k in speechBands)
+                {
+                    earlySum += bd.EarlyLinearByBand[k];
+                    lateSum  += bd.LateLinearByBand[k];
+                }
+
+                double totalSum = earlySum + lateSum;
+
+                results[i].C80Db = (earlySum > 0 && lateSum > 0)
+                    ? Math.Round(10.0 * Math.Log10(earlySum / lateSum), 2)
+                    : (earlySum > 0 ? 15.0 : -15.0);  // clamp at extremes
+
+                results[i].D50 = totalSum > 0
+                    ? Math.Round(earlySum / totalSum, 3)
+                    : 0.0;
+            }
+        }
     }
 }

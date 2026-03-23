@@ -72,6 +72,9 @@ namespace SoundCalcs.Compute
                         input.Environment.RT60ByBand,
                         input.Environment.SpeechWeightType);
 
+                    // Clarity (C80) and Definition (D50) from early/late energy split
+                    STICalculator.ComputeC80D50(results, bandData);
+
                     stopwatch.Stop();
 
                     output = new AcousticJobOutput
@@ -93,6 +96,12 @@ namespace SoundCalcs.Compute
                         output.MaxSplDb = results.Max(r => r.SplDb);
                         output.MinSti = results.Min(r => r.Sti);
                         output.MaxSti = results.Max(r => r.Sti);
+                        output.MinSplDbA = results.Min(r => r.SplDbA);
+                        output.MaxSplDbA = results.Max(r => r.SplDbA);
+                        output.MinC80Db = results.Min(r => r.C80Db);
+                        output.MaxC80Db = results.Max(r => r.C80Db);
+                        output.AvgC80Db = Math.Round(results.Average(r => r.C80Db), 2);
+                        output.AvgD50   = Math.Round(results.Average(r => r.D50), 3);
 
                         // Per-band min/max for per-band heatmap visualization
                         int numBands = OctaveBands.Count;

@@ -18,7 +18,9 @@ namespace SoundCalcs.UI.ViewModels
     public enum VisualizationMode
     {
         SPL,
+        SPL_A,
         STI,
+        C80,
         SPL_125,
         SPL_250,
         SPL_500,
@@ -548,6 +550,13 @@ namespace SoundCalcs.UI.ViewModels
             set { _backgroundNoiseDb = value; OnPropertyChanged(nameof(BackgroundNoiseDb)); }
         }
 
+        private double _humidity = 50.0;
+        public double Humidity
+        {
+            get => _humidity;
+            set { _humidity = value; OnPropertyChanged(nameof(Humidity)); }
+        }
+
         // --- Per-octave-band RT60 properties ---
         private double _rt60_125 = OctaveBands.DefaultRT60[0];
         public double RT60_125 { get => _rt60_125; set { _rt60_125 = value; OnPropertyChanged(nameof(RT60_125)); } }
@@ -582,6 +591,54 @@ namespace SoundCalcs.UI.ViewModels
 
         private double[] GetRT60Array() => new[] { _rt60_125, _rt60_250, _rt60_500, _rt60_1k, _rt60_2k, _rt60_4k, _rt60_8k };
         private double[] GetNoiseArray() => new[] { _noise_125, _noise_250, _noise_500, _noise_1k, _noise_2k, _noise_4k, _noise_8k };
+
+        /// <summary>
+        /// Auto-estimate RT60 from detected room geometry and wall absorption preset
+        /// using the Eyring-Norris formula. Populates the 7 per-band RT60 fields.
+        /// </summary>
+        public void EstimateRT60()
+        {
+            if (DetectedRooms.Count == 0)
+            {
+                StatusMessage = "No boundary defined. Click 'Select Boundary' first.";
+                return;
+            }
+
+            // Aggregate floor area and ceiling height across all rooms
+            double totalFloorArea = 0;
+            double avgCeilingH = 0;
+            int roomCount = 0;
+            foreach (var room in DetectedRooms)
+            {
+                totalFloorArea += room.Area;
+                if (room.CeilingHeightM > 0.5)
+                {
+                    avgCeilingH += room.CeilingHeightM;
+                    roomCount++;
+                }
+            }
+            // Default ceiling height if not available from speaker elevations
+            if (roomCount == 0 || avgCeilingH <= 0)
+                avgCeilingH = 3.0;
+            else
+                avgCeilingH /= roomCount;
+
+            double volumeM3 = totalFloorArea * avgCeilingH;
+            double surfaceAreaM2 = Compute.RoomAcoustics.EstimateSurfaceArea(totalFloorArea, avgCeilingH);
+
+            // Get wall absorption preset (already selected by user in Grid tab)
+            double[] absorption = OctaveBands.AbsorptionPresets.ContainsKey(WallAbsorptionPreset.Drywall)
+                ? OctaveBands.AbsorptionPresets[WallAbsorptionPreset.Drywall]
+                : new double[] { 0.10, 0.10, 0.10, 0.10, 0.10, 0.10, 0.10 };
+
+            double[] rt60 = Compute.RoomAcoustics.EstimateEyringRt60(volumeM3, surfaceAreaM2, absorption);
+
+            RT60_125 = rt60[0]; RT60_250 = rt60[1]; RT60_500 = rt60[2]; RT60_1k = rt60[3];
+            RT60_2k  = rt60[4]; RT60_4k  = rt60[5]; RT60_8k  = rt60[6];
+
+            StatusMessage = $"RT60 estimated (Eyring): room {totalFloorArea:F0} m² × {avgCeilingH:F1} m = {volumeM3:F0} m³. " +
+                $"500 Hz RT60 = {rt60[2]:F2} s";
+        }
 
         private void LoadOctaveBandSettings(AnalysisSettings s)
         {
@@ -659,6 +716,76 @@ namespace SoundCalcs.UI.ViewModels
                 _selectedVisualizationMode = value;
                 OnPropertyChanged(nameof(SelectedVisualizationMode));
                 OnPropertyChanged(nameof(LegendItems));
+                OnPropertyChanged(nameof(VisualizationModeTitle));
+                OnPropertyChanged(nameof(VisualizationModeDescription));
+            }
+        }
+
+        /// <summary>Short title for the currently selected visualization mode.</summary>
+        public string VisualizationModeTitle
+        {
+            get
+            {
+                switch (_selectedVisualizationMode)
+                {
+                    case VisualizationMode.SPL:     return "SPL — Sound Pressure Level";
+                    case VisualizationMode.SPL_A:   return "SPL (A-weighted) — dBA";
+                    case VisualizationMode.STI:     return "STI — Speech Transmission Index";
+                    case VisualizationMode.C80:     return "C80 — Clarity";
+                    case VisualizationMode.SPL_125: return "SPL at 125 Hz";
+                    case VisualizationMode.SPL_250: return "SPL at 250 Hz";
+                    case VisualizationMode.SPL_500: return "SPL at 500 Hz";
+                    case VisualizationMode.SPL_1k:  return "SPL at 1 kHz";
+                    case VisualizationMode.SPL_2k:  return "SPL at 2 kHz";
+                    case VisualizationMode.SPL_4k:  return "SPL at 4 kHz";
+                    case VisualizationMode.SPL_8k:  return "SPL at 8 kHz";
+                    default: return _selectedVisualizationMode.ToString();
+                }
+            }
+        }
+
+        /// <summary>
+        /// Plain-language description of what the current visualization mode means
+        /// and how to interpret its values. Shown to the right of the legend.
+        /// </summary>
+        public string VisualizationModeDescription
+        {
+            get
+            {
+                switch (_selectedVisualizationMode)
+                {
+                    case VisualizationMode.SPL:
+                        return "Total broadband sound level at each point (dB SPL). " +
+                               "Higher = louder. Typical PA/VA target: 70–85 dB. " +
+                               "Coverage uniformity goal: ≤ 6 dB variation across the listening area.";
+                    case VisualizationMode.SPL_A:
+                        return "A-weighted SPL in dBA (IEC 61672-1). Weights frequencies to match " +
+                               "human hearing sensitivity — mid-range counts more, very low and very high less. " +
+                               "Used for noise exposure regulations. Typical occupational limit: 85 dBA (8 hr).";
+                    case VisualizationMode.STI:
+                        return "Speech Transmission Index per IEC 60268-16. Scale: " +
+                               "Bad < 0.30 | Poor 0.30–0.45 | Fair 0.45–0.60 | Good 0.60–0.75 | Excellent > 0.75. " +
+                               "Target for PA/VA systems: ≥ 0.50. Critical venues (emergency, courtrooms): ≥ 0.65.";
+                    case VisualizationMode.C80:
+                        return "Clarity C80 (dB): ratio of sound arriving in the first 80 ms to sound arriving later. " +
+                               "Positive = more direct/early energy reaching the listener. " +
+                               "Target for speech intelligibility: C80 > 0 dB. Computed from 500 Hz + 1 kHz bands.";
+                    case VisualizationMode.SPL_125:
+                    case VisualizationMode.SPL_250:
+                        return "Low-frequency SPL. Useful for diagnosing bass build-up in corners, " +
+                               "room resonances, and boom from subwoofers. High values here can mask speech.";
+                    case VisualizationMode.SPL_500:
+                    case VisualizationMode.SPL_1k:
+                    case VisualizationMode.SPL_2k:
+                        return "Mid-frequency SPL — the most important range for speech clarity and music presence. " +
+                               "Uniformity in these bands has the greatest impact on intelligibility.";
+                    case VisualizationMode.SPL_4k:
+                    case VisualizationMode.SPL_8k:
+                        return "High-frequency SPL. Shows where air absorption, distance, or obstructions " +
+                               "reduce treble projection. Low values here result in muffled sound at the back of the room.";
+                    default:
+                        return "";
+                }
             }
         }
 
@@ -692,6 +819,18 @@ namespace SoundCalcs.UI.ViewModels
                     double lo = hasRenderedRange ? _lastOutput.RenderedMinVal : _lastOutput.MinSti;
                     double hi = hasRenderedRange ? _lastOutput.RenderedMaxVal : _lastOutput.MaxSti;
                     bands = FilledRegionRenderer.GetStiLegendBands(lo, hi);
+                }
+                else if (_selectedVisualizationMode == VisualizationMode.SPL_A)
+                {
+                    double lo = hasRenderedRange ? _lastOutput.RenderedMinVal : _lastOutput.MinSplDbA;
+                    double hi = hasRenderedRange ? _lastOutput.RenderedMaxVal : _lastOutput.MaxSplDbA;
+                    bands = FilledRegionRenderer.GetLegendBands(lo, hi, " dBA");
+                }
+                else if (_selectedVisualizationMode == VisualizationMode.C80)
+                {
+                    double lo = hasRenderedRange ? _lastOutput.RenderedMinVal : _lastOutput.MinC80Db;
+                    double hi = hasRenderedRange ? _lastOutput.RenderedMaxVal : _lastOutput.MaxC80Db;
+                    bands = FilledRegionRenderer.GetLegendBands(lo, hi, " dB C80");
                 }
                 else if (bandIndex >= 0
                     && _lastOutput.MinSplDbByBand != null
@@ -1009,7 +1148,8 @@ namespace SoundCalcs.UI.ViewModels
                     {
                         BackgroundNoiseDb = BackgroundNoiseDb,
                         RT60ByBand = GetRT60Array(),
-                        BackgroundNoiseByBand = GetNoiseArray()
+                        BackgroundNoiseByBand = GetNoiseArray(),
+                        RelativeHumidityPct = Humidity
                     }
                 };
 
@@ -1095,10 +1235,11 @@ namespace SoundCalcs.UI.ViewModels
                 StatusMessage = $"Results ready: {DateTime.Now:HH:mm:ss}";
                 LastRunSummary = $"{output.ReceiverCount} points | " +
                     $"{output.Quality} | " +
-                    $"SPL: {output.MinSplDb:F1} - {output.MaxSplDb:F1} dB | " +
-                    $"STI: {output.MinSti:F2} - {output.MaxSti:F2} | " +
-                    $"Time: {output.ComputeTimeSeconds:F1}s | " +
-                    $"Sources: {output.SourceCount}";
+                    $"SPL: {output.MinSplDb:F1}–{output.MaxSplDb:F1} dB | " +
+                    $"dBA: {output.MinSplDbA:F1}–{output.MaxSplDbA:F1} | " +
+                    $"STI: {output.MinSti:F2}–{output.MaxSti:F2} | " +
+                    $"C80 avg: {output.AvgC80Db:F1} dB | D50 avg: {output.AvgD50:F2} | " +
+                    $"Time: {output.ComputeTimeSeconds:F1}s";
             }
         }
 
@@ -1134,6 +1275,8 @@ namespace SoundCalcs.UI.ViewModels
                         UseMinSplThreshold ? MinSplThreshold : (double?)null);
                     int bi = GetOctaveBandIndex(_selectedVisualizationMode);
                     string modeLabel = _selectedVisualizationMode == VisualizationMode.STI ? "STI"
+                        : _selectedVisualizationMode == VisualizationMode.SPL_A ? "SPL (dBA)"
+                        : _selectedVisualizationMode == VisualizationMode.C80   ? "C80 (Clarity)"
                         : bi >= 0 ? $"SPL @{OctaveBands.Labels[bi]} Hz"
                         : "SPL";
                     SetStatusFromRevitThread($"{modeLabel} heatmap rendered: {output.Results.Count} points on '{view.Name}'");

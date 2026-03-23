@@ -27,6 +27,23 @@ namespace SoundCalcs.Domain
         /// Speech Transmission Index (0.0 – 1.0), computed via IEC 60268-16 MTF.
         /// </summary>
         public double Sti { get; set; } = 0.0;
+
+        /// <summary>
+        /// A-weighted SPL in dBA (IEC 61672-1). Derived from per-band SPL with A-weighting applied.
+        /// </summary>
+        public double SplDbA { get; set; }
+
+        /// <summary>
+        /// Clarity C80 in dB: 10·log₁₀(early energy / late energy) across speech bands.
+        /// Positive = more direct/early sound. Target for speech intelligibility: C80 > 0 dB.
+        /// </summary>
+        public double C80Db { get; set; }
+
+        /// <summary>
+        /// Definition D50: ratio of early (0–50 ms) energy to total energy, across speech bands.
+        /// Range 0–1. Values above 0.5 indicate good clarity.
+        /// </summary>
+        public double D50 { get; set; }
     }
 
     /// <summary>
@@ -96,6 +113,24 @@ namespace SoundCalcs.Domain
         /// Per-octave-band maximum SPL across all results, for legend scaling.
         /// </summary>
         public double[] MaxSplDbByBand { get; set; }
+
+        /// <summary>Min A-weighted SPL across all results.</summary>
+        public double MinSplDbA { get; set; }
+
+        /// <summary>Max A-weighted SPL across all results.</summary>
+        public double MaxSplDbA { get; set; }
+
+        /// <summary>Minimum C80 across all results in dB.</summary>
+        public double MinC80Db { get; set; }
+
+        /// <summary>Maximum C80 across all results in dB.</summary>
+        public double MaxC80Db { get; set; }
+
+        /// <summary>Average C80 across all results in dB.</summary>
+        public double AvgC80Db { get; set; }
+
+        /// <summary>Average D50 across all results (0–1).</summary>
+        public double AvgD50 { get; set; }
 
         /// <summary>
         /// The exact min/max value used for colour banding in the last render.
