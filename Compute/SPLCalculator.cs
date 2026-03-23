@@ -399,8 +399,11 @@ namespace SoundCalcs.Compute
 
                         // Per-band wall TL: nominal STC contour value minus field penalty.
                         // StcBandOffsets[k] maps the rated STC to each frequency per ASTM E413.
-                        double bandTlDb = Math.Max(0, wallStcSum + OctaveBands.StcBandOffsets[k]
-                            - FieldPenaltyDb);
+                        // Guard against wallStcSum == 0: the field penalty must not produce
+                        // spurious attenuation on high-frequency bands in free-field conditions.
+                        double bandTlDb = wallStcSum > 0
+                            ? Math.Max(0, wallStcSum + OctaveBands.StcBandOffsets[k] - FieldPenaltyDb)
+                            : 0;
 
                         // Air absorption for this band (temperature-dependent)
                         double airLossDb = _airAbsorption[k] * distance;
@@ -476,8 +479,9 @@ namespace SoundCalcs.Compute
                         double reflBandGain = provider.GetDirectivityGainForBand(srcFacing, toReflDir, k);
                         double basePower = reflDistPower * reflBandGain * reflBandGain;
 
-                        double bandTlDb = Math.Max(0, otherStc + OctaveBands.StcBandOffsets[k]
-                            - FieldPenaltyDb);
+                        double bandTlDb = otherStc > 0
+                            ? Math.Max(0, otherStc + OctaveBands.StcBandOffsets[k] - FieldPenaltyDb)
+                            : 0;
                         double airLossDb = _airAbsorption[k] * reflDistance;
                         double totalLossDb = Math.Min(bandTlDb + airLossDb, MaxTotalLossDb);
                         double lossFactor = Math.Pow(10.0, -totalLossDb / 10.0);
@@ -538,8 +542,9 @@ namespace SoundCalcs.Compute
                         double hBandGain = hProvider.GetDirectivityGainForBand(srcFacing, toReflDir, k);
                         double hBasePower = hDistPower * hBandGain * hBandGain;
 
-                        double bandTlDb = Math.Max(0, hWallStc + OctaveBands.StcBandOffsets[k]
-                            - FieldPenaltyDb);
+                        double bandTlDb = hWallStc > 0
+                            ? Math.Max(0, hWallStc + OctaveBands.StcBandOffsets[k] - FieldPenaltyDb)
+                            : 0;
                         double airLossDb = _airAbsorption[k] * hDist;
                         double totalLossDb = Math.Min(bandTlDb + airLossDb, MaxTotalLossDb);
                         double lossFactor = Math.Pow(10.0, -totalLossDb / 10.0);
