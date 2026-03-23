@@ -268,12 +268,10 @@ namespace SoundCalcs.Tests
             // In this geometry the image source coincides with the receiver, so no
             // first-order reflection is valid → the only change is direct-path TL.
             //
-            //   No-wall extra loss for bands 0-4: 0 dB (offsets below field penalty)
-            //   No-wall extra loss for band 5:    1 dB  (offset 6 > penalty 5)
-            //   No-wall extra loss for band 6:    4 dB  (offset 9 > penalty 5)
+            //   No-wall TL: 0 dB for all bands (wallStcSum=0 → no field penalty applied)
             //
-            //   Incremental loss added by STC-40 wall:
-            //   k=0 (125 Hz): 19-0=19 | k=1:27 | k=2:32 | k=3:35 | k=4:38 | k=5:40 | k=6:40
+            //   TL added by STC-40 wall = max(0, 40 + StcBandOffsets[k] - 5):
+            //   k=0 (125 Hz):19 | k=1:27 | k=2:32 | k=3:35 | k=4:38 | k=5:41 | k=6:44
             Vec3 srcPos = new Vec3(0, 0, 0);
             Vec3 recvPos = new Vec3(5, 0, 0);
             var wall = new ComputeWall
@@ -290,9 +288,10 @@ namespace SoundCalcs.Tests
                     walls: new List<ComputeWall> { wall }),
                 CancellationToken.None, null);
 
-            // Incremental TL = (no-wall loss removed) + (wall loss added):
-            // k=5,6 already had 1 and 4 dB field-penalty in the no-wall case
-            int[] expectedTL = { 19, 27, 32, 35, 38, 40, 40 };
+            // With the fix, no-wall TL = 0 for all bands.
+            // Incremental TL equals the full STC-40 contour for every band:
+            //   TL_k = max(0, 40 + StcBandOffsets[k] - FieldPenalty=5)
+            int[] expectedTL = { 19, 27, 32, 35, 38, 41, 44 };
 
             for (int k = 0; k < OctaveBands.Count; k++)
             {
@@ -439,16 +438,14 @@ namespace SoundCalcs.Tests
         }
 
         [Fact]
-        public void SPL_FlatSpectrumSource_LowFreqBandAtExpectedLevel()
+        public void SPL_FlatSpectrumSource_AllBandsAtExpectedLevel()
         {
-            // For a SimpleOmni flat-spectrum source at 1 m the broadband power is split
-            // equally across all 7 octave bands.  At 125 Hz, air absorption (≈ 0 dB/m)
-            // and the STC-band offset (-16 dB) remain below the 5 dB field penalty, so no
-            // field-roll-off is applied and the 125 Hz per-band level must be very close to:
+            // A SimpleOmni source splits broadband energy equally across all 7 octave bands.
+            // With no walls (wallStcSum = 0) no field penalty is applied to any band, so each
+            // per-band SPL must be within 0.2 dB of:
             //   OnAxisSplDb - 10·log10(7) ≈ 90 - 8.451 = 81.549 dB
-            // At 8 kHz the StcBandOffset (+9 dB) exceeds the field penalty (+5 dB), adding a
-            // 4 dB effective roll-off on top of air absorption, so the 8 kHz band must be
-            // at least 4 dB below the 125 Hz band.
+            // The only allowed deviations are from frequency-dependent air absorption
+            // (< 0.12 dB at 8 kHz for a 1 m path at 20 °C).
             var input = BuildInput(new Vec3(0, 0, 0), new Vec3(1, 0, 0), 90.0,
                 new[] { new Vec3(1, 0, 0) });
 
@@ -456,15 +453,12 @@ namespace SoundCalcs.Tests
             var (results, _) = calc.Calculate(input, CancellationToken.None, null);
 
             var r = results[0];
-            double expectedLowFreq = 90.0 - 10.0 * Math.Log10(OctaveBands.Count); // ≈ 81.549
+            double expectedPerBand = 90.0 - 10.0 * Math.Log10(OctaveBands.Count); // ≈ 81.549
 
-            // 125 Hz band: near-zero air loss, no field penalty → within 0.1 dB of expected
-            Assert.InRange(r.SplDbByBand[0], expectedLowFreq - 0.1, expectedLowFreq + 0.1);
-
-            // 8 kHz band: +4 dB field roll-off + air absorption → clearly lower than 125 Hz
-            Assert.True(r.SplDbByBand[6] < r.SplDbByBand[0] - 3.0,
-                $"8 kHz SPL ({r.SplDbByBand[6]:F1} dB) should be > 3 dB below " +
-                $"125 Hz SPL ({r.SplDbByBand[0]:F1} dB)");
+            for (int k = 0; k < OctaveBands.Count; k++)
+            {
+                Assert.InRange(r.SplDbByBand[k], expectedPerBand - 0.2, expectedPerBand + 0.2);
+            }
         }
 
         // ---------------------------------------------------------------------------
