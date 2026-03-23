@@ -1,11 +1,14 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Collections.Specialized;
 using System.Linq;
 using System.Windows;
 using System.Windows.Input;
+using System.Windows.Media;
 using System.Windows.Threading;
 using SkiaSharp;
+using SkiaSharp.Views.Desktop;
 using SkiaSharp.Views.WPF;
 using SoundCalcs.Domain;
 using SoundCalcs.UI.ViewModels;
@@ -26,18 +29,44 @@ namespace SoundCalcs.UI
     /// </summary>
     public partial class AcousticViewerControl : System.Windows.Controls.UserControl
     {
-        // ── Colour palette (matches FilledRegionRenderer) ──────────────────
-        static readonly SKColor[] HeatColors =
+        // ── Smooth heatmap gradient: red (low/quiet) → green (high/loud) ──
+        // Stops are evenly spaced 0..1. SampleGradient() lerps between them.
+        static readonly SKColor[] GradientStops =
         {
-            new SKColor(0xD2, 0x00, 0x00),  // 0 – coldest / quietest
-            new SKColor(0xFF, 0x3C, 0x00),
-            new SKColor(0xFF, 0x96, 0x00),
-            new SKColor(0xFF, 0xD2, 0x00),
-            new SKColor(0xC8, 0xDC, 0x00),
-            new SKColor(0x8C, 0xDC, 0x1E),
-            new SKColor(0x3C, 0xC8, 0x1E),
-            new SKColor(0x00, 0xA0, 0x00),  // 7 – hottest / loudest
+            new SKColor(0xCC, 0x00, 0x00),  // 0.00 – red        (quietest)
+            new SKColor(0xFF, 0x44, 0x00),  // 0.17 – red-orange
+            new SKColor(0xFF, 0xAA, 0x00),  // 0.33 – amber
+            new SKColor(0xFF, 0xFF, 0x00),  // 0.50 – yellow
+            new SKColor(0xAA, 0xFF, 0x00),  // 0.67 – yellow-green
+            new SKColor(0x44, 0xDD, 0x00),  // 0.83 – lime
+            new SKColor(0x00, 0xAA, 0x00),  // 1.00 – green      (loudest)
         };
+
+        static SKColor SampleGradient(double t)
+        {
+            t = t < 0.0 ? 0.0 : t > 1.0 ? 1.0 : t;
+            double scaled = t * (GradientStops.Length - 1);
+            int    lo     = (int)scaled;
+            int    hi     = lo + 1 < GradientStops.Length ? lo + 1 : lo;
+            double frac   = scaled - lo;
+            SKColor a = GradientStops[lo], b = GradientStops[hi];
+            return new SKColor(
+                (byte)(a.Red   + (b.Red   - a.Red)   * frac),
+                (byte)(a.Green + (b.Green - a.Green) * frac),
+                (byte)(a.Blue  + (b.Blue  - a.Blue)  * frac),
+                210);
+        }
+
+        // Legacy discrete palette used only for the legend swatches
+        static readonly SKColor[] HeatColors = new SKColor[8];
+        static AcousticViewerControl()
+        {
+            for (int i = 0; i < 8; i++)
+            {
+                var c = SampleGradient(i / 7.0);
+                HeatColors[i] = new SKColor(c.Red, c.Green, c.Blue);
+            }
+        }
 
         static readonly SKColor BgColor       = new SKColor(0x1F, 0x1F, 0x1F);
         static readonly SKColor WallColor      = new SKColor(0xAA, 0xBB, 0xCC);
@@ -57,6 +86,19 @@ namespace SoundCalcs.UI
         bool              _isPanning;
         System.Windows.Point _lastMouse;
 
+        // ── Probe ──────────────────────────────────────────────────────────
+        bool                    _probeMode;
+        readonly List<ProbePin> _probePins = new List<ProbePin>();
+
+        // ── Speaker rotation drag ──────────────────────────────────────────
+        SpeakerInstance _rotatingSpk;
+
+        /// <summary>
+        /// Called when the user finishes dragging a speaker's aim direction.
+        /// Arguments: (ElementId, newAngleDegrees).
+        /// </summary>
+        public Action<int, double> OnSpeakerRotated { get; set; }
+
         // ── LOD state ──────────────────────────────────────────────────────
         // lodStep = 4 → sample every 4th receiver, draw 4× blocks (coarse)
         // lodStep = 2 → every 2nd receiver, 2× blocks
@@ -68,6 +110,23 @@ namespace SoundCalcs.UI
         readonly List<WallSegment2D>   _walls    = new List<WallSegment2D>();
         readonly List<SpeakerInstance> _speakers = new List<SpeakerInstance>();
 
+        // ── Heatmap bitmap cache ───────────────────────────────────────────
+        SKBitmap          _heatBitmap;
+        AcousticJobOutput _heatBitmapSource;
+        VisualizationMode _heatBitmapMode;
+        SKRect            _heatWorldRect;
+        double            _heatMinVal, _heatMaxVal;
+
+
+
+        struct ProbePin
+        {
+            public float  WorldX, WorldY;
+            public double SplDb, Sti;
+            public double[] SplDbByBand;
+            public int    Index;
+        }
+
         // ── Dependency Properties ──────────────────────────────────────────
 
         public static readonly DependencyProperty JobOutputProperty =
@@ -77,15 +136,20 @@ namespace SoundCalcs.UI
                 {
                     var c = (AcousticViewerControl)d;
                     c._fitPending = true;
+                    c.RefreshPinValues();
                     c.StartLodProgression();
                 }));
 
         public static readonly DependencyProperty WallGroupsSourceProperty =
             DependencyProperty.Register(nameof(WallGroupsSource), typeof(IEnumerable),
                 typeof(AcousticViewerControl),
-                new PropertyMetadata(null, (d, _) =>
+                new PropertyMetadata(null, (d, e) =>
                 {
                     var c = (AcousticViewerControl)d;
+                    if (e.OldValue is INotifyCollectionChanged oldCol)
+                        oldCol.CollectionChanged -= c.OnSourceCollectionChanged;
+                    if (e.NewValue is INotifyCollectionChanged newCol)
+                        newCol.CollectionChanged += c.OnSourceCollectionChanged;
                     c.RebuildGeometry();
                     c._fitPending = true;
                     c.Refresh();
@@ -94,9 +158,13 @@ namespace SoundCalcs.UI
         public static readonly DependencyProperty SpeakerGroupsSourceProperty =
             DependencyProperty.Register(nameof(SpeakerGroupsSource), typeof(IEnumerable),
                 typeof(AcousticViewerControl),
-                new PropertyMetadata(null, (d, _) =>
+                new PropertyMetadata(null, (d, e) =>
                 {
                     var c = (AcousticViewerControl)d;
+                    if (e.OldValue is INotifyCollectionChanged oldCol)
+                        oldCol.CollectionChanged -= c.OnSourceCollectionChanged;
+                    if (e.NewValue is INotifyCollectionChanged newCol)
+                        newCol.CollectionChanged += c.OnSourceCollectionChanged;
                     c.RebuildGeometry();
                     c._fitPending = true;
                     c.Refresh();
@@ -146,7 +214,13 @@ namespace SoundCalcs.UI
         {
             InitializeComponent();
         }
-
+        // ── Collection change handler ──────────────────────────────────
+        void OnSourceCollectionChanged(object sender, NotifyCollectionChangedEventArgs e)
+        {
+            RebuildGeometry();
+            _fitPending = true;
+            Refresh();
+        }
         // ── Geometry cache ─────────────────────────────────────────────────
         void RebuildGeometry()
         {
@@ -264,6 +338,7 @@ namespace SoundCalcs.UI
             DrawHeatmap(canvas);
             DrawWalls(canvas);
             DrawSpeakers(canvas);
+            DrawPinMarkers(canvas);
 
             canvas.Restore();
 
@@ -271,6 +346,7 @@ namespace SoundCalcs.UI
             DrawLegend(canvas, w, h);
             DrawLodBadge(canvas, w, h);
             DrawScaleBar(canvas, w, h);
+            DrawPinLabels(canvas, w, h);
         }
 
         // ── Heatmap ────────────────────────────────────────────────────────
@@ -278,63 +354,83 @@ namespace SoundCalcs.UI
         {
             if (JobOutput == null || JobOutput.Results.Count == 0) return;
 
-            // Determine value range for colour mapping
-            bool isSti    = Mode == VisualizationMode.STI;
-            int  bandIdx  = MainViewModel.GetOctaveBandIndex(Mode);
+            bool isSti     = Mode == VisualizationMode.STI;
+            int  bandIdx   = MainViewModel.GetOctaveBandIndex(Mode);
             bool isPerBand = bandIdx >= 0;
 
-            double minVal, maxVal;
-            if (isSti)
+            // Rebuild bitmap only when the output or mode changes.
+            if (_heatBitmap == null ||
+                !ReferenceEquals(_heatBitmapSource, JobOutput) ||
+                _heatBitmapMode != Mode)
             {
-                minVal = JobOutput.MinSti;
-                maxVal = JobOutput.MaxSti;
-                if (maxVal - minVal < 0.01) { minVal = 0.0; maxVal = 1.0; }
+                var results = JobOutput.Results;
+                var vals = new double[results.Count];
+                for (int i = 0; i < results.Count; i++)
+                    vals[i] = isSti     ? results[i].Sti
+                            : isPerBand ? results[i].SplDbByBand[bandIdx]
+                            : results[i].SplDb;
+
+                var sorted = (double[])vals.Clone();
+                System.Array.Sort(sorted);
+                _heatMinVal = sorted[Math.Max(0, (int)(sorted.Length * 0.02))];
+                _heatMaxVal = sorted[Math.Min(sorted.Length - 1, (int)(sorted.Length * 0.98))];
+                if (_heatMaxVal - _heatMinVal < (isSti ? 0.05 : 3.0))
+                {
+                    double mid = (_heatMinVal + _heatMaxVal) * 0.5;
+                    _heatMinVal = mid - (isSti ? 0.25 : 15.0);
+                    _heatMaxVal = mid + (isSti ? 0.25 : 15.0);
+                }
+
+                _heatBitmap?.Dispose();
+                _heatBitmap       = BuildHeatmapBitmap(results, vals, _heatMinVal, _heatMaxVal - _heatMinVal, GridSpacing, out _heatWorldRect);
+                _heatBitmapSource = JobOutput;
+                _heatBitmapMode   = Mode;
             }
-            else if (isPerBand)
+
+            if (_heatBitmap == null) return;
+
+            // Bilinear filtering gives smooth zoom-independent interpolation
+            // between grid cells — no blur needed, no zoom-dependent artefacts.
+            using var paint = new SKPaint { FilterQuality = SKFilterQuality.Medium };
+            canvas.DrawBitmap(_heatBitmap, _heatWorldRect, paint);
+        }
+
+        static SKBitmap BuildHeatmapBitmap(
+            List<ReceiverResult> results, double[] vals,
+            double minVal, double range, double spacing, out SKRect worldRect)
+        {
+            if (results.Count == 0) { worldRect = SKRect.Empty; return null; }
+            if (spacing <= 0) spacing = 1.0;
+
+            double xMin = double.MaxValue, xMax = double.MinValue;
+            double yMin = double.MaxValue, yMax = double.MinValue;
+            foreach (var r in results)
             {
-                minVal = JobOutput.MinSplDbByBand[bandIdx];
-                maxVal = JobOutput.MaxSplDbByBand[bandIdx];
-                if (maxVal - minVal < 1.0) { minVal -= 10.0; maxVal += 10.0; }
+                if (r.Position.X < xMin) xMin = r.Position.X;
+                if (r.Position.X > xMax) xMax = r.Position.X;
+                if (r.Position.Y < yMin) yMin = r.Position.Y;
+                if (r.Position.Y > yMax) yMax = r.Position.Y;
             }
-            else  // broadband SPL
+
+            int cols = Math.Max(1, (int)Math.Round((xMax - xMin) / spacing) + 1);
+            int rows = Math.Max(1, (int)Math.Round((yMax - yMin) / spacing) + 1);
+
+            var bmp = new SKBitmap(cols, rows, SKColorType.Bgra8888, SKAlphaType.Premul);
+            bmp.Erase(SKColors.Transparent);
+
+            for (int i = 0; i < results.Count; i++)
             {
-                minVal = JobOutput.MinSplDb;
-                maxVal = JobOutput.MaxSplDb;
-                if (maxVal - minVal < 1.0) { minVal -= 10.0; maxVal += 10.0; }
+                int col = (int)Math.Round((results[i].Position.X - xMin) / spacing);
+                int row = (int)Math.Round((results[i].Position.Y - yMin) / spacing);
+                if ((uint)col < (uint)cols && (uint)row < (uint)rows)
+                    bmp.SetPixel(col, row, SampleGradient((vals[i] - minVal) / range));
             }
 
-            double range = maxVal - minVal;
-
-            // Each cell is drawn as a square of half-size = gridSpacing × lodStep / 2
-            float cellHalf = (float)(GridSpacing * _lodStep * 0.5);
-            int   step     = _lodStep;
-
-            using var paint = new SKPaint
-            {
-                Style       = SKPaintStyle.Fill,
-                IsAntialias = false,
-            };
-
-            var results = JobOutput.Results;
-            int count   = results.Count;
-
-            for (int i = 0; i < count; i += step)
-            {
-                ReceiverResult r   = results[i];
-                double val = isSti    ? r.Sti
-                           : isPerBand ? r.SplDbByBand[bandIdx]
-                           : r.SplDb;
-
-                double t  = (val - minVal) / range;
-                t = t < 0.0 ? 0.0 : t > 1.0 ? 1.0 : t;
-                int ci = (int)(t * (HeatColors.Length - 1));
-
-                paint.Color = HeatColors[ci].WithAlpha(210);
-
-                float x = (float)r.Position.X;
-                float y = (float)r.Position.Y;
-                canvas.DrawRect(x - cellHalf, y - cellHalf, cellHalf * 2f, cellHalf * 2f, paint);
-            }
+            float hs = (float)(spacing * 0.5);
+            worldRect = new SKRect(
+                (float)xMin - hs, (float)yMin - hs,
+                (float)xMax + hs, (float)yMax + hs);
+            return bmp;
         }
 
         // ── Walls ──────────────────────────────────────────────────────────
@@ -382,7 +478,7 @@ namespace SoundCalcs.UI
                 // Project FacingDirection to XY plane for direction indicator
                 float dx = (float)s.FacingDirection.X;
                 float dy = (float)s.FacingDirection.Y;
-                float hLen = MathF.Sqrt(dx * dx + dy * dy);
+                float hLen = (float)Math.Sqrt(dx * dx + dy * dy);
 
                 if (hLen > 0.15f)
                 {
@@ -399,34 +495,16 @@ namespace SoundCalcs.UI
         // ── Colour legend (screen-space) ───────────────────────────────────
         void DrawLegend(SKCanvas canvas, float cw, float ch)
         {
-            if (JobOutput == null || JobOutput.Results.Count == 0) return;
+            if (_heatBitmap == null) return;  // nothing rendered yet
 
             bool isSti    = Mode == VisualizationMode.STI;
             int  bandIdx  = MainViewModel.GetOctaveBandIndex(Mode);
             bool isPerBand = bandIdx >= 0;
+            string unit   = isSti ? "" : " dB";
 
-            double minVal, maxVal;
-            string unit;
-
-            if (isSti)
-            {
-                minVal = JobOutput.MinSti;  maxVal = JobOutput.MaxSti;
-                if (maxVal - minVal < 0.01) { minVal = 0.0; maxVal = 1.0; }
-                unit = "";
-            }
-            else if (isPerBand)
-            {
-                minVal = JobOutput.MinSplDbByBand[bandIdx];
-                maxVal = JobOutput.MaxSplDbByBand[bandIdx];
-                if (maxVal - minVal < 1.0) { minVal -= 10.0; maxVal += 10.0; }
-                unit = " dB";
-            }
-            else
-            {
-                minVal = JobOutput.MinSplDb;  maxVal = JobOutput.MaxSplDb;
-                if (maxVal - minVal < 1.0) { minVal -= 10.0; maxVal += 10.0; }
-                unit = " dB";
-            }
+            // Use the same range that was used to build the heatmap bitmap
+            double minVal = _heatMinVal;
+            double maxVal = _heatMaxVal;
 
             const float swW  = 16f;
             const float swH  = 18f;
@@ -561,24 +639,84 @@ namespace SoundCalcs.UI
         {
             if (e.LeftButton == MouseButtonState.Pressed)
             {
+                if (_probeMode)
+                {
+                    var pos = e.GetPosition(SkCanvas);
+                    PlaceProbePin((float)pos.X, (float)pos.Y);
+                    e.Handled = true;
+                    return;
+                }
+
+                // Start speaker-rotation drag when clicking near a speaker symbol
+                var mpos = e.GetPosition(SkCanvas);
+                var spk  = HitTestSpeaker((float)mpos.X, (float)mpos.Y);
+                if (spk != null)
+                {
+                    _rotatingSpk = spk;
+                    SkCanvas.CaptureMouse();
+                    e.Handled = true;
+                    return;
+                }
+
                 _isPanning  = true;
-                _lastMouse  = e.GetPosition(SkCanvas);
+                _lastMouse  = mpos;
                 SkCanvas.CaptureMouse();
             }
         }
 
         void Canvas_MouseMove(object sender, MouseEventArgs e)
         {
-            if (!_isPanning) return;
             var cur = e.GetPosition(SkCanvas);
-            _panX += (float)(cur.X - _lastMouse.X);
-            _panY += (float)(cur.Y - _lastMouse.Y);
-            _lastMouse = cur;
-            Refresh();
+
+            if (_rotatingSpk != null)
+            {
+                float wx = (float)(cur.X - _panX) / _zoom;
+                float wy = -(float)(cur.Y - _panY) / _zoom;
+                double dx   = wx - _rotatingSpk.Position.X;
+                double dy   = wy - _rotatingSpk.Position.Y;
+                double dist = Math.Sqrt(dx * dx + dy * dy);
+                if (dist > 0.05)   // ignore jitter when cursor is right on top
+                {
+                    double fz   = _rotatingSpk.FacingDirection.Z;
+                    double hLen = Math.Sqrt(Math.Max(0.0, 1.0 - fz * fz));
+                    if (hLen < 1e-6) hLen = 1.0;
+                    _rotatingSpk.FacingDirection = new Vec3(
+                        dx / dist * hLen, dy / dist * hLen, fz);
+                }
+                Refresh();
+                return;
+            }
+
+            if (_isPanning)
+            {
+                _panX += (float)(cur.X - _lastMouse.X);
+                _panY += (float)(cur.Y - _lastMouse.Y);
+                _lastMouse = cur;
+                Refresh();
+                return;
+            }
+
+            // Hover: change cursor when over a speaker to hint rotation is available
+            if (!_probeMode)
+            {
+                var spk = HitTestSpeaker((float)cur.X, (float)cur.Y);
+                SkCanvas.Cursor = spk != null ? Cursors.SizeAll : Cursors.Hand;
+            }
         }
 
         void Canvas_MouseUp(object sender, MouseButtonEventArgs e)
         {
+            if (_rotatingSpk != null)
+            {
+                double angleDeg = Math.Atan2(
+                    _rotatingSpk.FacingDirection.Y,
+                    _rotatingSpk.FacingDirection.X) * 180.0 / Math.PI;
+                OnSpeakerRotated?.Invoke(_rotatingSpk.ElementId, angleDeg);
+                _rotatingSpk = null;
+                SkCanvas.ReleaseMouseCapture();
+                return;
+            }
+
             if (!_isPanning) return;
             _isPanning = false;
             SkCanvas.ReleaseMouseCapture();
@@ -595,7 +733,7 @@ namespace SoundCalcs.UI
             float wy = -(cy - _panY) / _zoom;
 
             float factor = e.Delta > 0 ? 1.15f : 1f / 1.15f;
-            _zoom = Math.Clamp(_zoom * factor, 2f, 8000f);
+            _zoom = Math.Min(Math.Max(_zoom * factor, 2f), 8000f);
 
             // Keep the world point under the cursor pinned to cursor position
             _panX = cx - wx * _zoom;
@@ -609,6 +747,159 @@ namespace SoundCalcs.UI
         {
             _fitPending = true;
             Refresh();
+        }
+
+        // ── Probe button ───────────────────────────────────────────────────
+        void ProbeBtn_Click(object sender, RoutedEventArgs e)
+        {
+            _probeMode = !_probeMode;
+            ProbeBtn.Background = _probeMode
+                ? new SolidColorBrush(Color.FromArgb(0xAA, 0x40, 0xA0, 0xFF))
+                : new SolidColorBrush(Color.FromArgb(0x33, 0xFF, 0xFF, 0xFF));
+            ProbeBtn.Foreground = _probeMode
+                ? Brushes.White
+                : new SolidColorBrush(Color.FromArgb(0xFF, 0xCC, 0xCC, 0xCC));
+            SkCanvas.Cursor = _probeMode ? Cursors.Cross : Cursors.Hand;
+        }
+
+        void ClearPinsBtn_Click(object sender, RoutedEventArgs e)
+        {
+            _probePins.Clear();
+            UpdateClearPinsBtn();
+            Refresh();
+        }
+
+        void UpdateClearPinsBtn()
+            => ClearPinsBtn.Visibility = _probePins.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+
+        // ── Probe placement ────────────────────────────────────────────────
+        void PlaceProbePin(float screenX, float screenY)
+        {
+            if (JobOutput == null || JobOutput.Results.Count == 0) return;
+            float wx =  (screenX - _panX) / _zoom;
+            float wy = -(screenY - _panY) / _zoom;
+            var r = FindNearestResult(wx, wy);
+            if (r == null) return;
+            _probePins.Add(new ProbePin
+            {
+                WorldX      = (float)r.Position.X,
+                WorldY      = (float)r.Position.Y,
+                SplDb       = r.SplDb,
+                Sti         = r.Sti,
+                SplDbByBand = r.SplDbByBand,
+                Index       = _probePins.Count + 1,
+            });
+            UpdateClearPinsBtn();
+            Refresh();
+        }
+
+        // Hit-test: returns the speaker within 8 screen pixels of (screenX, screenY), or null.
+        SpeakerInstance HitTestSpeaker(float screenX, float screenY)
+        {
+            if (_speakers.Count == 0) return null;
+            float wx   = (screenX - _panX) / _zoom;
+            float wy   = -(screenY - _panY) / _zoom;
+            float hitR = 10f / _zoom;  // 10 screen-pixel hit radius
+            SpeakerInstance best  = null;
+            double          bestD = hitR;
+            foreach (var s in _speakers)
+            {
+                double dx = s.Position.X - wx;
+                double dy = s.Position.Y - wy;
+                double d  = Math.Sqrt(dx * dx + dy * dy);
+                if (d < bestD) { bestD = d; best = s; }
+            }
+            return best;
+        }
+
+        ReceiverResult FindNearestResult(float wx, float wy)
+        {
+            if (JobOutput == null) return null;
+            ReceiverResult best  = null;
+            double         bestD = double.MaxValue;
+            foreach (var r in JobOutput.Results)
+            {
+                double dx = r.Position.X - wx;
+                double dy = r.Position.Y - wy;
+                double d2 = dx * dx + dy * dy;
+                if (d2 < bestD) { bestD = d2; best = r; }
+            }
+            return best;
+        }
+
+        // Re-sample all placed pins against the current JobOutput results.
+        // Called whenever a new analysis result arrives.
+        void RefreshPinValues()
+        {
+            if (JobOutput == null || JobOutput.Results.Count == 0 || _probePins.Count == 0) return;
+            for (int i = 0; i < _probePins.Count; i++)
+            {
+                var pin = _probePins[i];
+                var r   = FindNearestResult(pin.WorldX, pin.WorldY);
+                if (r == null) continue;
+                pin.SplDb       = r.SplDb;
+                pin.Sti         = r.Sti;
+                pin.SplDbByBand = r.SplDbByBand;
+                _probePins[i]   = pin;
+            }
+        }
+
+        // ── Pin markers (world-space) ──────────────────────────────────────
+        void DrawPinMarkers(SKCanvas canvas)
+        {
+            if (_probePins.Count == 0) return;
+            float r  = 5f / _zoom;
+            float sw = 1.5f / _zoom;
+            using var fill = new SKPaint { Color = new SKColor(0xFF, 0xE0, 0x40, 230), Style = SKPaintStyle.Fill, IsAntialias = true };
+            using var ring = new SKPaint { Color = new SKColor(0x22, 0x22, 0x22, 220), StrokeWidth = sw, Style = SKPaintStyle.Stroke, IsAntialias = true };
+            foreach (var p in _probePins)
+            {
+                canvas.DrawCircle(p.WorldX, p.WorldY, r, fill);
+                canvas.DrawCircle(p.WorldX, p.WorldY, r, ring);
+            }
+        }
+
+        // ── Pin callout labels (screen-space) ──────────────────────────────
+        void DrawPinLabels(SKCanvas canvas, float cw, float ch)
+        {
+            if (_probePins.Count == 0) return;
+            using var typeface = SKTypeface.FromFamilyName("Segoe UI") ?? SKTypeface.Default;
+            using var bgPaint   = new SKPaint { Color = new SKColor(0x12, 0x12, 0x12, 0xEE), Style = SKPaintStyle.Fill };
+            using var brdPaint  = new SKPaint { Color = new SKColor(0xFF, 0xE0, 0x40, 0xB0), StrokeWidth = 1f, Style = SKPaintStyle.Stroke, IsAntialias = true };
+            using var stemPaint = new SKPaint { Color = new SKColor(0xFF, 0xE0, 0x40, 0x80), StrokeWidth = 1f, Style = SKPaintStyle.Stroke, IsAntialias = true };
+            using var hdrPaint  = new SKPaint { Color = new SKColor(0xFF, 0xE0, 0x40), TextSize = 10f, Typeface = typeface, IsAntialias = true };
+            using var valPaint  = new SKPaint { Color = new SKColor(0xCC, 0xCC, 0xCC), TextSize = 9.5f, Typeface = typeface, IsAntialias = true };
+
+            const float lineH = 13f;
+            const float padX  = 6f;
+            const float padY  = 4f;
+
+            foreach (var p in _probePins)
+            {
+                float sx =  p.WorldX * _zoom + _panX;
+                float sy = -p.WorldY * _zoom + _panY;
+
+                string header = $"Pin {p.Index}";
+                string l1     = $"SPL  {p.SplDb:F1} dB";
+                string l2     = $"STI  {p.Sti:F2}";
+
+                float tw   = Math.Max(hdrPaint.MeasureText(header),
+                             Math.Max(valPaint.MeasureText(l1), valPaint.MeasureText(l2)));
+                float boxW = tw + 2f * padX;
+                float boxH = 3f * lineH + 2f * padY;
+
+                float bx = sx + 10f;
+                float by = sy - boxH - 10f;
+                if (bx + boxW > cw - 4f) bx = sx - boxW - 10f;
+                if (by < 4f)              by = sy + 10f;
+
+                canvas.DrawLine(sx, sy, bx + boxW * 0.5f, by + boxH, stemPaint);
+                canvas.DrawRoundRect(bx, by, boxW, boxH, 3f, 3f, bgPaint);
+                canvas.DrawRoundRect(bx, by, boxW, boxH, 3f, 3f, brdPaint);
+                canvas.DrawText(header, bx + padX, by + padY + lineH,        hdrPaint);
+                canvas.DrawText(l1,     bx + padX, by + padY + lineH * 2f,   valPaint);
+                canvas.DrawText(l2,     bx + padX, by + padY + lineH * 3f,   valPaint);
+            }
         }
     }
 }

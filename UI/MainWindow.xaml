@@ -379,6 +379,7 @@
 
                     <!-- ── Right panel: real-time 2D viewer ── -->
                     <ui:AcousticViewerControl
+                        x:Name="AcousticViewer"
                         Grid.Column="2"
                         JobOutput="{Binding LastOutput}"
                         WallGroupsSource="{Binding WallLineGroups}"
@@ -434,6 +435,10 @@
                                     Margin="8,0,0,0"
                                     Click="AutoDetectWalls_Click"
                                     ToolTip="Reads Revit wall elements from the host and linked model and estimates STC ratings automatically"/>
+                            <Button Content="Clear Walls" Style="{StaticResource DangerBtnStyle}"
+                                    Margin="8,0,0,0"
+                                    Click="ClearWalls_Click"
+                                    ToolTip="Remove the current wall selection so you can pick new ones"/>
                         </WrapPanel>
 
                         <TextBlock Style="{StaticResource SectionHeader}" Text="Selected Walls"
@@ -501,7 +506,7 @@
 
                     <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,8">
                         <Button Content="Pick Speakers" Style="{StaticResource BtnStyle}" Click="PickSpeaker_Click"/>
-                        <Button Content="Clear Picked" Style="{StaticResource DangerBtnStyle}" Click="ClearPickedSpeakers_Click"/>
+                        <Button Content="Clear Speakers" Style="{StaticResource DangerBtnStyle}" Click="ClearPickedSpeakers_Click"/>
                         <Button Content="Save Mappings" Style="{StaticResource SuccessBtnStyle}" Click="SaveSettings_Click"/>
                         <TextBlock Style="{StaticResource LabelStyle}" Text="{Binding PickedSpeakerSummary}"
                                    VerticalAlignment="Center" Margin="12,0,0,0"/>

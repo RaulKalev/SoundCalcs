@@ -16,6 +16,10 @@ namespace SoundCalcs.UI
             _vm = new MainViewModel(uiApp);
             DataContext = _vm;
             _resizer = new WindowResizer(this);
+
+            // Wire speaker rotation: viewer drag → ViewModel → Revit ExtensibleStorage
+            AcousticViewer.OnSpeakerRotated = (elementId, angleDeg) =>
+                _vm.SetSpeakerAimAngle(elementId, angleDeg);
         }
 
         // ============ Resize Handlers ============
@@ -58,6 +62,11 @@ namespace SoundCalcs.UI
         private void AutoDetectWalls_Click(object sender, RoutedEventArgs e)
         {
             _vm.AutoDetectWalls();
+        }
+
+        private void ClearWalls_Click(object sender, RoutedEventArgs e)
+        {
+            _vm.ClearWalls();
         }
 
         // ============ Speakers Tab ============

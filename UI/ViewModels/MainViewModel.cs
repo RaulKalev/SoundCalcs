@@ -54,6 +54,33 @@ namespace SoundCalcs.UI.ViewModels
             MinSplThreshold = settings.AnalysisSettings.MinSplThresholdDb;
             LoadOctaveBandSettings(settings.AnalysisSettings);
             _savedMappings = settings.SpeakerMappings;
+
+            // Restore saved speaker groups (instances + mappings)
+            if (settings.SavedSpeakerGroups != null && settings.SavedSpeakerGroups.Count > 0)
+            {
+                foreach (var grp in settings.SavedSpeakerGroups)
+                {
+                    var vm = new SpeakerGroupViewModel(grp);
+                    // Prefer the mapping embedded in the group; fall back to legacy SpeakerMappings list
+                    SpeakerProfileMapping legacy = _savedMappings
+                        .FirstOrDefault(m => m.TypeKey == grp.TypeKey);
+                    if (legacy != null) vm.ApplyMapping(legacy);
+                    _speakerGroups.Add(vm);
+                    foreach (var inst in grp.Instances)
+                        if (!_pickedSpeakerIds.Contains(inst.ElementId))
+                            _pickedSpeakerIds.Add(inst.ElementId);
+                }
+                OnPropertyChanged(nameof(PickedSpeakerSummary));
+            }
+
+            // Restore saved wall groups — normalise WallType to catalog reference so ComboBox binding works
+            foreach (var grp in settings.WallGroups)
+            {
+                grp.WallType = WallTypeCatalog.FindByKey(grp.WallType?.Key ?? "");
+                WallLineGroups.Add(new WallLineGroupViewModel(grp));
+            }
+            foreach (var room in settings.BoundaryRooms)
+                DetectedRooms.Add(room);
         }
 
         // ========================= MODEL TAB =========================
@@ -241,6 +268,11 @@ namespace SoundCalcs.UI.ViewModels
 
             StatusMessage = $"{WallLineGroups.Count} line style(s), {allSegments.Count} segments, " +
                 $"area={boundary.Area:F1} m²";
+
+            // Auto-persist so walls survive window close/reopen
+            SaveSettings();
+            StatusMessage = $"{WallLineGroups.Count} line style(s), {allSegments.Count} segments, " +
+                $"area={boundary.Area:F1} m²";
         }
 
         /// <summary>
@@ -281,6 +313,22 @@ namespace SoundCalcs.UI.ViewModels
             FileLogger.Log($"AutoDetectWalls: {WallLineGroups.Count} types, {totalSegs} segments");
             StatusMessage = $"Detected {WallLineGroups.Count} wall type(s), {totalSegs} segment(s). " +
                 "Review STC ratings in the table and re-run the analysis.";
+
+            // Auto-persist so walls survive window close/reopen
+            SaveSettings();
+            StatusMessage = $"Detected {WallLineGroups.Count} wall type(s), {totalSegs} segment(s). " +
+                "Review STC ratings in the table and re-run the analysis.";
+        }
+
+        /// <summary>
+        /// Clear all selected walls and the boundary polygon so the user can pick fresh ones.
+        /// </summary>
+        public void ClearWalls()
+        {
+            WallLineGroups.Clear();
+            DetectedRooms.Clear();
+            SaveSettings();
+            StatusMessage = "Walls cleared. Use \"Select Boundary\" or \"Auto-Detect Walls\" to pick new walls.";
         }
 
         /// <summary>
@@ -439,6 +487,7 @@ namespace SoundCalcs.UI.ViewModels
             string msg = $"{added} speaker(s) added.";
             if (skipped > 0) msg += $" {skipped} non-speaker element(s) ignored.";
             msg += $" {PickedSpeakerSummary}";
+            SaveSettingsCore();
             StatusMessage = msg;
         }
 
@@ -451,6 +500,7 @@ namespace SoundCalcs.UI.ViewModels
             _pickedSpeakerIds.Clear();
             SpeakerGroups.Clear();
             OnPropertyChanged(nameof(PickedSpeakerSummary));
+            SaveSettingsCore();
             StatusMessage = "Speaker selection cleared.";
         }
 
@@ -738,10 +788,10 @@ namespace SoundCalcs.UI.ViewModels
             StatusMessage = $"Found {speakers.Count} speaker(s) in {groups.Count} type(s).";
         }
 
-        /// <summary>
-        /// Save current settings to disk.
-        /// </summary>
-        public void SaveSettings()
+        /// <summary>Save settings to disk and update the status bar.</summary>
+        public void SaveSettings() => SaveSettingsCore(updateStatus: true);
+
+        void SaveSettingsCore(bool updateStatus = false)
         {
             var settings = new PluginSettings
             {
@@ -758,11 +808,31 @@ namespace SoundCalcs.UI.ViewModels
                     RT60ByBand = GetRT60Array(),
                     BackgroundNoiseByBand = GetNoiseArray()
                 },
-                SpeakerMappings = SpeakerGroups.Select(g => g.GetMapping()).ToList()
+                SpeakerMappings    = SpeakerGroups.Select(g => g.GetMapping()).ToList(),
+                WallGroups         = WallLineGroups.Select(vm => vm.GetGroup()).ToList(),
+                BoundaryRooms      = DetectedRooms.ToList(),
+                SavedSpeakerGroups = SpeakerGroups.Select(vm => vm.GetGroup()).ToList()
             };
 
             SettingsStore.Save(settings);
-            StatusMessage = "Settings saved.";
+            if (updateStatus) StatusMessage = "Settings saved.";
+        }
+
+        /// <summary>
+        /// Store the user-adjusted aim angle for a speaker in Revit ExtensibleStorage
+        /// and persist the updated FacingDirection to the JSON settings.
+        /// Must be called after the viewer has already updated FacingDirection in-memory.
+        /// </summary>
+        public void SetSpeakerAimAngle(int elementId, double angleDeg)
+        {
+            _dispatcher.Enqueue(uiApp =>
+            {
+                Document doc = uiApp.ActiveUIDocument?.Document;
+                if (doc == null) return;
+                SpeakerRotationStorage.Write(doc, elementId, angleDeg);
+                FileLogger.Log($"SetSpeakerAimAngle: id={elementId}, angle={angleDeg:F1}°");
+            });
+            SaveSettingsCore();
         }
 
         /// <summary>

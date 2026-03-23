@@ -14,17 +14,41 @@
                         Cursor="Hand"
                         Focusable="True"/>
 
-        <!-- Top-right: reset fit button -->
-        <Button x:Name="FitBtn"
-                Content="Fit"
-                Width="36" Height="22"
-                HorizontalAlignment="Right" VerticalAlignment="Top"
-                Margin="0,6,8,0"
-                Click="FitBtn_Click"
-                FontSize="10"
-                Background="#33FFFFFF" Foreground="#CCCCCC"
-                BorderBrush="#44FFFFFF" BorderThickness="1"
-                Cursor="Arrow"/>
+        <!-- Top-right: viewer controls -->
+        <StackPanel HorizontalAlignment="Right" VerticalAlignment="Top"
+                    Orientation="Horizontal" Margin="0,6,8,0">
+
+            <Button x:Name="ClearPinsBtn"
+                    Content="Clear"
+                    Width="38" Height="22"
+                    Margin="0,0,4,0"
+                    Visibility="Collapsed"
+                    Click="ClearPinsBtn_Click"
+                    FontSize="10"
+                    Background="#33FFFFFF" Foreground="#CCCCCC"
+                    BorderBrush="#44FFFFFF" BorderThickness="1"
+                    Cursor="Arrow"/>
+
+            <Button x:Name="ProbeBtn"
+                    Content="Probe"
+                    Width="44" Height="22"
+                    Margin="0,0,4,0"
+                    Click="ProbeBtn_Click"
+                    FontSize="10"
+                    Background="#33FFFFFF" Foreground="#CCCCCC"
+                    BorderBrush="#44FFFFFF" BorderThickness="1"
+                    Cursor="Arrow"/>
+
+            <Button x:Name="FitBtn"
+                    Content="Fit"
+                    Width="36" Height="22"
+                    Click="FitBtn_Click"
+                    FontSize="10"
+                    Background="#33FFFFFF" Foreground="#CCCCCC"
+                    BorderBrush="#44FFFFFF" BorderThickness="1"
+                    Cursor="Arrow"/>
+
+        </StackPanel>
 
     </Grid>
 </UserControl>

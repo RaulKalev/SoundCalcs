@@ -79,6 +79,17 @@ namespace SoundCalcs.Revit
                         LevelElevationM = levelElevM,
                         ElevationFromLevelM = posM.Z - levelElevM
                     });
+
+                    // Override horizontal aim with any rotation stored by the user
+                    if (SpeakerRotationStorage.TryRead(fi, out double aimDeg))
+                    {
+                        double rad  = aimDeg * Math.PI / 180.0;
+                        double fz   = speakers[speakers.Count - 1].FacingDirection.Z;
+                        double hLen = Math.Sqrt(Math.Max(0.0, 1.0 - fz * fz));
+                        if (hLen < 1e-6) hLen = 1.0;
+                        speakers[speakers.Count - 1].FacingDirection =
+                            new Domain.Vec3(Math.Cos(rad) * hLen, Math.Sin(rad) * hLen, fz);
+                    }
                 }
             }
 
