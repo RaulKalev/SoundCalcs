@@ -125,9 +125,9 @@ namespace SoundCalcs.Tests
         {
             // Receivers at 1 m and 2 m from the same omni source.
             // For free-field direct sound: ΔSPl = 20·log10(2) ≈ 6.02 dB.
-            // Air absorption adds a slight extra loss at the higher distance,
-            // so the difference will be ≥ 6 dB but only marginally above it
-            // (< 0.5 dB extra at 2 m).
+            // Air absorption at 20 °C adds ~0.04 dB extra broadband loss
+            // over the 1 m gap (dominated by high-frequency bands), so the
+            // expected difference is ≈ 6.06 dB.
             var input = BuildInput(new Vec3(0, 0, 0), new Vec3(1, 0, 0), 90.0,
                 new[] { new Vec3(1, 0, 0), new Vec3(2, 0, 0) });
 
@@ -137,7 +137,7 @@ namespace SoundCalcs.Tests
             results.Sort((a, b) => a.ReceiverIndex.CompareTo(b.ReceiverIndex));
             double diff = results[0].SplDb - results[1].SplDb;
 
-            Assert.InRange(diff, 5.5, 6.5);
+            Assert.InRange(diff, 5.9, 6.3);
         }
 
         [Fact]
@@ -225,6 +225,121 @@ namespace SoundCalcs.Tests
                 $"SPL behind wall ({splWithWall:F1} dB) must be less than without wall ({splNoWall:F1} dB)");
         }
 
+        [Fact]
+        public void SPL_HigherSTCWall_AttenuatesMoreThanLowerSTCWall()
+        {
+            // Transmission loss scales with STC rating:
+            //   TL_k = max(0, STC + StcBandOffsets[k] − FieldPenalty)
+            // A STC-60 wall must always produce lower receiver SPL than a STC-20 wall.
+            Vec3 srcPos = new Vec3(0, 0, 0);
+            Vec3 recvPos = new Vec3(5, 0, 0);
+
+            var wallLow = new ComputeWall
+            {
+                Start = new Vec2(2.5, -5), End = new Vec2(2.5, 5),
+                StcRating = 20, HalfThicknessM = 0.1
+            };
+            var (resLow, _) = new SPLCalculator().Calculate(
+                BuildInput(srcPos, new Vec3(1, 0, 0), 90.0, new[] { recvPos },
+                    walls: new List<ComputeWall> { wallLow }),
+                CancellationToken.None, null);
+
+            var wallHigh = new ComputeWall
+            {
+                Start = new Vec2(2.5, -5), End = new Vec2(2.5, 5),
+                StcRating = 60, HalfThicknessM = 0.1
+            };
+            var (resHigh, _) = new SPLCalculator().Calculate(
+                BuildInput(srcPos, new Vec3(1, 0, 0), 90.0, new[] { recvPos },
+                    walls: new List<ComputeWall> { wallHigh }),
+                CancellationToken.None, null);
+
+            Assert.True(resHigh[0].SplDb < resLow[0].SplDb,
+                $"STC-60 SPL ({resHigh[0].SplDb:F1} dB) must be lower than STC-20 SPL ({resLow[0].SplDb:F1} dB)");
+        }
+
+        [Fact]
+        public void SPL_WallPerBandAttenuation_MatchesStcContour()
+        {
+            // For a STC-40 wall perpendicular to the direct path, the incremental
+            // per-band attenuation (with-wall minus no-wall loss) must match the
+            // STC contour formula: TL_k = max(0, STC + StcBandOffsets[k] − FieldPenalty=5)
+            //
+            // In this geometry the image source coincides with the receiver, so no
+            // first-order reflection is valid → the only change is direct-path TL.
+            //
+            //   No-wall extra loss for bands 0-4: 0 dB (offsets below field penalty)
+            //   No-wall extra loss for band 5:    1 dB  (offset 6 > penalty 5)
+            //   No-wall extra loss for band 6:    4 dB  (offset 9 > penalty 5)
+            //
+            //   Incremental loss added by STC-40 wall:
+            //   k=0 (125 Hz): 19-0=19 | k=1:27 | k=2:32 | k=3:35 | k=4:38 | k=5:40 | k=6:40
+            Vec3 srcPos = new Vec3(0, 0, 0);
+            Vec3 recvPos = new Vec3(5, 0, 0);
+            var wall = new ComputeWall
+            {
+                Start = new Vec2(2.5, -5), End = new Vec2(2.5, 5),
+                StcRating = 40, HalfThicknessM = 0.1
+            };
+
+            var (resNoWall, _) = new SPLCalculator().Calculate(
+                BuildInput(srcPos, new Vec3(1, 0, 0), 90.0, new[] { recvPos }),
+                CancellationToken.None, null);
+            var (resWall, _) = new SPLCalculator().Calculate(
+                BuildInput(srcPos, new Vec3(1, 0, 0), 90.0, new[] { recvPos },
+                    walls: new List<ComputeWall> { wall }),
+                CancellationToken.None, null);
+
+            // Incremental TL = (no-wall loss removed) + (wall loss added):
+            // k=5,6 already had 1 and 4 dB field-penalty in the no-wall case
+            int[] expectedTL = { 19, 27, 32, 35, 38, 40, 40 };
+
+            for (int k = 0; k < OctaveBands.Count; k++)
+            {
+                double actualTL = resNoWall[0].SplDbByBand[k] - resWall[0].SplDbByBand[k];
+                Assert.InRange(actualTL, expectedTL[k] - 1.0, expectedTL[k] + 1.0);
+            }
+        }
+
+        [Fact]
+        public void SPL_ReflectiveWall_BehindReceiver_IncreasesReceiverSPL()
+        {
+            // A wall placed behind the receiver reflects energy back toward it.
+            // Geometry: source at x=0, receiver at x=2, wall at x=4 (behind receiver).
+            //
+            // The direct path (0→2) does NOT cross the wall at x=4.
+            // A first-order reflection adds: image source at x=8, path length = 6 m.
+            // Per IEC 60268-16 the reflected path is classified as early if it arrives
+            // within 50 ms of the direct, so it adds to both SPL and early energy.
+            //
+            // Expected: SPL with the reflective wall > SPL without any wall.
+            Vec3 srcPos = new Vec3(0, 0, 0);
+            Vec3 recvPos = new Vec3(2, 0, 0);
+
+            // Baseline: no wall
+            var (resNoWall, _) = new SPLCalculator().Calculate(
+                BuildInput(srcPos, new Vec3(1, 0, 0), 90.0, new[] { recvPos }),
+                CancellationToken.None, null);
+            double splBaseline = resNoWall[0].SplDb;
+
+            // With a low-STC reflective wall behind the receiver at x=4
+            var reflWall = new ComputeWall
+            {
+                Start = new Vec2(4, -5), End = new Vec2(4, 5),
+                StcRating = 0,         // minimal transmission loss — acts primarily as reflector
+                HalfThicknessM = 0.1
+            };
+            var (resRefl, _) = new SPLCalculator().Calculate(
+                BuildInput(srcPos, new Vec3(1, 0, 0), 90.0, new[] { recvPos },
+                    walls: new List<ComputeWall> { reflWall }),
+                CancellationToken.None, null);
+            double splReflected = resRefl[0].SplDb;
+
+            Assert.True(splReflected > splBaseline,
+                $"SPL with reflective wall ({splReflected:F2} dB) must exceed " +
+                $"baseline ({splBaseline:F2} dB)");
+        }
+
         // ---------------------------------------------------------------------------
         // Per-band / broadband consistency
         // ---------------------------------------------------------------------------
@@ -288,6 +403,68 @@ namespace SoundCalcs.Tests
                     $"Band {k}: early energy should be positive");
                 Assert.Equal(0.0, bd.LateLinearByBand[k]);
             }
+        }
+
+        [Fact]
+        public void SPL_TwoEquidistantEqualSources_Adds3dB()
+        {
+            // Two identical omni sources placed symmetrically around the receiver
+            // (source A at x=0, source B at x=6, receiver at x=3 → both at 3 m).
+            // Equal power + equal distance → total energy doubles →
+            //   ΔSPL = 10·log10(2) ≈ 3.01 dB.
+            Vec3 recvPos = new Vec3(3, 0, 0);
+
+            var inputOne = BuildInput(new Vec3(0, 0, 0), new Vec3(1, 0, 0), 90.0,
+                new[] { recvPos });
+            var (resOne, _) = new SPLCalculator().Calculate(inputOne, CancellationToken.None, null);
+            double splOne = resOne[0].SplDb;
+
+            var secondSource = new ComputeSource
+            {
+                Position = new Vec3(6, 0, 0),
+                FacingDirection = new Vec3(-1, 0, 0),
+                Profile = new SpeakerProfileMapping
+                {
+                    ProfileSource = ProfileSourceType.SimpleOmni,
+                    OnAxisSplDb = 90.0
+                }
+            };
+            var inputTwo = BuildInput(new Vec3(0, 0, 0), new Vec3(1, 0, 0), 90.0,
+                new[] { recvPos }, extraSources: new List<ComputeSource> { secondSource });
+            var (resTwo, _) = new SPLCalculator().Calculate(inputTwo, CancellationToken.None, null);
+            double splTwo = resTwo[0].SplDb;
+
+            double increase = splTwo - splOne;
+            Assert.InRange(increase, 2.9, 3.2);
+        }
+
+        [Fact]
+        public void SPL_FlatSpectrumSource_LowFreqBandAtExpectedLevel()
+        {
+            // For a SimpleOmni flat-spectrum source at 1 m the broadband power is split
+            // equally across all 7 octave bands.  At 125 Hz, air absorption (≈ 0 dB/m)
+            // and the STC-band offset (-16 dB) remain below the 5 dB field penalty, so no
+            // field-roll-off is applied and the 125 Hz per-band level must be very close to:
+            //   OnAxisSplDb - 10·log10(7) ≈ 90 - 8.451 = 81.549 dB
+            // At 8 kHz the StcBandOffset (+9 dB) exceeds the field penalty (+5 dB), adding a
+            // 4 dB effective roll-off on top of air absorption, so the 8 kHz band must be
+            // at least 4 dB below the 125 Hz band.
+            var input = BuildInput(new Vec3(0, 0, 0), new Vec3(1, 0, 0), 90.0,
+                new[] { new Vec3(1, 0, 0) });
+
+            var calc = new SPLCalculator();
+            var (results, _) = calc.Calculate(input, CancellationToken.None, null);
+
+            var r = results[0];
+            double expectedLowFreq = 90.0 - 10.0 * Math.Log10(OctaveBands.Count); // ≈ 81.549
+
+            // 125 Hz band: near-zero air loss, no field penalty → within 0.1 dB of expected
+            Assert.InRange(r.SplDbByBand[0], expectedLowFreq - 0.1, expectedLowFreq + 0.1);
+
+            // 8 kHz band: +4 dB field roll-off + air absorption → clearly lower than 125 Hz
+            Assert.True(r.SplDbByBand[6] < r.SplDbByBand[0] - 3.0,
+                $"8 kHz SPL ({r.SplDbByBand[6]:F1} dB) should be > 3 dB below " +
+                $"125 Hz SPL ({r.SplDbByBand[0]:F1} dB)");
         }
 
         // ---------------------------------------------------------------------------
