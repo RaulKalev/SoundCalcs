@@ -54,6 +54,12 @@ namespace SoundCalcs.Domain
         public double TemperatureC { get; set; } = 20.0;
 
         /// <summary>
+        /// Relative humidity as a percentage (0–100). Used for ISO 9613-1 air absorption.
+        /// At low humidity, high-frequency absorption is greater. Default 50 %.
+        /// </summary>
+        public double RelativeHumidityPct { get; set; } = 50.0;
+
+        /// <summary>
         /// Per-octave-band RT60 reverberation time in seconds (7 elements, 125 Hz – 8 kHz).
         /// </summary>
         public double[] RT60ByBand { get; set; } = (double[])OctaveBands.DefaultRT60.Clone();

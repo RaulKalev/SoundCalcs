@@ -67,6 +67,14 @@ namespace SoundCalcs.Domain
             { -16, -8, -3, 0, 3, 6, 9 };
 
         /// <summary>
+        /// A-weighting correction values in dB per octave band (IEC 61672-1).
+        /// Apply before energy summation to obtain dBA from per-band SPL values.
+        /// Values for 125 Hz – 8 kHz: [-16.1, -8.6, -3.2, 0.0, 1.2, 1.0, -1.1]
+        /// </summary>
+        public static readonly double[] AWeightingDb =
+            { -16.1, -8.6, -3.2, 0.0, 1.2, 1.0, -1.1 };
+
+        /// <summary>
         /// Air absorption coefficients in dB/m at 20 °C, 50 % RH (ISO 9613-1).
         /// </summary>
         public static readonly double[] AirAbsorption =

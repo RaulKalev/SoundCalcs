@@ -2,6 +2,7 @@ using System;
 using System.Globalization;
 using System.Windows;
 using System.Windows.Data;
+using SoundCalcs.UI.ViewModels;
 
 namespace SoundCalcs.UI.Converters
 {
@@ -50,6 +51,39 @@ namespace SoundCalcs.UI.Converters
                 return Enum.Parse(targetType, str);
             return null;
         }
+    }
+
+    /// <summary>
+    /// Converts a VisualizationMode enum value to a user-friendly display name
+    /// for the ComboBox in the Results tab.
+    /// </summary>
+    public class VisualizationModeToDisplayNameConverter : IValueConverter
+    {
+        public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+        {
+            if (value is VisualizationMode mode)
+            {
+                switch (mode)
+                {
+                    case VisualizationMode.SPL:     return "SPL  (Broadband)";
+                    case VisualizationMode.SPL_A:   return "SPL  (A-weighted, dBA)";
+                    case VisualizationMode.STI:     return "STI  (Intelligibility)";
+                    case VisualizationMode.C80:     return "C80  (Clarity)";
+                    case VisualizationMode.SPL_125: return "125 Hz";
+                    case VisualizationMode.SPL_250: return "250 Hz";
+                    case VisualizationMode.SPL_500: return "500 Hz";
+                    case VisualizationMode.SPL_1k:  return "1 kHz";
+                    case VisualizationMode.SPL_2k:  return "2 kHz";
+                    case VisualizationMode.SPL_4k:  return "4 kHz";
+                    case VisualizationMode.SPL_8k:  return "8 kHz";
+                    default: return value.ToString();
+                }
+            }
+            return value?.ToString() ?? "";
+        }
+
+        public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
+            => throw new NotSupportedException();
     }
 
     public class SizeToRectConverter : IMultiValueConverter
