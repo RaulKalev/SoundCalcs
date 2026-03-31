@@ -89,6 +89,12 @@ namespace SoundCalcs.Domain
         /// When > 0, walls are treated as surfaces from floor to floor + WallHeightM.
         /// </summary>
         public double WallHeightM { get; set; } = 0.0;
+
+        /// <summary>
+        /// Name of the Revit instance parameter that holds the A/B line designation (e.g. "A" or "B").
+        /// Leave empty to disable A/B line labelling.
+        /// </summary>
+        public string AbLineParameterName { get; set; } = "";
     }
 
     /// <summary>
@@ -108,5 +114,15 @@ namespace SoundCalcs.Domain
     {
         Draft,
         Full
+    }
+
+    /// <summary>
+    /// Which speaker line (A, B, or both) to include in the calculation.
+    /// </summary>
+    public enum SpeakerLineFilterType
+    {
+        Both,
+        ALine,
+        BLine
     }
 }

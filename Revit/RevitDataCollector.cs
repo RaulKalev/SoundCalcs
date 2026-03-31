@@ -27,8 +27,10 @@ namespace SoundCalcs.Revit
 
         /// <summary>
         /// Collect all family instances of the given built-in category from the host model.
+        /// When <paramref name="abLineParameterName"/> is non-empty, the value of that
+        /// instance parameter is stored in <see cref="SpeakerInstance.AbLine"/>.
         /// </summary>
-        public List<SpeakerInstance> CollectSpeakers(BuiltInCategory category)
+        public List<SpeakerInstance> CollectSpeakers(BuiltInCategory category, string abLineParameterName = "")
         {
             var speakers = new List<SpeakerInstance>();
 
@@ -69,6 +71,15 @@ namespace SoundCalcs.Revit
                     string familyName = fi.Symbol?.Family?.Name ?? "Unknown";
                     string typeName = fi.Symbol?.Name ?? "Unknown";
 
+                    // Read A/B line designation from the configured parameter, if any
+                    string abLine = "";
+                    if (!string.IsNullOrEmpty(abLineParameterName))
+                    {
+                        Parameter abParam = fi.LookupParameter(abLineParameterName);
+                        if (abParam != null)
+                            abLine = abParam.AsString() ?? abParam.AsValueString() ?? "";
+                    }
+
                     speakers.Add(new SpeakerInstance
                     {
                         ElementId = RevitCompat.GetIdValue(fi.Id),
@@ -77,7 +88,8 @@ namespace SoundCalcs.Revit
                         FacingDirection = UnitConversion.DirectionToVec3(facing),
                         LevelName = levelName,
                         LevelElevationM = levelElevM,
-                        ElevationFromLevelM = posM.Z - levelElevM
+                        ElevationFromLevelM = posM.Z - levelElevM,
+                        AbLine = abLine
                     });
 
                     // Override horizontal aim with any rotation stored by the user

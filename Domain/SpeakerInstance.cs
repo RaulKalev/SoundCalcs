@@ -41,6 +41,12 @@ namespace SoundCalcs.Domain
         /// </summary>
         public double ElevationFromLevelM { get; set; }
 
+        /// <summary>
+        /// A/B line designation read from the configured Revit parameter (e.g. "A", "B").
+        /// Empty string when the parameter is not configured or not set on the element.
+        /// </summary>
+        public string AbLine { get; set; } = "";
+
         public override string ToString() => $"{TypeKey} @ {Position} [Id={ElementId}]";
     }
 }

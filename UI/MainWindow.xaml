@@ -577,6 +577,7 @@
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
                         </Grid.RowDefinitions>
 
                         <TextBlock Grid.Row="0" Grid.Column="0" Style="{StaticResource LabelStyle}" Text="Grid Spacing (m):"/>
@@ -646,6 +647,15 @@
                             <TextBox Width="45" Style="{StaticResource InputBoxStyle}" Text="{Binding Noise_4k, UpdateSourceTrigger=PropertyChanged}" ToolTip="4 kHz" Margin="0,0,3,0"/>
                             <TextBox Width="45" Style="{StaticResource InputBoxStyle}" Text="{Binding Noise_8k, UpdateSourceTrigger=PropertyChanged}" ToolTip="8 kHz"/>
                         </StackPanel>
+
+                        <!-- A/B Line parameter -->
+                        <TextBlock Grid.Row="8" Grid.Column="0" Style="{StaticResource LabelStyle}" Text="A/B Line Parameter:" Margin="0,8,0,0"/>
+                        <TextBox Grid.Row="8" Grid.Column="1" Style="{StaticResource InputBoxStyle}"
+                                 Text="{Binding AbLineParameterName, UpdateSourceTrigger=PropertyChanged}"
+                                 Margin="0,8,0,0"
+                                 ToolTip="Name of the Revit instance parameter that holds the A/B line value (e.g. 'A' or 'B'). Leave empty to disable A/B filtering."/>
+                        <TextBlock Grid.Row="8" Grid.Column="2" Style="{StaticResource LabelStyle}"
+                                   Text="Revit parameter name storing the A/B line designation" FontSize="11" Margin="0,8,0,0"/>
                     </Grid>
 
                     <Button Content="Save Settings" Style="{StaticResource SuccessBtnStyle}"
@@ -657,6 +667,32 @@
             <TabItem Header="Run">
                 <StackPanel Margin="12">
                     <TextBlock Style="{StaticResource SectionHeader}" Text="Computation"/>
+
+                    <!-- A/B Line filter -->
+                    <StackPanel Orientation="Horizontal" Margin="0,8,0,4">
+                        <TextBlock Style="{StaticResource LabelStyle}" Text="Speaker Line:"
+                                   VerticalAlignment="Center" Margin="0,0,8,0"/>
+                        <RadioButton Content="Both"
+                                     IsChecked="{Binding FilterBoth, Mode=TwoWay}"
+                                     GroupName="SpeakerLine"
+                                     VerticalAlignment="Center"
+                                     Foreground="{DynamicResource ForegroundBrush}"
+                                     Margin="0,0,8,0"
+                                     ToolTip="Calculate using all speakers (A and B lines)"/>
+                        <RadioButton Content="A Line"
+                                     IsChecked="{Binding FilterALine, Mode=TwoWay}"
+                                     GroupName="SpeakerLine"
+                                     VerticalAlignment="Center"
+                                     Foreground="{DynamicResource ForegroundBrush}"
+                                     Margin="0,0,8,0"
+                                     ToolTip="Calculate using A line speakers only"/>
+                        <RadioButton Content="B Line"
+                                     IsChecked="{Binding FilterBLine, Mode=TwoWay}"
+                                     GroupName="SpeakerLine"
+                                     VerticalAlignment="Center"
+                                     Foreground="{DynamicResource ForegroundBrush}"
+                                     ToolTip="Calculate using B line speakers only"/>
+                    </StackPanel>
 
                     <StackPanel Orientation="Horizontal" Margin="0,8">
                         <Button Content="Quick Draft" Style="{StaticResource AccentBtnStyle}"

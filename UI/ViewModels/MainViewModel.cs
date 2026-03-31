@@ -54,6 +54,7 @@ namespace SoundCalcs.UI.ViewModels
             _speakerCategoryName = settings.AnalysisSettings.SpeakerCategoryName;
             UseMinSplThreshold = settings.AnalysisSettings.UseMinSplThreshold;
             MinSplThreshold = settings.AnalysisSettings.MinSplThresholdDb;
+            AbLineParameterName = settings.AnalysisSettings.AbLineParameterName ?? "";
             LoadOctaveBandSettings(settings.AnalysisSettings);
             _savedMappings = settings.SpeakerMappings;
 
@@ -543,6 +544,13 @@ namespace SoundCalcs.UI.ViewModels
             set { _minSplThreshold = value; OnPropertyChanged(nameof(MinSplThreshold)); }
         }
 
+        private string _abLineParameterName = "";
+        public string AbLineParameterName
+        {
+            get => _abLineParameterName;
+            set { _abLineParameterName = value; OnPropertyChanged(nameof(AbLineParameterName)); }
+        }
+
         private double _backgroundNoiseDb = 35.0;
         public double BackgroundNoiseDb
         {
@@ -666,6 +674,38 @@ namespace SoundCalcs.UI.ViewModels
         }
 
         public bool CanRun => !_isRunning;
+
+        private SpeakerLineFilterType _speakerLineFilter = SpeakerLineFilterType.Both;
+        public SpeakerLineFilterType SpeakerLineFilter
+        {
+            get => _speakerLineFilter;
+            set
+            {
+                _speakerLineFilter = value;
+                OnPropertyChanged(nameof(SpeakerLineFilter));
+                OnPropertyChanged(nameof(FilterBoth));
+                OnPropertyChanged(nameof(FilterALine));
+                OnPropertyChanged(nameof(FilterBLine));
+            }
+        }
+
+        public bool FilterBoth
+        {
+            get => _speakerLineFilter == SpeakerLineFilterType.Both;
+            set { if (value) SpeakerLineFilter = SpeakerLineFilterType.Both; }
+        }
+
+        public bool FilterALine
+        {
+            get => _speakerLineFilter == SpeakerLineFilterType.ALine;
+            set { if (value) SpeakerLineFilter = SpeakerLineFilterType.ALine; }
+        }
+
+        public bool FilterBLine
+        {
+            get => _speakerLineFilter == SpeakerLineFilterType.BLine;
+            set { if (value) SpeakerLineFilter = SpeakerLineFilterType.BLine; }
+        }
 
         private double _progress;
         public double Progress
@@ -907,7 +947,7 @@ namespace SoundCalcs.UI.ViewModels
 
             BuiltInCategory cat = RevitDataCollector.ParseCategory(SpeakerCategoryName);
             var collector = new RevitDataCollector(doc);
-            List<SpeakerInstance> speakers = collector.CollectSpeakers(cat);
+            List<SpeakerInstance> speakers = collector.CollectSpeakers(cat, AbLineParameterName);
             List<SpeakerTypeGroup> groups = collector.GroupSpeakers(speakers);
 
             SpeakerGroups.Clear();
@@ -945,7 +985,8 @@ namespace SoundCalcs.UI.ViewModels
                     MinSplThresholdDb = MinSplThreshold,
                     BackgroundNoiseDb = BackgroundNoiseDb,
                     RT60ByBand = GetRT60Array(),
-                    BackgroundNoiseByBand = GetNoiseArray()
+                    BackgroundNoiseByBand = GetNoiseArray(),
+                    AbLineParameterName = AbLineParameterName
                 },
                 SpeakerMappings    = SpeakerGroups.Select(g => g.GetMapping()).ToList(),
                 WallGroups         = WallLineGroups.Select(vm => vm.GetGroup()).ToList(),
@@ -1004,6 +1045,14 @@ namespace SoundCalcs.UI.ViewModels
                     SpeakerProfileMapping mapping = gvm.GetMapping();
                     foreach (SpeakerInstance inst in gvm.GetGroup().Instances)
                     {
+                        // Filter by A/B line when a filter other than Both is active
+                        if (_speakerLineFilter != SpeakerLineFilterType.Both)
+                        {
+                            string targetLine = _speakerLineFilter == SpeakerLineFilterType.ALine ? "A" : "B";
+                            if (!string.Equals(inst.AbLine, targetLine, StringComparison.OrdinalIgnoreCase))
+                                continue;
+                        }
+
                         Vec3 facing;
 
                         if (mapping.ProfileSource == ProfileSourceType.WallMounted)

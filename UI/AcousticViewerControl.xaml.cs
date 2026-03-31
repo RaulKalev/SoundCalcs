@@ -495,6 +495,27 @@ namespace SoundCalcs.UI
 
                 canvas.DrawCircle(sx, sy, radius, fill);
                 canvas.DrawCircle(sx, sy, radius, ring);
+
+                // Draw A/B line label centered on the speaker icon
+                if (!string.IsNullOrEmpty(s.AbLine))
+                {
+                    canvas.Save();
+                    canvas.Translate(sx, sy);
+                    // Undo the world-space zoom and Y-flip so text renders upright at screen-pixel size
+                    canvas.Scale(1f / _zoom, -1f / _zoom);
+                    float fontSize = 9f;
+                    using var labelPaint = new SKPaint
+                    {
+                        Color       = SKColors.White,
+                        TextSize    = fontSize,
+                        IsAntialias = true,
+                        TextAlign   = SKTextAlign.Center,
+                        Typeface    = SKTypeface.FromFamilyName("Segoe UI") ?? SKTypeface.Default,
+                        FakeBoldText = true
+                    };
+                    canvas.DrawText(s.AbLine, 0f, fontSize * 0.35f, labelPaint);
+                    canvas.Restore();
+                }
             }
         }
 
