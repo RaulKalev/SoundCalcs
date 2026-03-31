@@ -69,7 +69,8 @@ namespace SoundCalcs.Domain
         public static List<ReceiverPoint> GenerateForPolygon(
             RoomPolygon room,
             AnalysisSettings settings,
-            int startIndex = 0)
+            int startIndex = 0,
+            int roomIndex = -1)
         {
             var points = new List<ReceiverPoint>();
             double elevation = room.FloorElevationM + settings.ReceiverHeightM;
@@ -95,7 +96,9 @@ namespace SoundCalcs.Domain
                     // Only include points inside the room polygon
                     if (room.ContainsPoint(new Vec2(x, y)))
                     {
-                        points.Add(new ReceiverPoint(new Vec3(x, y, elevation), index));
+                        var pt = new ReceiverPoint(new Vec3(x, y, elevation), index);
+                        pt.RoomIndex = roomIndex;
+                        points.Add(pt);
                         index++;
                     }
                 }

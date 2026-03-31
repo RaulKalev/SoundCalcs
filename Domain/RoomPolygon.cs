@@ -76,6 +76,31 @@ namespace SoundCalcs.Domain
         /// <summary>Absolute area in square meters.</summary>
         public double Area => Math.Abs(SignedArea);
 
+        /// <summary>Total perimeter length in meters.</summary>
+        public double Perimeter
+        {
+            get
+            {
+                double p = 0;
+                int n = Vertices.Count;
+                for (int i = 0; i < n; i++)
+                    p += Vec2.Distance(Vertices[i], Vertices[(i + 1) % n]);
+                return p;
+            }
+        }
+
+        /// <summary>
+        /// Fraction of the polygon perimeter backed by actual wall segments (0.0–1.0).
+        /// Set by <see cref="RoomDetector.ComputeEnclosureRatios"/>.
+        /// </summary>
+        public double EnclosureRatio { get; set; } = 1.0;
+
+        /// <summary>
+        /// Total length of perimeter edges matched to wall segments (meters).
+        /// Set by <see cref="RoomDetector.ComputeEnclosureRatios"/>.
+        /// </summary>
+        public double WallCoverageM { get; set; }
+
         /// <summary>
         /// Test whether a 2D point lies inside this polygon using ray casting.
         /// </summary>

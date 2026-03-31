@@ -409,5 +409,129 @@ namespace SoundCalcs.Domain
         {
             return ((long)from << 32) | (uint)to;
         }
+
+        // ========================= Enclosure Ratio =========================
+
+        /// <summary>
+        /// For each room polygon, compute the fraction of its perimeter that is
+        /// backed by actual wall segments. Sets <see cref="RoomPolygon.EnclosureRatio"/>
+        /// and <see cref="RoomPolygon.WallCoverageM"/>.
+        /// </summary>
+        /// <param name="rooms">Detected room polygons.</param>
+        /// <param name="walls">Original wall segments (not extended compute walls).</param>
+        public static void ComputeEnclosureRatios(
+            List<RoomPolygon> rooms,
+            List<WallSegment2D> walls)
+        {
+            if (rooms == null || walls == null) return;
+
+            const double perpTolerance = 0.30;  // Max perpendicular distance to count as "on edge"
+            const double overlapTolerance = 0.15; // Tolerance for endpoint overlap
+
+            foreach (var room in rooms)
+            {
+                int n = room.Vertices.Count;
+                if (n < 3) { room.EnclosureRatio = 0; continue; }
+
+                double totalPerimeter = 0;
+                double coveredLength = 0;
+
+                for (int i = 0; i < n; i++)
+                {
+                    Vec2 edgeStart = room.Vertices[i];
+                    Vec2 edgeEnd = room.Vertices[(i + 1) % n];
+                    double edgeLen = Vec2.Distance(edgeStart, edgeEnd);
+                    totalPerimeter += edgeLen;
+
+                    if (edgeLen < 1e-6) continue;
+
+                    Vec2 edgeDir = (edgeEnd - edgeStart).Normalized();
+
+                    // For this edge, find all wall segments that are collinear and overlapping.
+                    // Track covered intervals along the edge parameter [0, edgeLen].
+                    var intervals = new List<(double lo, double hi)>();
+
+                    foreach (var wall in walls)
+                    {
+                        // Check perpendicular distance of both wall endpoints to the edge line
+                        Vec2 edgeNormal = new Vec2(-edgeDir.Y, edgeDir.X);
+                        double perpStart = Math.Abs(Vec2.Dot(wall.Start - edgeStart, edgeNormal));
+                        double perpEnd = Math.Abs(Vec2.Dot(wall.End - edgeStart, edgeNormal));
+
+                        if (perpStart > perpTolerance && perpEnd > perpTolerance) continue;
+
+                        // Project wall endpoints onto the edge direction
+                        double tStart = Vec2.Dot(wall.Start - edgeStart, edgeDir);
+                        double tEnd = Vec2.Dot(wall.End - edgeStart, edgeDir);
+
+                        double lo = Math.Min(tStart, tEnd);
+                        double hi = Math.Max(tStart, tEnd);
+
+                        // Wall must have meaningful overlap with edge
+                        double overlapLo = Math.Max(lo, -overlapTolerance);
+                        double overlapHi = Math.Min(hi, edgeLen + overlapTolerance);
+
+                        if (overlapHi - overlapLo > overlapTolerance)
+                        {
+                            intervals.Add((Math.Max(overlapLo, 0), Math.Min(overlapHi, edgeLen)));
+                        }
+                    }
+
+                    // Merge overlapping intervals and sum covered length
+                    coveredLength += MergeAndSumIntervals(intervals);
+                }
+
+                room.WallCoverageM = coveredLength;
+                room.EnclosureRatio = totalPerimeter > 0
+                    ? Math.Min(coveredLength / totalPerimeter, 1.0)
+                    : 0;
+
+                // Update room name to reflect enclosure status
+                string baseName = room.Name;
+                // Strip any previous enclosure suffix
+                int parenIdx = baseName.IndexOf(" (");
+                if (parenIdx > 0) baseName = baseName.Substring(0, parenIdx);
+
+                if (room.EnclosureRatio >= 0.85)
+                    room.Name = $"{baseName} (enclosed)";
+                else if (room.EnclosureRatio >= 0.40)
+                    room.Name = $"{baseName} (partial {room.EnclosureRatio:P0})";
+                else
+                    room.Name = $"{baseName} (open)";
+
+                Debug.WriteLine($"[SoundCalcs] {room.Name}: perimeter={totalPerimeter:F1}m, " +
+                    $"wallCoverage={coveredLength:F1}m, enclosureRatio={room.EnclosureRatio:P0}");
+            }
+        }
+
+        /// <summary>
+        /// Merge a list of (lo, hi) intervals and return the total covered length.
+        /// </summary>
+        private static double MergeAndSumIntervals(List<(double lo, double hi)> intervals)
+        {
+            if (intervals.Count == 0) return 0;
+
+            intervals.Sort((a, b) => a.lo.CompareTo(b.lo));
+
+            double total = 0;
+            double curLo = intervals[0].lo;
+            double curHi = intervals[0].hi;
+
+            for (int i = 1; i < intervals.Count; i++)
+            {
+                if (intervals[i].lo <= curHi)
+                {
+                    curHi = Math.Max(curHi, intervals[i].hi);
+                }
+                else
+                {
+                    total += curHi - curLo;
+                    curLo = intervals[i].lo;
+                    curHi = intervals[i].hi;
+                }
+            }
+            total += curHi - curLo;
+            return total;
+        }
     }
 }

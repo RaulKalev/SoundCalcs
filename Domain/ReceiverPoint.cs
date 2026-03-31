@@ -13,6 +13,12 @@ namespace SoundCalcs.Domain
         /// </summary>
         public int Index { get; set; }
 
+        /// <summary>
+        /// Index into the Rooms list identifying which room contains this receiver.
+        /// -1 means the receiver is not inside any detected room.
+        /// </summary>
+        public int RoomIndex { get; set; } = -1;
+
         public ReceiverPoint() { }
 
         public ReceiverPoint(Vec3 position, int index)

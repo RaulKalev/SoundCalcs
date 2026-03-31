@@ -1004,19 +1004,21 @@ namespace SoundCalcs.UI.ViewModels
                     SpeakerProfileMapping mapping = gvm.GetMapping();
                     foreach (SpeakerInstance inst in gvm.GetGroup().Instances)
                     {
-                        Vec3 facing = inst.FacingDirection;
+                        Vec3 facing;
 
-                        // Wall-mounted speakers: compute horizontal facing from user-set angle + tilt
                         if (mapping.ProfileSource == ProfileSourceType.WallMounted)
                         {
-                            double rad = mapping.OutputDirectionDeg * System.Math.PI / 180.0;
-                            double tiltRad = mapping.WallMountTiltDeg * System.Math.PI / 180.0;
-                            double cosT = System.Math.Cos(tiltRad);
-                            double sinT = System.Math.Sin(tiltRad);
-                            facing = new Vec3(
-                                System.Math.Cos(rad) * cosT,
-                                System.Math.Sin(rad) * cosT,
-                                -sinT);
+                            // Wall-mounted: horizontal direction from per-instance drag line
+                            double hx = inst.FacingDirection.X;
+                            double hy = inst.FacingDirection.Y;
+                            double hLen = System.Math.Sqrt(hx * hx + hy * hy);
+                            if (hLen < 1e-6) { hx = 1.0; hy = 0.0; hLen = 1.0; }
+                            facing = new Vec3(hx / hLen, hy / hLen, 0);
+                        }
+                        else
+                        {
+                            // Omni / Conical: straight down
+                            facing = new Vec3(0, 0, -1);
                         }
 
                         sources.Add(new ComputeSource
@@ -1055,11 +1057,19 @@ namespace SoundCalcs.UI.ViewModels
 
                 analysisRooms = DetectedRooms.ToList();
 
+                // Compute enclosure ratio for each room polygon using original wall segments.
+                // This determines how much reverberant energy is applied per room.
+                var allWallSegs = new List<WallSegment2D>();
+                foreach (var wvm in WallLineGroups)
+                    allWallSegs.AddRange(wvm.GetGroup().Segments);
+                RoomDetector.ComputeEnclosureRatios(analysisRooms, allWallSegs);
+
                 StatusMessage = $"Generating grid in boundary with {sources.Count} speakers...";
-                foreach (RoomPolygon boundary in analysisRooms)
+                for (int roomIdx = 0; roomIdx < analysisRooms.Count; roomIdx++)
                 {
+                    RoomPolygon boundary = analysisRooms[roomIdx];
                     List<ReceiverPoint> pts = ReceiverGrid.GenerateForPolygon(
-                        boundary, analysisSettings, globalIndex);
+                        boundary, analysisSettings, globalIndex, roomIdx);
                     globalIndex += pts.Count;
                     receivers.AddRange(pts);
                     double recvZ = boundary.FloorElevationM + analysisSettings.ReceiverHeightM;

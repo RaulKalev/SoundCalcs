@@ -1,6 +1,8 @@
 # Build output
 bin/
 obj/
+costura32/
+costura64/
 
 # User-specific files
 *.user

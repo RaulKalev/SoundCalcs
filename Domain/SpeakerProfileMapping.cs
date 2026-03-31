@@ -49,19 +49,6 @@ namespace SoundCalcs.Domain
         /// </summary>
         public double OffAxisAttenuationDb { get; set; } = -12.0;
 
-        // --- Wall Mounted ---
-        /// <summary>
-        /// Horizontal output direction in degrees (0 = East/+X, 90 = North/+Y, etc.).
-        /// Only used when ProfileSource == WallMounted.
-        /// </summary>
-        public double OutputDirectionDeg { get; set; } = 0.0;
-
-        /// <summary>
-        /// Downward tilt from horizontal in degrees (0 = straight out, 15 = tilted down).
-        /// Only used when ProfileSource == WallMounted.
-        /// </summary>
-        public double WallMountTiltDeg { get; set; } = 0.0;
-
         // --- Per-band spectrum shape ---
         /// <summary>
         /// Optional per-octave-band offset in dB relative to flat spectrum (7 elements, 125 Hz–8 kHz).

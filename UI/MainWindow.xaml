@@ -551,8 +551,6 @@
                             </DataGridTemplateColumn>
                             <DataGridTextColumn Header="SPL (dB)" Binding="{Binding OnAxisSplDb}" Width="70"/>
                             <DataGridTextColumn Header="Cone Angle" Binding="{Binding ConeHalfAngleDeg}" Width="80"/>
-                            <DataGridTextColumn Header="Direction (°)" Binding="{Binding OutputDirectionDeg}" Width="85"/>
-                            <DataGridTextColumn Header="Tilt (°)" Binding="{Binding WallMountTiltDeg}" Width="65"/>
                             <DataGridTextColumn Header="GLL Path" Binding="{Binding GllFilePath}" Width="180"/>
                         </DataGrid.Columns>
                     </DataGrid>

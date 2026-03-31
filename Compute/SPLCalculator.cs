@@ -127,49 +127,81 @@ namespace SoundCalcs.Compute
             for (int i = 0; i < input.Sources.Count; i++)
                 providers[i] = DirectivityProviderFactory.Create(input.Sources[i].Profile);
 
-            // --- Reverberant field pre-computation (Sabine room acoustics) ---
-            // Estimate room volume from room polygons × ceiling height.
-            // Ceiling height is derived from the tallest speaker in each room
-            // (speakers are ceiling-mounted), falling back to default if unknown.
-            // Per-band room constant R_k = 0.161·V / T60_k determines how much
-            // source energy builds up as a diffuse reverberant field.
-            double roomVolumeM3 = 0;
-            if (input.Rooms != null)
+            // --- Per-room reverberant field pre-computation (Sabine room acoustics) ---
+            // For each room polygon, compute room volume and reverberant field strength,
+            // scaled by the room's enclosure ratio (fraction of perimeter backed by walls).
+            // Open areas (low enclosure ratio) contribute proportionally less reverb.
+            int numRooms = input.Rooms?.Count ?? 0;
+            double[][] roomConstants = null;  // [room][band]
+            double[][] reverbBySource = null; // [source][band]
+            int[] sourceRoomIndex = new int[input.Sources.Count]; // -1 = no room
+            bool hasReverb = false;
+
+            for (int s = 0; s < input.Sources.Count; s++)
+                sourceRoomIndex[s] = -1;
+
+            if (numRooms > 0)
             {
-                foreach (var room in input.Rooms)
+                // Map each source to its containing room
+                for (int s = 0; s < input.Sources.Count; s++)
                 {
+                    Vec2 srcXY = new Vec2(input.Sources[s].Position.X, input.Sources[s].Position.Y);
+                    for (int r = 0; r < numRooms; r++)
+                    {
+                        if (input.Rooms[r].ContainsPoint(srcXY))
+                        {
+                            sourceRoomIndex[s] = r;
+                            break;
+                        }
+                    }
+                }
+
+                // Compute per-room volumes and room constants
+                double[] rt60 = input.Environment.RT60ByBand;
+                int nb = OctaveBands.Count;
+                roomConstants = new double[numRooms][];
+
+                for (int r = 0; r < numRooms; r++)
+                {
+                    var room = input.Rooms[r];
                     double ceilingH = room.CeilingHeightM > 0.5
                         ? room.CeilingHeightM
                         : DefaultCeilingHeightM;
-                    roomVolumeM3 += room.Area * ceilingH;
-                }
-            }
-            bool hasReverb = roomVolumeM3 > 1.0;
+                    double vol = room.Area * ceilingH;
 
-            double[] roomConstant = null;
-            double[][] reverbBySource = null;
-
-            if (hasReverb)
-            {
-                double[] rt60 = input.Environment.RT60ByBand;
-                int nb = OctaveBands.Count;
-                roomConstant = new double[nb];
-                for (int k = 0; k < nb; k++)
-                {
-                    double t60 = Math.Max(rt60[k], 0.05);
-                    roomConstant[k] = Math.Max(0.161 * roomVolumeM3 / t60, 1.0);
+                    roomConstants[r] = new double[nb];
+                    if (vol > 1.0 && room.EnclosureRatio > 0.01)
+                    {
+                        hasReverb = true;
+                        for (int k = 0; k < nb; k++)
+                        {
+                            double t60 = Math.Max(rt60[k], 0.05);
+                            roomConstants[r][k] = Math.Max(0.161 * vol / t60, 1.0);
+                        }
+                    }
                 }
 
-                // Reverberant p² at any point = source p²(1m) × 16π / (Q × R_k)
-                reverbBySource = new double[input.Sources.Count][];
-                for (int s = 0; s < input.Sources.Count; s++)
+                // Compute per-source reverberant energy, scaled by the room's enclosure ratio.
+                // Sources not in any room contribute no reverberant energy.
+                if (hasReverb)
                 {
-                    reverbBySource[s] = new double[nb];
-                    double srcBb = Math.Pow(10.0, providers[s].OnAxisSplAtOneMeter / 10.0);
-                    double perBand = srcBb / nb;
-                    double Q = Math.Max(providers[s].DirectivityFactor, 1.0);
-                    for (int k = 0; k < nb; k++)
-                        reverbBySource[s][k] = perBand * 16.0 * Math.PI / (Q * roomConstant[k]);
+                    reverbBySource = new double[input.Sources.Count][];
+                    for (int s = 0; s < input.Sources.Count; s++)
+                    {
+                        reverbBySource[s] = new double[nb];
+                        int ri = sourceRoomIndex[s];
+                        if (ri < 0) continue;
+
+                        double enclosure = input.Rooms[ri].EnclosureRatio;
+                        if (enclosure < 0.01) continue;
+                        if (roomConstants[ri][0] < 1e-10) continue; // Room too small for reverb
+
+                        double srcBb = Math.Pow(10.0, providers[s].OnAxisSplAtOneMeter / 10.0);
+                        double perBand = srcBb / nb;
+                        double Q = Math.Max(providers[s].DirectivityFactor, 1.0);
+                        for (int k = 0; k < nb; k++)
+                            reverbBySource[s][k] = perBand * 16.0 * Math.PI / (Q * roomConstants[ri][k]) * enclosure;
+                    }
                 }
             }
 
@@ -276,16 +308,25 @@ namespace SoundCalcs.Compute
                 {
                     Vec3 srcPos = input.Sources[s].Position;
 
+                    // Scale ceiling reflections by enclosure ratio of the source's room.
+                    // Open areas have less ceiling to reflect off of.
+                    // Floor reflections are not scaled — the floor is present regardless.
+                    int srcRoom = sourceRoomIndex[s];
+                    double enclosure = (srcRoom >= 0) ? input.Rooms[srcRoom].EnclosureRatio : 0;
+                    double[] ceilCoeffs = new double[OctaveBands.Count];
+                    for (int k = 0; k < OctaveBands.Count; k++)
+                        ceilCoeffs[k] = horizReflCoeffs[k] * enclosure;
+
                     // Ceiling reflection: mirror Z across ceiling plane
                     double ceilImageZ = 2.0 * ceilingZ - srcPos.Z;
                     horizImages.Add(new HorizontalImageSource
                     {
                         ImagePos3D = new Vec3(srcPos.X, srcPos.Y, ceilImageZ),
                         SourceIndex = s,
-                        ReflectionCoeffByBand = horizReflCoeffs
+                        ReflectionCoeffByBand = ceilCoeffs
                     });
 
-                    // Floor reflection: mirror Z across floor plane
+                    // Floor reflection: mirror Z across floor plane (always present)
                     double floorImageZ = 2.0 * floorZ - srcPos.Z;
                     horizImages.Add(new HorizontalImageSource
                     {
@@ -622,12 +663,16 @@ namespace SoundCalcs.Compute
                 // The diffuse reverberant field from each source adds late
                 // (noise) energy that degrades STI. Reverberant energy is
                 // distance-independent (uniform in the room). Only applied
-                // for sources sharing the same room (no walls in between).
+                // for sources in the same room as the receiver, scaled by
+                // the room's enclosure ratio (open areas get less reverb).
                 if (hasReverb)
                 {
+                    int recvRoom = receiver.RoomIndex;
                     for (int s = 0; s < numSources; s++)
                     {
                         if (wallStcSums[s] > 0) continue;
+                        // Only apply reverb when source and receiver share the same room
+                        if (recvRoom < 0 || sourceRoomIndex[s] != recvRoom) continue;
                         for (int k = 0; k < numBands; k++)
                             bandData.LateLinearByBand[k] += reverbBySource[s][k];
                     }

@@ -1,15 +1,24 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Weavers xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="FodyWeavers.xsd">
-	<Costura CreateTemporaryAssemblies='true'>
+	<Costura CreateTemporaryAssemblies='true' DisableCleanup='false'>
 		<IncludeAssemblies>
 			MaterialDesignThemes.Wpf
 			MaterialDesignColors
 			Newtonsoft.Json
 			Microsoft.Xaml.Behaviors
 			ricaun.Revit.UI.0.7.1
+			SkiaSharp
+			SkiaSharp.Views.WPF
+			SkiaSharp.Views.Desktop.Common
+			System.Buffers
+			System.Drawing.Common
+			System.Memory
+			System.Numerics.Vectors
+			System.Runtime.CompilerServices.Unsafe
 		</IncludeAssemblies>
-		<Unmanaged32Assemblies />
-		<Unmanaged64Assemblies />
+		<Unmanaged64Assemblies>
+			libSkiaSharp
+		</Unmanaged64Assemblies>
 		<PreloadOrder>
 			Newtonsoft.Json
 			Microsoft.Xaml.Behaviors

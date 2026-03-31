@@ -92,26 +92,6 @@ namespace SoundCalcs.UI.ViewModels
             }
         }
 
-        public double OutputDirectionDeg
-        {
-            get => _group.Mapping.OutputDirectionDeg;
-            set
-            {
-                _group.Mapping.OutputDirectionDeg = value;
-                OnPropertyChanged(nameof(OutputDirectionDeg));
-            }
-        }
-
-        public double WallMountTiltDeg
-        {
-            get => _group.Mapping.WallMountTiltDeg;
-            set
-            {
-                _group.Mapping.WallMountTiltDeg = value;
-                OnPropertyChanged(nameof(WallMountTiltDeg));
-            }
-        }
-
         /// <summary>
         /// Export mapping for persistence.
         /// </summary>
@@ -135,8 +115,6 @@ namespace SoundCalcs.UI.ViewModels
             OnPropertyChanged(nameof(OnAxisSplDb));
             OnPropertyChanged(nameof(ConeHalfAngleDeg));
             OnPropertyChanged(nameof(OffAxisAttenuationDb));
-            OnPropertyChanged(nameof(OutputDirectionDeg));
-            OnPropertyChanged(nameof(WallMountTiltDeg));
             OnPropertyChanged(nameof(IsWallMounted));
         }
 

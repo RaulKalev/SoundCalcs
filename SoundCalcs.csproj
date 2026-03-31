@@ -2,7 +2,6 @@
 
   <PropertyGroup>
     <TargetFrameworks>net48;net8.0-windows</TargetFrameworks>
-    <BaseOutputPath>$(USERPROFILE)\Desktop\DevDlls\SoundCalcs</BaseOutputPath>
     <AssemblyName>SoundCalcs</AssemblyName>
     <RootNamespace>SoundCalcs</RootNamespace>
     <PlatformTarget>x64</PlatformTarget>
@@ -11,6 +10,8 @@
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
     <NoWarn>CA1416</NoWarn>
     <LangVersion>latest</LangVersion>
+    <!-- Costura.Fody embeds the native libSkiaSharp; suppress SkiaSharp's default Content copy -->
+    <ShouldIncludeNativeSkiaSharp Condition="'$(TargetFramework)' == 'net48'">False</ShouldIncludeNativeSkiaSharp>
   </PropertyGroup>
 
   <ItemGroup>
@@ -71,6 +72,13 @@
     </None>
     <Resource Include="Assets\SoundCalcs.tiff" />
   </ItemGroup>
+
+  <!-- Inject native libSkiaSharp.dll into ReferenceCopyLocalPaths so Costura.Fody can find and embed it as an unmanaged resource -->
+  <Target Name="AddNativeSkiaForCostura" BeforeTargets="FodyTarget" Condition="'$(TargetFramework)' == 'net48'">
+    <ItemGroup>
+      <ReferenceCopyLocalPaths Include="$(NuGetPackageRoot)skiasharp.nativeassets.win32\2.88.8\runtimes\win-x64\native\libSkiaSharp.dll" />
+    </ItemGroup>
+  </Target>
 
   <Target Name="SignBuild" AfterTargets="Build" Condition="'$(Configuration)' == 'Release' AND '$(TargetPath)' != ''">
     <Exec Command="&quot;C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x64\signtool.exe&quot; sign /f &quot;C:\Users\mibil\OneDrive\Desktop\RKToolsCert.pfx&quot; /p &quot;RaulKalev&quot; /tr http://timestamp.digicert.com /td SHA256 /fd SHA256 &quot;$(TargetPath)&quot;" />
