@@ -55,18 +55,19 @@ namespace SoundCalcs
             {
                 string assemblyDir = Path.GetDirectoryName(
                     typeof(App).Assembly.Location);
-                string nativePath = Path.Combine(assemblyDir, "x64", "libSkiaSharp.dll");
+
+                // 1. Flat next to the DLL (net8.0-windows copy target)
+                string nativePath = Path.Combine(assemblyDir, "libSkiaSharp.dll");
+                if (File.Exists(nativePath)) { LoadLibrary(nativePath); return; }
+
+                // 2. x64 subfolder
+                nativePath = Path.Combine(assemblyDir, "x64", "libSkiaSharp.dll");
+                if (File.Exists(nativePath)) { LoadLibrary(nativePath); return; }
+
+                // 3. runtimes folder structure (NuGet layout)
+                nativePath = Path.Combine(assemblyDir, "runtimes", "win-x64", "native", "libSkiaSharp.dll");
                 if (File.Exists(nativePath))
-                {
                     LoadLibrary(nativePath);
-                }
-                else
-                {
-                    // Fallback: check runtimes folder structure (NuGet layout)
-                    nativePath = Path.Combine(assemblyDir, "runtimes", "win-x64", "native", "libSkiaSharp.dll");
-                    if (File.Exists(nativePath))
-                        LoadLibrary(nativePath);
-                }
             }
             catch
             {

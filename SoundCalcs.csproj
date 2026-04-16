@@ -55,6 +55,11 @@
     <PackageReference Include="Nice3point.Revit.Api.AdWindows" Version="2026.4.0" />
     <PackageReference Include="Nice3point.Revit.Api.RevitAPI" Version="2026.4.0" />
     <PackageReference Include="Nice3point.Revit.Api.RevitAPIUI" Version="2026.4.0" />
+    <!-- Copy native libSkiaSharp flat to output so Revit can resolve it (Costura.Fody only works on net48) -->
+    <None Include="$(NuGetPackageRoot)skiasharp.nativeassets.win32\2.88.8\runtimes\win-x64\native\libSkiaSharp.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>libSkiaSharp.dll</Link>
+    </None>
   </ItemGroup>
 
   <ItemGroup>
