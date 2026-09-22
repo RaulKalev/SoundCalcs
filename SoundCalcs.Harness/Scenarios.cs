@@ -486,8 +486,9 @@ namespace SoundCalcs.Harness
                 Name = "wall_materials",
                 Description = "10×8 m room whose four lines are mapped to a wall type, Full quality. " +
                               "Concrete walls must reflect more than fabric curtains; lines mapped to " +
-                              "'Open (No Wall)' must neither block, reflect nor enclose; the RT60 estimate " +
-                              "must follow the wall materials.",
+                              "'Open (No Wall)' must neither block, reflect nor enclose; carpet and acoustic " +
+                              "tiles must weaken floor/ceiling reflections; the RT60 estimate must follow " +
+                              "the wall, floor and ceiling materials.",
                 Walls = ScenarioSpec.RectangleWalls(0, 0, 10, 8, 0, "concrete_200"),
                 Quality = CalculationQuality.Full,
                 Environment = env,
@@ -534,12 +535,48 @@ namespace SoundCalcs.Harness
                     double area = 80, height = 3, vol = area * height;
                     double surface = RoomAcoustics.EstimateSurfaceArea(area, height);
                     double[] drywall = OctaveBands.AbsorptionPresets[WallAbsorptionPreset.Drywall];
-                    double Rt500(string key) => RoomAcoustics.EstimateEyringRt60(vol, surface,
-                        RoomAcoustics.AverageAbsorption(area, surface,
-                            new[] { (36.0, WallTypeCatalog.FindByKey(key).AbsorptionByBand) }, drywall))[2];
-                    double rtConcrete = Rt500("concrete_200"), rtCurtain = Rt500("curtain_fabric");
+                    double[] Abs(WallAbsorptionPreset p) => OctaveBands.AbsorptionPresets[p];
+                    double Rt500(string key, WallAbsorptionPreset floor, WallAbsorptionPreset ceiling) =>
+                        RoomAcoustics.EstimateEyringRt60(vol, surface,
+                            RoomAcoustics.AverageAbsorption(area, surface,
+                                new[] { (36.0, WallTypeCatalog.FindByKey(key).AbsorptionByBand) },
+                                Abs(floor), Abs(ceiling), drywall))[2];
+                    var hardFloor = WallAbsorptionPreset.Concrete; var board = WallAbsorptionPreset.Drywall;
+                    double rtConcrete = Rt500("concrete_200", hardFloor, board), rtCurtain = Rt500("curtain_fabric", hardFloor, board);
                     ctx.Assert("estimated RT60 longer with concrete walls than with curtains", rtConcrete > rtCurtain * 1.5,
                         $"500 Hz: {CheckContext.F(rtConcrete)} s (concrete) vs {CheckContext.F(rtCurtain)} s (curtain)");
+                    double rtTiles = Rt500("concrete_200", hardFloor, WallAbsorptionPreset.AcousticTile);
+                    double rtCarpet = Rt500("concrete_200", WallAbsorptionPreset.Carpet, board);
+                    ctx.Assert("acoustic ceiling tiles shorten the estimated RT60", rtTiles < rtConcrete * 0.5,
+                        $"500 Hz: {CheckContext.F(rtConcrete)} s → {CheckContext.F(rtTiles)} s");
+                    ctx.Assert("carpet shortens the estimated RT60", rtCarpet < rtConcrete,
+                        $"500 Hz: {CheckContext.F(rtConcrete)} s → {CheckContext.F(rtCarpet)} s");
+
+                    // Floor finish reaches the floor reflections (the ceiling speaker is flush with
+                    // the ceiling, so only the floor reflects). Carpet absorbs mostly high bands.
+                    var carpetSpec = run.Spec.Clone("_carpet");
+                    carpetSpec.Environment.FloorSurface = WallAbsorptionPreset.Carpet;
+                    var carpet = ScenarioRun.Execute(carpetSpec);
+                    double drop2k = run.Output.Results.Zip(carpet.Output.Results, (h, c) => h.SplDbByBand[4] - c.SplDbByBand[4]).Average();
+                    double drop125 = run.Output.Results.Zip(carpet.Output.Results, (h, c) => h.SplDbByBand[0] - c.SplDbByBand[0]).Average();
+                    int louder = run.Output.Results.Zip(carpet.Output.Results, (h, c) => c.SplDb > h.SplDb + 1e-9 ? 1 : 0).Sum();
+                    // Carpet α: 0.02 at 125 Hz, 0.60 at 2 kHz (concrete ≈ 0.01–0.02)
+                    ctx.Assert("carpet floor lowers SPL everywhere, at 2 kHz far more than at 125 Hz",
+                        louder == 0 && drop2k > 0.2 && drop2k > drop125 + 0.2,
+                        $"mean drop 2 kHz {CheckContext.F(drop2k)} dB, 125 Hz {CheckContext.F(drop125)} dB, {louder} receivers louder");
+
+                    // Ceiling finish reaches the ceiling reflection of a speaker mounted below it
+                    var wallSpk = run.Spec.Clone("_wallspeaker");
+                    wallSpk.Speakers[0].Profile = ScenarioSpec.WallMount(90, 60, -12);
+                    wallSpk.Speakers[0].HeightM = 2.0;
+                    var tilesSpec = wallSpk.Clone("_tiles");
+                    tilesSpec.Environment.CeilingSurface = WallAbsorptionPreset.AcousticTile;
+                    var hard = ScenarioRun.Execute(wallSpk);
+                    var tiles = ScenarioRun.Execute(tilesSpec);
+                    double tileDrop = hard.Output.Results.Zip(tiles.Output.Results, (h, t) => h.SplDb - t.SplDb).Average();
+                    int tileLouder = hard.Output.Results.Zip(tiles.Output.Results, (h, t) => t.SplDb > h.SplDb + 1e-9 ? 1 : 0).Sum();
+                    ctx.Assert("acoustic ceiling tiles lower SPL everywhere (weaker ceiling reflection)",
+                        tileLouder == 0 && tileDrop > 0.3, $"mean drop {CheckContext.F(tileDrop)} dB, {tileLouder} receivers louder");
                 }
             };
         }

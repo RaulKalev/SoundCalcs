@@ -658,6 +658,38 @@
                                    Text="Revit parameter name storing the A/B line designation" FontSize="11" Margin="0,8,0,0"/>
                     </Grid>
 
+                    <!-- Floor / ceiling finishes: used for floor & ceiling reflections and the RT60 estimate -->
+                    <TextBlock Style="{StaticResource SectionHeader}" Text="Room Surfaces" FontSize="12" Margin="0,6,0,4"/>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="180"/>
+                            <ColumnDefinition Width="240"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+
+                        <TextBlock Grid.Row="0" Grid.Column="0" Style="{StaticResource LabelStyle}" Text="Floor:"/>
+                        <ComboBox Grid.Row="0" Grid.Column="1" Style="{StaticResource ComboStyle}"
+                                  ItemsSource="{Binding FloorSurfaceOptions}"
+                                  SelectedItem="{Binding FloorSurface, UpdateSourceTrigger=PropertyChanged}"
+                                  DisplayMemberPath="DisplayName"
+                                  ToolTip="Floor finish: sets how much sound the floor reflects and absorbs"/>
+
+                        <TextBlock Grid.Row="1" Grid.Column="0" Style="{StaticResource LabelStyle}" Text="Ceiling:" Margin="0,4,0,0"/>
+                        <ComboBox Grid.Row="1" Grid.Column="1" Style="{StaticResource ComboStyle}" Margin="0,4,0,0"
+                                  ItemsSource="{Binding CeilingSurfaceOptions}"
+                                  SelectedItem="{Binding CeilingSurface, UpdateSourceTrigger=PropertyChanged}"
+                                  DisplayMemberPath="DisplayName"
+                                  ToolTip="Ceiling finish: sets how much sound the ceiling reflects and absorbs"/>
+
+                        <TextBlock Grid.Row="0" Grid.Column="2" Grid.RowSpan="2" Style="{StaticResource LabelStyle}"
+                                   Text="Used for floor/ceiling reflections and by Estimate RT60 — press Estimate again after changing"
+                                   FontSize="11" TextWrapping="Wrap" Margin="8,0,0,0"/>
+                    </Grid>
+
                     <Button Content="Save Settings" Style="{StaticResource SuccessBtnStyle}"
                             Click="SaveSettings_Click" HorizontalAlignment="Left" Margin="0,12"/>
                 </StackPanel>

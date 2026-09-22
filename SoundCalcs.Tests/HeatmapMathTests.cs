@@ -292,6 +292,24 @@ namespace SoundCalcs.Tests
         }
 
         [Fact]
+        public void SurfaceCatalog_DefaultsExist_AndAverageAbsorptionWeightsSurfaces()
+        {
+            Assert.Equal(WallAbsorptionPreset.Concrete,
+                SurfaceMaterialCatalog.Find(SurfaceMaterialCatalog.FloorOptions, SurfaceMaterialCatalog.DefaultFloor).Preset);
+            Assert.Equal(WallAbsorptionPreset.Drywall,
+                SurfaceMaterialCatalog.Find(SurfaceMaterialCatalog.CeilingOptions, SurfaceMaterialCatalog.DefaultCeiling).Preset);
+            // Unknown preset falls back to the first option
+            Assert.Equal(SurfaceMaterialCatalog.FloorOptions[0],
+                SurfaceMaterialCatalog.Find(SurfaceMaterialCatalog.FloorOptions, WallAbsorptionPreset.Glass));
+
+            // 10 m² floor, 10 m² ceiling, 20 m² walls: α = (10·0.1 + 10·0.5 + 20·0.2)/40 = 0.25
+            double[] Flat(double v) => Enumerable.Repeat(v, 7).ToArray();
+            double[] avg = SoundCalcs.Compute.RoomAcoustics.AverageAbsorption(
+                10, 40, new[] { (5.0, Flat(0.2)) }, Flat(0.1), Flat(0.5), Flat(0.9));
+            Assert.All(avg, a => Assert.Equal(0.25, a, 9));
+        }
+
+        [Fact]
         public void ApplyCeilingHeights_UsesTallestSpeakerInRoom()
         {
             var room = new RoomPolygon

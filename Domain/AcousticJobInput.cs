@@ -73,6 +73,12 @@ namespace SoundCalcs.Domain
         /// Speech weighting type for STI calculation (Male or Female).
         /// </summary>
         public SpeechWeightType SpeechWeightType { get; set; } = SpeechWeightType.Male;
+
+        /// <summary>Floor finish, used for floor reflections.</summary>
+        public WallAbsorptionPreset FloorSurface { get; set; } = SurfaceMaterialCatalog.DefaultFloor;
+
+        /// <summary>Ceiling finish, used for ceiling reflections.</summary>
+        public WallAbsorptionPreset CeilingSurface { get; set; } = SurfaceMaterialCatalog.DefaultCeiling;
     }
 
     /// <summary>

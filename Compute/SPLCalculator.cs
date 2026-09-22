@@ -116,8 +116,11 @@ namespace SoundCalcs.Compute
             for (int k = 0; k < numBands; k++)
                 t60[k] = Math.Max(rt60[k], 0.05);
 
-            // Detail lines carry no material: all surfaces use the drywall preset
+            // Walls without an assigned material fall back to drywall; floor and ceiling
+            // use the finishes chosen in the settings.
             double[] globalAbsorption = OctaveBands.AbsorptionPresets[WallAbsorptionPreset.Drywall];
+            double[] floorAbsorption = OctaveBands.AbsorptionPresets[input.Environment.FloorSurface];
+            double[] ceilingAbsorption = OctaveBands.AbsorptionPresets[input.Environment.CeilingSurface];
 
             var providers = new ISpeakerDirectivityProvider[numSources];
             for (int i = 0; i < numSources; i++)
@@ -256,9 +259,9 @@ namespace SoundCalcs.Compute
                     ceilingZ = floorZ + maxCeil;
                 }
 
-                double[] horizCoeffs = new double[numBands];
+                double[] floorCoeffs = new double[numBands];
                 for (int k = 0; k < numBands; k++)
-                    horizCoeffs[k] = 1.0 - globalAbsorption[k];
+                    floorCoeffs[k] = 1.0 - floorAbsorption[k];
 
                 for (int s = 0; s < numSources; s++)
                 {
@@ -273,7 +276,7 @@ namespace SoundCalcs.Compute
                     {
                         double[] ceilCoeffs = new double[numBands];
                         for (int k = 0; k < numBands; k++)
-                            ceilCoeffs[k] = horizCoeffs[k] * enclosure;
+                            ceilCoeffs[k] = (1.0 - ceilingAbsorption[k]) * enclosure;
                         horizImages.Add(new HorizontalImageSource
                         {
                             ImagePos3D = new Vec3(srcPos.X, srcPos.Y, 2.0 * ceilingZ - srcPos.Z),
@@ -291,7 +294,7 @@ namespace SoundCalcs.Compute
                             ImagePos3D = new Vec3(srcPos.X, srcPos.Y, 2.0 * floorZ - srcPos.Z),
                             SurfaceZ = floorZ,
                             SourceIndex = s,
-                            ReflectionCoeffByBand = horizCoeffs
+                            ReflectionCoeffByBand = floorCoeffs
                         });
                     }
                 }

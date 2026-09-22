@@ -73,30 +73,30 @@ namespace SoundCalcs.Compute
         }
 
         /// <summary>
-        /// Area-weighted mean absorption per band. Floor and ceiling (2 × floor area) use
-        /// <paramref name="floorCeilingAbsorption"/>; the remaining wall area is split
-        /// between wall types in proportion to their line length. With no wall types the
-        /// walls use the floor/ceiling value.
+        /// Area-weighted mean absorption per band. The floor and the ceiling each cover the
+        /// floor area; the remaining wall area is split between wall types in proportion to
+        /// their line length. With no wall types the walls use <paramref name="defaultWallAbsorption"/>.
         /// </summary>
         public static double[] AverageAbsorption(
             double floorAreaM2, double totalSurfaceAreaM2,
             IEnumerable<(double LengthM, double[] Absorption)> wallMix,
-            double[] floorCeilingAbsorption)
+            double[] floorAbsorption, double[] ceilingAbsorption, double[] defaultWallAbsorption)
         {
-            if (totalSurfaceAreaM2 <= 0) return (double[])floorCeilingAbsorption.Clone();
+            if (totalSurfaceAreaM2 <= 0) return (double[])defaultWallAbsorption.Clone();
 
             var mix = wallMix.Where(w => w.LengthM > 0 && w.Absorption != null).ToList();
             double totalLength = mix.Sum(w => w.LengthM);
-            double floorCeiling = Math.Min(2 * floorAreaM2, totalSurfaceAreaM2);
-            double walls = totalSurfaceAreaM2 - floorCeiling;
+            double horizontal = Math.Min(floorAreaM2, totalSurfaceAreaM2 / 2);
+            double walls = totalSurfaceAreaM2 - 2 * horizontal;
 
             var result = new double[OctaveBands.Count];
             for (int k = 0; k < OctaveBands.Count; k++)
             {
                 double wallAlpha = totalLength > 0
                     ? mix.Sum(w => w.LengthM * w.Absorption[k]) / totalLength
-                    : floorCeilingAbsorption[k];
-                result[k] = (floorCeiling * floorCeilingAbsorption[k] + walls * wallAlpha) / totalSurfaceAreaM2;
+                    : defaultWallAbsorption[k];
+                result[k] = (horizontal * (floorAbsorption[k] + ceilingAbsorption[k]) + walls * wallAlpha)
+                          / totalSurfaceAreaM2;
             }
             return result;
         }

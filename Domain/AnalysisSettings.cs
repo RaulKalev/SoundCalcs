@@ -90,6 +90,15 @@ namespace SoundCalcs.Domain
         /// </summary>
         public double WallHeightM { get; set; } = 0.0;
 
+        /// <summary>Relative air humidity in % (ISO 9613-1 air absorption).</summary>
+        public double RelativeHumidityPct { get; set; } = 50.0;
+
+        /// <summary>Floor finish (reflections and RT60 estimate).</summary>
+        public WallAbsorptionPreset FloorSurface { get; set; } = SurfaceMaterialCatalog.DefaultFloor;
+
+        /// <summary>Ceiling finish (reflections and RT60 estimate).</summary>
+        public WallAbsorptionPreset CeilingSurface { get; set; } = SurfaceMaterialCatalog.DefaultCeiling;
+
         /// <summary>
         /// Name of the Revit instance parameter that holds the A/B line designation (e.g. "A" or "B").
         /// Leave empty to disable A/B line labelling.

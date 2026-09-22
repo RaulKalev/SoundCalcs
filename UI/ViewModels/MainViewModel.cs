@@ -509,6 +509,26 @@ namespace SoundCalcs.UI.ViewModels
             set { _humidity = value; OnPropertyChanged(nameof(Humidity)); }
         }
 
+        // --- Floor / ceiling finishes (reflections + RT60 estimate) ---
+        public List<SurfaceMaterialInfo> FloorSurfaceOptions => SurfaceMaterialCatalog.FloorOptions;
+        public List<SurfaceMaterialInfo> CeilingSurfaceOptions => SurfaceMaterialCatalog.CeilingOptions;
+
+        private SurfaceMaterialInfo _floorSurface =
+            SurfaceMaterialCatalog.Find(SurfaceMaterialCatalog.FloorOptions, SurfaceMaterialCatalog.DefaultFloor);
+        public SurfaceMaterialInfo FloorSurface
+        {
+            get => _floorSurface;
+            set { _floorSurface = value ?? FloorSurfaceOptions[0]; OnPropertyChanged(nameof(FloorSurface)); }
+        }
+
+        private SurfaceMaterialInfo _ceilingSurface =
+            SurfaceMaterialCatalog.Find(SurfaceMaterialCatalog.CeilingOptions, SurfaceMaterialCatalog.DefaultCeiling);
+        public SurfaceMaterialInfo CeilingSurface
+        {
+            get => _ceilingSurface;
+            set { _ceilingSurface = value ?? CeilingSurfaceOptions[0]; OnPropertyChanged(nameof(CeilingSurface)); }
+        }
+
         // --- Per-octave-band RT60 properties ---
         private double _rt60_125 = OctaveBands.DefaultRT60[0];
         public double RT60_125 { get => _rt60_125; set { _rt60_125 = value; OnPropertyChanged(nameof(RT60_125)); } }
@@ -579,7 +599,7 @@ namespace SoundCalcs.UI.ViewModels
             double surfaceAreaM2 = Compute.RoomAcoustics.EstimateSurfaceArea(totalFloorArea, avgCeilingH);
 
             // Area-weighted absorption: walls use the surface material of their assigned wall
-            // type (weighted by detail-line length), floor and ceiling use the drywall default.
+            // type (weighted by detail-line length), floor and ceiling the chosen finishes.
             var wallMix = WallLineGroups
                 .Select(w => w.GetGroup())
                 .Where(g => g.TotalLengthM > 0 && g.WallType != null)
@@ -587,6 +607,7 @@ namespace SoundCalcs.UI.ViewModels
                 .ToList();
             double[] absorption = Compute.RoomAcoustics.AverageAbsorption(
                 totalFloorArea, surfaceAreaM2, wallMix,
+                FloorSurface.AbsorptionByBand, CeilingSurface.AbsorptionByBand,
                 OctaveBands.AbsorptionPresets[WallAbsorptionPreset.Drywall]);
 
             double[] rt60 = Compute.RoomAcoustics.EstimateEyringRt60(volumeM3, surfaceAreaM2, absorption);
@@ -606,6 +627,10 @@ namespace SoundCalcs.UI.ViewModels
                 RT60_125 = rt[0]; RT60_250 = rt[1]; RT60_500 = rt[2]; RT60_1k = rt[3];
                 RT60_2k = rt[4]; RT60_4k = rt[5]; RT60_8k = rt[6];
             }
+            Humidity = s.RelativeHumidityPct;
+            FloorSurface = SurfaceMaterialCatalog.Find(SurfaceMaterialCatalog.FloorOptions, s.FloorSurface);
+            CeilingSurface = SurfaceMaterialCatalog.Find(SurfaceMaterialCatalog.CeilingOptions, s.CeilingSurface);
+
             double[] n = s.BackgroundNoiseByBand ?? OctaveBands.DefaultBackgroundNoise;
             if (n.Length >= OctaveBands.Count)
             {
@@ -924,7 +949,10 @@ namespace SoundCalcs.UI.ViewModels
                     BackgroundNoiseDb = BackgroundNoiseDb,
                     RT60ByBand = GetRT60Array(),
                     BackgroundNoiseByBand = GetNoiseArray(),
-                    AbLineParameterName = AbLineParameterName
+                    AbLineParameterName = AbLineParameterName,
+                    RelativeHumidityPct = Humidity,
+                    FloorSurface = FloorSurface.Preset,
+                    CeilingSurface = CeilingSurface.Preset
                 },
                 SpeakerMappings    = SpeakerGroups.Select(g => g.GetMapping()).ToList(),
                 WallGroups         = WallLineGroups.Select(vm => vm.GetGroup()).ToList(),
@@ -1107,7 +1135,9 @@ namespace SoundCalcs.UI.ViewModels
                         BackgroundNoiseDb = BackgroundNoiseDb,
                         RT60ByBand = GetRT60Array(),
                         BackgroundNoiseByBand = GetNoiseArray(),
-                        RelativeHumidityPct = Humidity
+                        RelativeHumidityPct = Humidity,
+                        FloorSurface = FloorSurface.Preset,
+                        CeilingSurface = CeilingSurface.Preset
                     }
                 };
 
