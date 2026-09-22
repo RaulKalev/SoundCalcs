@@ -74,6 +74,14 @@ namespace SoundCalcs.Domain
         /// </summary>
         public SpeechWeightType SpeechWeightType { get; set; } = SpeechWeightType.Male;
 
+        /// <summary>
+        /// When true (default), STI, C80 and D50 are computed for standard IEC speech
+        /// (male or female spectrum, per <see cref="SpeechWeightType"/>) played through each
+        /// speaker's frequency response at its rated level. When false, for the speaker's
+        /// full-range program, like the SPL maps.
+        /// </summary>
+        public bool UseSpeechSpectrumForSti { get; set; } = true;
+
         /// <summary>Floor finish, used for floor reflections.</summary>
         public WallAbsorptionPreset FloorSurface { get; set; } = SurfaceMaterialCatalog.DefaultFloor;
 

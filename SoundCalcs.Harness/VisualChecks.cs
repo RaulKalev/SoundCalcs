@@ -160,11 +160,16 @@ namespace SoundCalcs.Harness
             for (int i = 0; i + 1 < ranges.Count; i++)
                 ok &= Math.Abs(ranges[i].Lo - ranges[i + 1].Hi) < 1e-9;
             if (mode == VisualizationMode.STI)
+            {
+                double step = (plan.MaxVal - plan.MinVal) / plan.NumBands;
                 foreach (var l in legend)
                 {
-                    var (lo, hi) = ParseRange(l.Label);
+                    // exact band edges (the label text is rounded)
+                    double lo = plan.MinVal + l.Band * step;
+                    double hi = l.Band == plan.NumBands - 1 ? plan.MaxVal : plan.MinVal + (l.Band + 1) * step;
                     ok &= l.Label.EndsWith($"({HeatmapMath.StiQuality((lo + hi) / 2)})");
                 }
+            }
             if (!ok)
                 legendFailures.Add($"{mode}: [{string.Join(" | ", legend.Select(l => l.Label))}] for range {plan.MinVal:F2}..{plan.MaxVal:F2}");
         }

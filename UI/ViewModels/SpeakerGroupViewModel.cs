@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.ComponentModel;
 using SoundCalcs.Domain;
 
@@ -72,6 +73,36 @@ namespace SoundCalcs.UI.ViewModels
             }
         }
 
+        // --- Frequency response (spectrum shape) ---
+        public IEnumerable<string> AvailableResponsePresets => SpeakerResponsePresets.Names;
+
+        /// <summary>Response preset name; choosing one fills <see cref="ResponseText"/>.</summary>
+        public string ResponsePreset
+        {
+            get => SpeakerResponsePresets.NameFor(_group.Mapping.SpectrumShapeByBand);
+            set
+            {
+                double[] values = SpeakerResponsePresets.Find(value);
+                if (values == null) return; // "Custom": keep current values, edit the text
+                _group.Mapping.SpectrumShapeByBand = values;
+                OnPropertyChanged(nameof(ResponsePreset));
+                OnPropertyChanged(nameof(ResponseText));
+            }
+        }
+
+        /// <summary>Per-band response in dB, "125 250 500 1k 2k 4k 8k" separated by spaces.</summary>
+        public string ResponseText
+        {
+            get => SpeakerResponsePresets.Format(_group.Mapping.SpectrumShapeByBand);
+            set
+            {
+                if (!SpeakerResponsePresets.TryParse(value, out double[] values)) return; // ignore invalid input
+                _group.Mapping.SpectrumShapeByBand = values;
+                OnPropertyChanged(nameof(ResponseText));
+                OnPropertyChanged(nameof(ResponsePreset));
+            }
+        }
+
         public double ConeHalfAngleDeg
         {
             get => _group.Mapping.ConeHalfAngleDeg;
@@ -116,6 +147,8 @@ namespace SoundCalcs.UI.ViewModels
             OnPropertyChanged(nameof(ConeHalfAngleDeg));
             OnPropertyChanged(nameof(OffAxisAttenuationDb));
             OnPropertyChanged(nameof(IsWallMounted));
+            OnPropertyChanged(nameof(ResponsePreset));
+            OnPropertyChanged(nameof(ResponseText));
         }
 
         /// <summary>

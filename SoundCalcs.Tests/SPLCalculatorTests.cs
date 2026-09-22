@@ -367,9 +367,11 @@ namespace SoundCalcs.Tests
         {
             // With no reverberant field and one source, every path is classified as
             // early or late, so the total early+late linear energy must equal the
-            // total energy that produced SplDb.
+            // total energy that produced SplDb (for the full-range program; with the
+            // default speech test signal the band split follows the speech spectrum).
             var input = BuildInput(new Vec3(0, 0, 0), new Vec3(1, 0, 0), 90.0,
                 new[] { new Vec3(3, 0, 0) });
+            input.Environment.UseSpeechSpectrumForSti = false;
 
             var calc = new SPLCalculator();
             var (results, bandData) = calc.Calculate(input, CancellationToken.None, null);

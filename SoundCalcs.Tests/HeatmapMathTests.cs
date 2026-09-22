@@ -310,6 +310,26 @@ namespace SoundCalcs.Tests
         }
 
         [Fact]
+        public void SpeakerResponsePresets_RoundTripAndParse()
+        {
+            foreach (var (name, values) in SpeakerResponsePresets.All)
+            {
+                Assert.Equal(name, SpeakerResponsePresets.NameFor(values));
+                Assert.True(SpeakerResponsePresets.TryParse(SpeakerResponsePresets.Format(values), out var parsed));
+                Assert.Equal(values, parsed);
+            }
+            Assert.Equal("Flat", SpeakerResponsePresets.NameFor(null));
+            Assert.Equal(SpeakerResponsePresets.CustomName, SpeakerResponsePresets.NameFor(new double[] { 1, 0, 0, 0, 0, 0, 0 }));
+            Assert.Null(SpeakerResponsePresets.Find(SpeakerResponsePresets.CustomName));
+
+            Assert.True(SpeakerResponsePresets.TryParse("-6; -1; 0; 0; 0; -2.5; -6", out var p));
+            Assert.Equal(-2.5, p[5]);
+            Assert.False(SpeakerResponsePresets.TryParse("0 0 0", out _));        // wrong count
+            Assert.False(SpeakerResponsePresets.TryParse("0 0 0 0 0 0 abc", out _));
+            Assert.False(SpeakerResponsePresets.TryParse("0 0 0 0 0 0 99", out _)); // out of range
+        }
+
+        [Fact]
         public void ApplyCeilingHeights_UsesTallestSpeakerInRoom()
         {
             var room = new RoomPolygon

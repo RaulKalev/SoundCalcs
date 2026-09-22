@@ -127,6 +127,33 @@ namespace SoundCalcs.Tests
         }
 
         [Fact]
+        public void SpeakerResponse_IsNormalised_BroadbandLevelUnchanged()
+        {
+            // A strongly shaped response must not change the broadband on-axis level at 1 m.
+            var shaped = Omni(0, 0, 1.2);
+            shaped.Profile.SpectrumShapeByBand = new double[] { -12, -5, -1, 0, 0, -2, -6 };
+            var (res, _) = Run(new List<ComputeSource> { shaped }, new List<Vec3> { new Vec3(1, 0, 1.2) });
+            Assert.InRange(res[0].SplDb, 89.9, 90.0);   // only air absorption over 1 m
+            // …and the band levels follow the shape (1 kHz vs 125 Hz: 12 dB apart)
+            Assert.InRange(res[0].SplDbByBand[3] - res[0].SplDbByBand[0], 11.9, 12.1);
+        }
+
+        [Fact]
+        public void StiSignal_IsIecSpeechThroughSpeakerResponse()
+        {
+            // Flat speaker, 1 m: STI band energies follow the IEC male speech spectrum,
+            // normalised to the speaker's broadband level; SPL stays flat.
+            var (res, bd) = Run(new List<ComputeSource> { Omni(0, 0, 1.2) }, new List<Vec3> { new Vec3(1, 0, 1.2) });
+            double[] e = Enumerable.Range(0, 7).Select(k => bd[0].EarlyLinearByBand[k] + bd[0].LateLinearByBand[k]).ToArray();
+            double[] speech = OctaveBands.EnergyFractions(OctaveBands.MaleSpeechSpectrumDb);
+            double total = e.Sum();
+            for (int k = 0; k < 5; k++)   // below 4 kHz air absorption over 1 m is negligible
+                Assert.InRange(e[k] / total, speech[k] * 0.995, speech[k] * 1.005);
+            Assert.InRange(10 * Math.Log10(total), 89.9, 90.0);
+            Assert.InRange(res[0].SplDbByBand[3] - res[0].SplDbByBand[0], -0.05, 0.05);
+        }
+
+        [Fact]
         public void C80_UsesEightyMillisecondSplit()
         {
             // An echo 65 ms after the direct sound is late for D50 but early for C80.

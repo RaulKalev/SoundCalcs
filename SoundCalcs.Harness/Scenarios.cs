@@ -150,10 +150,22 @@ namespace SoundCalcs.Harness
                         run.Output.Results.All(r => r.D50 == 1.0 && r.C80Db == 15.0),
                         $"D50 range {run.Output.Results.Min(r => r.D50)}..{run.Output.Results.Max(r => r.D50)}");
 
-                    var near = run.Output.Results.Where(r => Dist(r.Position, src) < 2).Average(r => r.Sti);
-                    var far = run.Output.Results.Where(r => Dist(r.Position, src) > 7).Average(r => r.Sti);
-                    ctx.Assert("STI falls with distance as SNR drops", near > far,
+                    // In a noisy space STI falls with distance as the SNR drops …
+                    var noisySpec = run.Spec.Clone("_noisy");
+                    noisySpec.Environment.BackgroundNoiseByBand = IecReference.Fill(60);
+                    var noisy = ScenarioRun.Execute(noisySpec);
+                    var near = noisy.Output.Results.Where(r => Dist(r.Position, src) < 2).Average(r => r.Sti);
+                    var far = noisy.Output.Results.Where(r => Dist(r.Position, src) > 7).Average(r => r.Sti);
+                    ctx.Assert("with 60 dB noise, STI falls with distance as SNR drops", near > far + 0.1,
                         $"mean STI < 2 m: {CheckContext.F(near)}, > 7 m: {CheckContext.F(far)}");
+
+                    // … while in near-silence very loud speech is slightly less intelligible
+                    // (IEC 60268-16 level-dependent auditory masking), so STI is highest far away.
+                    var quietNear = run.Output.Results.Where(r => Dist(r.Position, src) < 2).Average(r => r.Sti);
+                    var quietFar = run.Output.Results.Where(r => Dist(r.Position, src) > 7).Average(r => r.Sti);
+                    ctx.Assert("in near-silence, loud speech near the speaker is masked slightly (IEC)",
+                        quietNear < quietFar && quietNear > 0.9,
+                        $"mean STI < 2 m: {CheckContext.F(quietNear)}, > 7 m: {CheckContext.F(quietFar)}");
 
                     double hf = run.Output.Results.Where(r => Dist(r.Position, src) > 7).Average(r => r.SplDbByBand[3] - r.SplDbByBand[6]);
                     double expHf = run.Output.Results.Where(r => Dist(r.Position, src) > 7)

@@ -12,6 +12,8 @@ namespace SoundCalcs.Compute
     /// <summary>
     /// Intermediate per-receiver octave-band data produced by SPLCalculator
     /// and consumed by STICalculator. Times are relative to the first arrival.
+    /// Energies are for the STI test signal (standard speech through each speaker's
+    /// response) unless EnvironmentSettings.UseSpeechSpectrumForSti is false.
     /// </summary>
     public class ReceiverBandData
     {
@@ -126,16 +128,34 @@ namespace SoundCalcs.Compute
             for (int i = 0; i < numSources; i++)
                 providers[i] = DirectivityProviderFactory.Create(input.Sources[i].Profile);
 
-            // Per-source, per-band emitted power (on-axis at 1 m, linear), including spectrum shape
+            // Per-source, per-band emitted power (on-axis at 1 m, linear). The speaker's frequency
+            // response only shapes the spectrum; the broadband level stays OnAxisSplAtOneMeter.
+            // For STI/C80/D50 the program is standard IEC speech played through that response:
+            // speechFactor rescales each band from the program spectrum to the speech spectrum.
+            double[] speechDb = input.Environment.SpeechWeightType == SpeechWeightType.Female
+                ? OctaveBands.FemaleSpeechSpectrumDb
+                : OctaveBands.MaleSpeechSpectrumDb;
             double[][] sourceBand = new double[numSources][];
+            double[][] speechFactor = new double[numSources][];
             for (int s = 0; s < numSources; s++)
             {
                 sourceBand[s] = new double[numBands];
+                speechFactor[s] = new double[numBands];
                 double broadband = Math.Pow(10.0, providers[s].OnAxisSplAtOneMeter / 10.0);
-                double[] shape = input.Sources[s].Profile?.SpectrumShapeByBand;
-                bool hasShape = shape != null && shape.Length == numBands;
+                double[] response = input.Sources[s].Profile?.SpectrumShapeByBand;
+                if (response != null && response.Length != numBands) response = null;
+
+                double[] program = OctaveBands.EnergyFractions(response);
+                double[] speechThroughSpeaker = new double[numBands];
                 for (int k = 0; k < numBands; k++)
-                    sourceBand[s][k] = broadband / numBands * (hasShape ? Math.Pow(10.0, shape[k] / 10.0) : 1.0);
+                    speechThroughSpeaker[k] = speechDb[k] + (response?[k] ?? 0);
+                double[] speech = OctaveBands.EnergyFractions(speechThroughSpeaker);
+
+                for (int k = 0; k < numBands; k++)
+                {
+                    sourceBand[s][k] = broadband * program[k];
+                    speechFactor[s][k] = input.Environment.UseSpeechSpectrumForSti ? speech[k] / program[k] : 1.0;
+                }
             }
 
             // --- Rooms and reverberant field (Sabine) ---
@@ -327,7 +347,7 @@ namespace SoundCalcs.Compute
                     Vec2 recvXY = new Vec2(recvPos.X, recvPos.Y);
 
                     double[] totalByBand = new double[numBands];
-                    var arrivals = new List<(double Time, double[] Power)>(numSources * 4);
+                    var arrivals = new List<(double Time, double[] Power, int Source)>(numSources * 4);
 
                     double[] directTime = new double[numSources];
                     double[] directDist = new double[numSources];
@@ -360,7 +380,7 @@ namespace SoundCalcs.Compute
                                  * LossFactor(stc, k, airAbsorption[k] * distance);
                             totalByBand[k] += p[k];
                         }
-                        arrivals.Add((directTime[s], p));
+                        arrivals.Add((directTime[s], p, s));
                     }
 
                     // --- Wall reflections (image sources) ---
@@ -422,7 +442,7 @@ namespace SoundCalcs.Compute
                             totalByBand[k] += p[k];
                             imageEnergy[img.SourceIndex][k] += p[k];
                         }
-                        arrivals.Add((pathLen / speedOfSound, p));
+                        arrivals.Add((pathLen / speedOfSound, p, img.SourceIndex));
                     }
 
                     // --- Ceiling / floor reflections ---
@@ -456,7 +476,7 @@ namespace SoundCalcs.Compute
                             totalByBand[k] += p[k];
                             imageEnergy[himg.SourceIndex][k] += p[k];
                         }
-                        arrivals.Add((pathLen / speedOfSound, p));
+                        arrivals.Add((pathLen / speedOfSound, p, himg.SourceIndex));
                     }
 
                     // --- Reverberant tail (Barron's revised theory) ---
@@ -501,7 +521,7 @@ namespace SoundCalcs.Compute
                         SplDbByBand = splDbByBand
                     });
 
-                    bandDataBag.Add(BuildBandData(receiver.Index, arrivals, tail, directTime, t60, modFreqs));
+                    bandDataBag.Add(BuildBandData(receiver.Index, arrivals, tail, directTime, t60, modFreqs, speechFactor));
 
                     int done = Interlocked.Increment(ref completed);
                     if (done % Math.Max(1, totalReceivers / 100) == 0)
@@ -526,11 +546,12 @@ namespace SoundCalcs.Compute
         /// </summary>
         private static ReceiverBandData BuildBandData(
             int receiverIndex,
-            List<(double Time, double[] Power)> arrivals,
+            List<(double Time, double[] Power, int Source)> arrivals,
             double[][] tail,
             double[] directTime,
             double[] t60,
-            double[] modFreqs)
+            double[] modFreqs,
+            double[][] speechFactor)
         {
             int nb = OctaveBands.Count, nf = modFreqs.Length;
             var bd = new ReceiverBandData
@@ -553,7 +574,7 @@ namespace SoundCalcs.Compute
             if (arrivals.Count == 0) return bd;
 
             double[] cos = new double[nf], sin = new double[nf];
-            foreach (var (time, power) in arrivals)
+            foreach (var (time, power, source) in arrivals)
             {
                 double dt = time - tFirst;
                 for (int f = 0; f < nf; f++)
@@ -564,7 +585,7 @@ namespace SoundCalcs.Compute
                 }
                 for (int k = 0; k < nb; k++)
                 {
-                    double e = power[k];
+                    double e = power[k] * speechFactor[source][k];
                     if (e <= 0) continue;
                     if (dt <= Split50S) bd.EarlyLinearByBand[k] += e; else bd.LateLinearByBand[k] += e;
                     if (dt <= Split80S) bd.Early80LinearByBand[k] += e; else bd.Late80LinearByBand[k] += e;
@@ -584,7 +605,7 @@ namespace SoundCalcs.Compute
                 double dt0 = directTime[s] - tFirst;
                 for (int k = 0; k < nb; k++)
                 {
-                    double r = tail[s][k];
+                    double r = tail[s][k] * speechFactor[s][k];
                     if (r <= 0) continue;
                     double tau = t60[k] / 13.82;
 

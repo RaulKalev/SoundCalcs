@@ -48,6 +48,38 @@ namespace SoundCalcs.Domain
             { 0.000, 0.099, 0.066, 0.062, 0.025, 0.076 };
 
         /// <summary>
+        /// IEC 60268-16:2011 standard male speech spectrum: octave-band levels in dB relative
+        /// to the broadband speech level (125 Hz – 8 kHz). Used as the STI test signal.
+        /// </summary>
+        public static readonly double[] MaleSpeechSpectrumDb =
+            { 2.9, 2.9, -0.8, -6.8, -12.8, -18.8, -24.8 };
+
+        /// <summary>
+        /// IEC 60268-16:2011 standard female speech spectrum (125 Hz is not part of female
+        /// speech: effectively silent).
+        /// </summary>
+        public static readonly double[] FemaleSpeechSpectrumDb =
+            { -100, 5.3, -1.9, -9.1, -15.8, -16.7, -18.0 };
+
+        /// <summary>
+        /// Fraction of broadband energy per band for a spectrum given as relative dB levels
+        /// (null = flat). The fractions sum to 1, so a shape never changes the total level.
+        /// </summary>
+        public static double[] EnergyFractions(double[] relativeDb)
+        {
+            var w = new double[Count];
+            double sum = 0;
+            for (int k = 0; k < Count; k++)
+            {
+                w[k] = relativeDb != null && relativeDb.Length == Count ? System.Math.Pow(10.0, relativeDb[k] / 10.0) : 1.0;
+                sum += w[k];
+            }
+            for (int k = 0; k < Count; k++)
+                w[k] /= sum;
+            return w;
+        }
+
+        /// <summary>
         /// IEC 60268-16:2011 absolute speech reception threshold per octave band, dB SPL
         /// (Table A.3). Adds to the effective noise so very quiet signals lose intelligibility.
         /// </summary>

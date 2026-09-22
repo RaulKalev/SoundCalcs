@@ -550,6 +550,17 @@
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
                             <DataGridTextColumn Header="SPL (dB)" Binding="{Binding OnAxisSplDb}" Width="70"/>
+                            <DataGridTemplateColumn Header="Response" Width="190">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <ComboBox Style="{StaticResource ComboStyle}"
+                                                  ItemsSource="{Binding AvailableResponsePresets}"
+                                                  SelectedItem="{Binding ResponsePreset, UpdateSourceTrigger=PropertyChanged}"
+                                                  ToolTip="Speaker frequency response. Generic presets; enter manufacturer data in the next column for accuracy."/>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTextColumn Header="Response dB (125…8k)" Binding="{Binding ResponseText, UpdateSourceTrigger=LostFocus}" Width="150"/>
                             <DataGridTextColumn Header="Cone Angle" Binding="{Binding ConeHalfAngleDeg}" Width="80"/>
                             <DataGridTextColumn Header="GLL Path" Binding="{Binding GllFilePath}" Width="180"/>
                         </DataGrid.Columns>

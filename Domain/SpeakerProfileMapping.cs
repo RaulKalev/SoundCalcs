@@ -51,8 +51,9 @@ namespace SoundCalcs.Domain
 
         // --- Per-band spectrum shape ---
         /// <summary>
-        /// Optional per-octave-band offset in dB relative to flat spectrum (7 elements, 125 Hz–8 kHz).
-        /// Null or all-zeros = flat (equal energy split, current behavior).
+        /// Optional per-octave-band frequency response in dB relative to flat (7 elements,
+        /// 125 Hz–8 kHz). Only the shape matters: it is normalised so the broadband on-axis
+        /// level stays <see cref="OnAxisSplDb"/>. Null or all-zeros = flat.
         /// Example for speech: { -3, -1, 0, 0, -2, -5, -8 } emphasizing 500–1k Hz.
         /// </summary>
         public double[] SpectrumShapeByBand { get; set; }
