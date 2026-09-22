@@ -10,8 +10,8 @@
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
     <NoWarn>CA1416</NoWarn>
     <LangVersion>latest</LangVersion>
-    <!-- Costura.Fody embeds the native libSkiaSharp; suppress SkiaSharp's default Content copy -->
-    <ShouldIncludeNativeSkiaSharp Condition="'$(TargetFramework)' == 'net48'">False</ShouldIncludeNativeSkiaSharp>
+    <!-- libSkiaSharp is embedded in the plugin DLL (Costura on net48, EmbeddedResource on net8); suppress SkiaSharp's default Content copy -->
+    <ShouldIncludeNativeSkiaSharp>False</ShouldIncludeNativeSkiaSharp>
   </PropertyGroup>
 
   <ItemGroup>
@@ -63,12 +63,17 @@
     <PackageReference Include="Nice3point.Revit.Api.AdWindows" Version="2026.4.0" />
     <PackageReference Include="Nice3point.Revit.Api.RevitAPI" Version="2026.4.0" />
     <PackageReference Include="Nice3point.Revit.Api.RevitAPIUI" Version="2026.4.0" />
-    <!-- Copy native libSkiaSharp flat to output so Revit can resolve it (Costura.Fody only works on net48) -->
-    <None Include="$(NuGetPackageRoot)skiasharp.nativeassets.win32\2.88.8\runtimes\win-x64\native\libSkiaSharp.dll">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <Link>libSkiaSharp.dll</Link>
-    </None>
+    <!-- Embed native libSkiaSharp (Costura only embeds unmanaged DLLs on net48); App extracts and loads it at startup -->
+    <EmbeddedResource Include="$(NuGetPackageRoot)skiasharp.nativeassets.win32\2.88.8\runtimes\win-x64\native\libSkiaSharp.dll">
+      <LogicalName>SoundCalcs.Native.libSkiaSharp.dll</LogicalName>
+    </EmbeddedResource>
   </ItemGroup>
+
+  <!-- Release output is the single plugin DLL: symbols embedded, no deps.json (dependencies are embedded too) -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <DebugType>embedded</DebugType>
+    <GenerateDependencyFile>false</GenerateDependencyFile>
+  </PropertyGroup>
 
   <ItemGroup>
     <Compile Update="Properties\Settings.Designer.cs">
