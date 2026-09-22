@@ -62,62 +62,9 @@ namespace SoundCalcs.Compute
                     // Save input for debugging / reload
                     JobSerializer.SaveInput(input);
 
-                    var calculator = new SPLCalculator();
-                    var (results, bandData) = calculator.Calculate(input, token, progress);
-
-                    // Full IEC 60268-16 MTF-based STI computation
-                    STICalculator.Calculate(
-                        results, bandData,
-                        input.Environment.BackgroundNoiseByBand,
-                        input.Environment.RT60ByBand,
-                        input.Environment.SpeechWeightType);
-
-                    // Clarity (C80) and Definition (D50) from early/late energy split
-                    STICalculator.ComputeC80D50(results, bandData);
-
+                    output = Compute(input, token, progress);
                     stopwatch.Stop();
-
-                    output = new AcousticJobOutput
-                    {
-                        JobId = input.JobId,
-                        Timestamp = DateTime.UtcNow,
-                        ComputeTimeSeconds = stopwatch.Elapsed.TotalSeconds,
-                        SourceCount = input.Sources.Count,
-                        ReceiverCount = results.Count,
-                        Results = results,
-                        Rooms = input.Rooms,
-                        WasCanceled = false,
-                        Quality = input.Quality
-                    };
-
-                    if (results.Count > 0)
-                    {
-                        output.MinSplDb = results.Min(r => r.SplDb);
-                        output.MaxSplDb = results.Max(r => r.SplDb);
-                        output.MinSti = results.Min(r => r.Sti);
-                        output.MaxSti = results.Max(r => r.Sti);
-                        output.MinSplDbA = results.Min(r => r.SplDbA);
-                        output.MaxSplDbA = results.Max(r => r.SplDbA);
-                        output.MinC80Db = results.Min(r => r.C80Db);
-                        output.MaxC80Db = results.Max(r => r.C80Db);
-                        output.AvgC80Db = Math.Round(results.Average(r => r.C80Db), 2);
-                        output.AvgD50   = Math.Round(results.Average(r => r.D50), 3);
-
-                        // Per-band min/max for per-band heatmap visualization
-                        int numBands = OctaveBands.Count;
-                        output.MinSplDbByBand = new double[numBands];
-                        output.MaxSplDbByBand = new double[numBands];
-                        for (int k = 0; k < numBands; k++)
-                        {
-                            int band = k;
-                            output.MinSplDbByBand[k] = results.Min(r =>
-                                r.SplDbByBand != null && r.SplDbByBand.Length > band
-                                    ? r.SplDbByBand[band] : 0);
-                            output.MaxSplDbByBand[k] = results.Max(r =>
-                                r.SplDbByBand != null && r.SplDbByBand.Length > band
-                                    ? r.SplDbByBand[band] : 0);
-                        }
-                    }
+                    output.ComputeTimeSeconds = stopwatch.Elapsed.TotalSeconds;
 
                     JobSerializer.SaveOutput(output);
 
@@ -155,6 +102,71 @@ namespace SoundCalcs.Compute
 
                 JobCompleted?.Invoke(output);
             }, token);
+        }
+
+        /// <summary>
+        /// Run the full acoustic computation synchronously on the calling thread:
+        /// SPL (direct + reflections), STI, C80/D50 and the min/max summary fields.
+        /// Does not touch the disk, so the headless harness and tests can call it.
+        /// </summary>
+        public static AcousticJobOutput Compute(
+            AcousticJobInput input, CancellationToken token, IProgress<double> progress)
+        {
+            var calculator = new SPLCalculator();
+            var (results, bandData) = calculator.Calculate(input, token, progress);
+
+            // Full IEC 60268-16 MTF-based STI computation
+            STICalculator.Calculate(
+                results, bandData,
+                input.Environment.BackgroundNoiseByBand,
+                input.Environment.RT60ByBand,
+                input.Environment.SpeechWeightType);
+
+            // Clarity (C80) and Definition (D50) from early/late energy split
+            STICalculator.ComputeC80D50(results, bandData);
+
+            var output = new AcousticJobOutput
+            {
+                JobId = input.JobId,
+                Timestamp = DateTime.UtcNow,
+                SourceCount = input.Sources.Count,
+                ReceiverCount = results.Count,
+                Results = results,
+                Rooms = input.Rooms,
+                WasCanceled = false,
+                Quality = input.Quality
+            };
+
+            if (results.Count > 0)
+            {
+                output.MinSplDb = results.Min(r => r.SplDb);
+                output.MaxSplDb = results.Max(r => r.SplDb);
+                output.MinSti = results.Min(r => r.Sti);
+                output.MaxSti = results.Max(r => r.Sti);
+                output.MinSplDbA = results.Min(r => r.SplDbA);
+                output.MaxSplDbA = results.Max(r => r.SplDbA);
+                output.MinC80Db = results.Min(r => r.C80Db);
+                output.MaxC80Db = results.Max(r => r.C80Db);
+                output.AvgC80Db = Math.Round(results.Average(r => r.C80Db), 2);
+                output.AvgD50   = Math.Round(results.Average(r => r.D50), 3);
+
+                // Per-band min/max for per-band heatmap visualization
+                int numBands = OctaveBands.Count;
+                output.MinSplDbByBand = new double[numBands];
+                output.MaxSplDbByBand = new double[numBands];
+                for (int k = 0; k < numBands; k++)
+                {
+                    int band = k;
+                    output.MinSplDbByBand[k] = results.Min(r =>
+                        r.SplDbByBand != null && r.SplDbByBand.Length > band
+                            ? r.SplDbByBand[band] : 0);
+                    output.MaxSplDbByBand[k] = results.Max(r =>
+                        r.SplDbByBand != null && r.SplDbByBand.Length > band
+                            ? r.SplDbByBand[band] : 0);
+                }
+            }
+
+            return output;
         }
 
         /// <summary>

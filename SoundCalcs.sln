@@ -7,6 +7,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SoundCalcs", "SoundCalcs.cs
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SoundCalcs.Tests", "SoundCalcs.Tests\SoundCalcs.Tests.csproj", "{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SoundCalcs.Harness", "SoundCalcs.Harness\SoundCalcs.Harness.csproj", "{00A7F2BD-805A-47B1-A0F6-952494B9940D}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -37,6 +39,18 @@ Global
 		{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}.Release|Any CPU.Build.0 = Release|Any CPU
 		{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}.Release|x64.ActiveCfg = Release|Any CPU
 		{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}.Release|x64.Build.0 = Release|Any CPU
+		{00A7F2BD-805A-47B1-A0F6-952494B9940D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{00A7F2BD-805A-47B1-A0F6-952494B9940D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{00A7F2BD-805A-47B1-A0F6-952494B9940D}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{00A7F2BD-805A-47B1-A0F6-952494B9940D}.Debug|x64.Build.0 = Debug|Any CPU
+		{00A7F2BD-805A-47B1-A0F6-952494B9940D}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{00A7F2BD-805A-47B1-A0F6-952494B9940D}.Debug|x86.Build.0 = Debug|Any CPU
+		{00A7F2BD-805A-47B1-A0F6-952494B9940D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{00A7F2BD-805A-47B1-A0F6-952494B9940D}.Release|Any CPU.Build.0 = Release|Any CPU
+		{00A7F2BD-805A-47B1-A0F6-952494B9940D}.Release|x64.ActiveCfg = Release|Any CPU
+		{00A7F2BD-805A-47B1-A0F6-952494B9940D}.Release|x64.Build.0 = Release|Any CPU
+		{00A7F2BD-805A-47B1-A0F6-952494B9940D}.Release|x86.ActiveCfg = Release|Any CPU
+		{00A7F2BD-805A-47B1-A0F6-952494B9940D}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

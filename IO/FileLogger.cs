@@ -18,6 +18,8 @@ namespace SoundCalcs.IO
                 }
                 return _logPath;
             }
+            // Overridable so headless runs (harness, tests) can log next to their output.
+            set => _logPath = value;
         }
 
         public static void Log(string message)

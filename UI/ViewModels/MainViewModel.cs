@@ -15,20 +15,6 @@ using SoundCalcs.Visualization;
 
 namespace SoundCalcs.UI.ViewModels
 {
-    public enum VisualizationMode
-    {
-        SPL,
-        SPL_A,
-        STI,
-        C80,
-        SPL_125,
-        SPL_250,
-        SPL_500,
-        SPL_1k,
-        SPL_2k,
-        SPL_4k,
-        SPL_8k
-    }
     public class MainViewModel : INotifyPropertyChanged
     {
         private readonly UIApplication _uiApp;
@@ -339,49 +325,7 @@ namespace SoundCalcs.UI.ViewModels
         /// Returns vertices in CCW order.
         /// </summary>
         private static List<Vec2> ConvexHull(List<Vec2> points)
-        {
-            if (points.Count < 3)
-                return new List<Vec2>(points);
-
-            // Sort by X, then Y
-            var sorted = points.OrderBy(p => p.X).ThenBy(p => p.Y).ToList();
-
-            // Remove duplicates
-            var unique = new List<Vec2> { sorted[0] };
-            for (int i = 1; i < sorted.Count; i++)
-            {
-                if (Vec2.Distance(sorted[i], sorted[i - 1]) > 1e-6)
-                    unique.Add(sorted[i]);
-            }
-            if (unique.Count < 3)
-                return unique;
-
-            int n = unique.Count;
-            var hull = new Vec2[2 * n];
-            int k = 0;
-
-            // Lower hull
-            for (int i = 0; i < n; i++)
-            {
-                while (k >= 2 && Vec2.Cross(hull[k - 1] - hull[k - 2], unique[i] - hull[k - 2]) <= 0)
-                    k--;
-                hull[k++] = unique[i];
-            }
-
-            // Upper hull
-            int lower = k + 1;
-            for (int i = n - 2; i >= 0; i--)
-            {
-                while (k >= lower && Vec2.Cross(hull[k - 1] - hull[k - 2], unique[i] - hull[k - 2]) <= 0)
-                    k--;
-                hull[k++] = unique[i];
-            }
-
-            var result = new List<Vec2>(k - 1);
-            for (int i = 0; i < k - 1; i++)
-                result.Add(hull[i]);
-            return result;
-        }
+            => JobInputBuilder.ConvexHull(points);
 
         // ========================= SPEAKERS TAB =========================
 
@@ -901,19 +845,7 @@ namespace SoundCalcs.UI.ViewModels
         /// Returns -1 for SPL and STI (non-band modes).
         /// </summary>
         internal static int GetOctaveBandIndex(VisualizationMode mode)
-        {
-            switch (mode)
-            {
-                case VisualizationMode.SPL_125: return 0;
-                case VisualizationMode.SPL_250: return 1;
-                case VisualizationMode.SPL_500: return 2;
-                case VisualizationMode.SPL_1k:  return 3;
-                case VisualizationMode.SPL_2k:  return 4;
-                case VisualizationMode.SPL_4k:  return 5;
-                case VisualizationMode.SPL_8k:  return 6;
-                default: return -1;
-            }
-        }
+            => HeatmapMath.GetOctaveBandIndex(mode);
 
         // ========================= COMMANDS =========================
 
@@ -1053,22 +985,9 @@ namespace SoundCalcs.UI.ViewModels
                                 continue;
                         }
 
-                        Vec3 facing;
-
-                        if (mapping.ProfileSource == ProfileSourceType.WallMounted)
-                        {
-                            // Wall-mounted: horizontal direction from per-instance drag line
-                            double hx = inst.FacingDirection.X;
-                            double hy = inst.FacingDirection.Y;
-                            double hLen = System.Math.Sqrt(hx * hx + hy * hy);
-                            if (hLen < 1e-6) { hx = 1.0; hy = 0.0; hLen = 1.0; }
-                            facing = new Vec3(hx / hLen, hy / hLen, 0);
-                        }
-                        else
-                        {
-                            // Omni / Conical: straight down
-                            facing = new Vec3(0, 0, -1);
-                        }
+                        // Wall-mounted: horizontal direction from per-instance drag line.
+                        // Omni / Conical: straight down.
+                        Vec3 facing = JobInputBuilder.ResolveFacing(mapping.ProfileSource, inst.FacingDirection);
 
                         sources.Add(new ComputeSource
                         {
@@ -1131,23 +1050,8 @@ namespace SoundCalcs.UI.ViewModels
 
                 // Derive ceiling height per room from the tallest speaker in each room.
                 // Speakers are typically ceiling-mounted, so their elevation ≈ ceiling.
-                foreach (RoomPolygon room in analysisRooms)
-                {
-                    double maxElevation = 0;
-                    foreach (SpeakerGroupViewModel gvm in SpeakerGroups)
-                    {
-                        foreach (SpeakerInstance inst in gvm.GetGroup().Instances)
-                        {
-                            if (room.ContainsSpeakerPosition(inst.Position))
-                            {
-                                double h = inst.ElevationFromLevelM;
-                                if (h > maxElevation) maxElevation = h;
-                            }
-                        }
-                    }
-                    if (maxElevation > 0.5)
-                        room.CeilingHeightM = maxElevation;
-                }
+                JobInputBuilder.ApplyCeilingHeights(analysisRooms,
+                    SpeakerGroups.SelectMany(g => g.GetGroup().Instances));
 
                 if (SelectedLink.IsValid)
                     surfaces = collector.ExtractSurfacesFromLink(SelectedLink.LinkInstanceId);
@@ -1170,26 +1074,10 @@ namespace SoundCalcs.UI.ViewModels
                     int stc = grp.WallType?.StcRating ?? 0;
                     FileLogger.Log($"  WallGroup '{grp.LineStyleName}': {grp.SegmentCount} segs, " +
                         $"type='{grp.WallType?.DisplayName}', STC={stc}");
+                    // Each segment is extended 0.10 m at both ends to bridge
+                    // small gaps at corners and T-junctions.
                     foreach (WallSegment2D seg in grp.Segments)
-                    {
-                        // Extend each wall segment by 0.10m at each end to
-                        // bridge small gaps at corners and T-junctions where
-                        // detail line endpoints don't connect perfectly.
-                        Vec2 dir = (seg.End - seg.Start);
-                        double len = dir.Length;
-                        const double ext = 0.10; // meters
-                        Vec2 norm = len > 1e-6 ? dir * (1.0 / len) : Vec2.Zero;
-                        Vec2 extStart = seg.Start - norm * ext;
-                        Vec2 extEnd   = seg.End   + norm * ext;
-
-                        computeWalls.Add(new ComputeWall
-                        {
-                            Start = extStart,
-                            End = extEnd,
-                            StcRating = stc,
-                            HalfThicknessM = Math.Max(seg.ThicknessM * 0.5, 0.05)
-                        });
-                    }
+                        computeWalls.Add(JobInputBuilder.ToComputeWall(seg, stc));
                 }
                 FileLogger.Log($"Wall segments for calc: {computeWalls.Count} " +
                     $"(groups: {WallLineGroups.Count})");

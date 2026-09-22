@@ -62,6 +62,16 @@ dotnet build SoundCalcs.csproj -c Release
 Output lands in `C:\Users\<you>\OneDrive\Desktop\DevDlls\SoundCalcs\`.  
 Copy `SoundCalcs.dll` (net48 build) to your Revit add-ins folder and register it with a `.addin` manifest.
 
+## Testing
+
+The calculations and both heatmap renderers can be tested headless, without Revit:
+
+```bash
+scripts/selftest.sh   # unit tests + plugin compile check + scenario harness with PNG heatmaps
+```
+
+See [TESTING.md](TESTING.md) for the scenario harness, custom scene specs and replaying saved jobs.
+
 ## Dependencies
 
 | Package | Purpose |

@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Headless test harness: runs acoustic scenarios through the real compute engine
+    and the real heatmap colour/geometry code, checks the results against physics
+    and rendering invariants, and writes PNG images + a report. No Revit, WPF or
+    user input needed, so it runs on Linux CI and in agent sessions.
+    Usage: see TESTING.md or run the harness with the help flag.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>SoundCalcs.Harness</RootNamespace>
+    <NoWarn>CA1416</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+  </ItemGroup>
+
+  <!-- Plugin sources that are free of Revit / WPF / SkiaSharp references -->
+  <ItemGroup>
+    <Compile Include="../Domain/*.cs" />
+    <Compile Include="../IO/FileLogger.cs" />
+    <Compile Include="../IO/JobSerializer.cs" />
+    <Compile Include="../Compute/*.cs" />
+    <Compile Include="../Visualization/HeatmapMath.cs" />
+    <Compile Include="../Visualization/VisualizationMode.cs" />
+  </ItemGroup>
+
+</Project>

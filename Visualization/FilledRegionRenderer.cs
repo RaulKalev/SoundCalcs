@@ -20,30 +20,17 @@ namespace SoundCalcs.Visualization
     public class FilledRegionRenderer
     {
         // -----------------------------------------------------------------------
-        // Color palette – 8 bands quiet (red) → loud (green)
+        // Color palette – 8 bands quiet (red) → loud (green). Defined in HeatmapMath
+        // so the headless harness and tests use exactly the same colours.
         // -----------------------------------------------------------------------
         private static readonly (string Name, byte R, byte G, byte B)[] BandColors =
-        {
-            ("SC_SPL_0", 210,   0,   0),   // red         (quiet / low)
-            ("SC_SPL_1", 255,  60,   0),   // orange-red
-            ("SC_SPL_2", 255, 150,   0),   // amber
-            ("SC_SPL_3", 255, 210,   0),   // yellow
-            ("SC_SPL_4", 200, 220,   0),   // yellow-green
-            ("SC_SPL_5", 140, 220,  30),   // lime
-            ("SC_SPL_6",  60, 200,  30),   // green
-            ("SC_SPL_7",   0, 160,   0),   // dark green  (loud / strong)
-        };
+            HeatmapMath.RevitBandColors;
 
         private const string RegionTypePrefix = "SC_SPL_";
         private const string StiRegionTypePrefix = "SC_STI_";
 
-        /// <summary>
-        /// STI intelligibility labels for the 8 color bands.
-        /// </summary>
-        private static readonly string[] StiLabels =
-        {
-            "Bad", "Bad", "Poor", "Poor", "Fair", "Good", "Good", "Excellent"
-        };
+        /// <summary>STI intelligibility labels for the 8 color bands.</summary>
+        private static readonly string[] StiLabels = HeatmapMath.StiLabels;
 
         // Cached across calls within a session so we don't re-query the pattern every render
         private static ElementId _solidFillPatternId = ElementId.InvalidElementId;
@@ -59,25 +46,7 @@ namespace SoundCalcs.Visualization
         /// </summary>
         public static List<(int Band, string ColorHex, string Label)> GetLegendBands(
             double minSpl, double maxSpl, string suffix = " dB")
-        {
-            int n = BandColors.Length;
-            double range = maxSpl - minSpl;
-            double step = n > 0 && range > 0 ? range / n : 0;
-
-            var items = new List<(int, string, string)>(n);
-            for (int i = 0; i < n; i++)
-            {
-                (string _, byte r, byte g, byte b) = BandColors[i];
-                string hex = $"#{r:X2}{g:X2}{b:X2}";
-                double lo = minSpl + i * step;
-                // Last band always extends to maxSpl exactly
-                double hi = (i == n - 1) ? maxSpl : minSpl + (i + 1) * step;
-                string label = $"{lo:F1} \u2013 {hi:F1}{suffix}";
-                items.Add((i, hex, label));
-            }
-            items.Reverse(); // highest band first
-            return items;
-        }
+            => HeatmapMath.GetLegendBands(minSpl, maxSpl, suffix);
 
         /// <summary>
         /// Get the band info for building a STI legend.
@@ -85,26 +54,7 @@ namespace SoundCalcs.Visualization
         /// </summary>
         public static List<(int Band, string ColorHex, string Label)> GetStiLegendBands(
             double minSti, double maxSti)
-        {
-            int n = BandColors.Length;
-            double range = maxSti - minSti;
-            double step = n > 0 && range > 0 ? range / n : 0;
-
-            var items = new List<(int, string, string)>(n);
-            for (int i = 0; i < n; i++)
-            {
-                (string _, byte r, byte g, byte b) = BandColors[i];
-                string hex = $"#{r:X2}{g:X2}{b:X2}";
-                double lo = minSti + i * step;
-                // Last band always extends to maxSti exactly
-                double hi = (i == n - 1) ? maxSti : minSti + (i + 1) * step;
-                string quality = i < StiLabels.Length ? StiLabels[i] : "";
-                string label = $"{lo:F2} \u2013 {hi:F2} ({quality})";
-                items.Add((i, hex, label));
-            }
-            items.Reverse(); // highest band first
-            return items;
-        }
+            => HeatmapMath.GetStiLegendBands(minSti, maxSti);
 
         public void Render(Document doc, View view, AcousticJobOutput output,
             VisualizationMode mode = VisualizationMode.SPL,
@@ -116,86 +66,21 @@ namespace SoundCalcs.Visualization
                 return;
             }
 
-            // Filter out points below the minimum SPL threshold
-            var results = output.Results;
-            int octaveBandIdx = MainViewModel.GetOctaveBandIndex(mode);
-            bool isPerBand = octaveBandIdx >= 0;
-
-            if (mode == VisualizationMode.SPL && minSplThreshold.HasValue)
-                results = results.Where(r => r.SplDb >= minSplThreshold.Value).ToList();
-
-            // For per-band modes, filter out results without band data
-            if (isPerBand)
-                results = results.Where(r =>
-                    r.SplDbByBand != null && r.SplDbByBand.Length > octaveBandIdx).ToList();
-
-            if (results.Count == 0)
+            // Range, per-receiver bands and merged rectangles are decided in pure
+            // code (HeatmapMath) so the headless harness can verify them.
+            FilledRegionPlan plan = HeatmapMath.PlanFilledRegions(output.Results, mode, minSplThreshold);
+            if (plan == null)
             {
                 Debug.WriteLine("[SoundCalcs] All points below SPL threshold — nothing to render.");
                 return;
             }
 
-            double gridSpacingM = EstimateGridSpacing(results);
-            double halfM = gridSpacingM * 0.5;
-
-            // Determine value range for banding
-            double minVal, maxVal;
-            if (mode == VisualizationMode.STI)
-            {
-                minVal = results.Min(r => r.Sti);
-                maxVal = results.Max(r => r.Sti);
-            }
-            else if (mode == VisualizationMode.SPL_A)
-            {
-                minVal = minSplThreshold ?? results.Min(r => r.SplDbA);
-                maxVal = results.Max(r => r.SplDbA);
-            }
-            else if (mode == VisualizationMode.C80)
-            {
-                minVal = results.Min(r => r.C80Db);
-                maxVal = results.Max(r => r.C80Db);
-            }
-            else if (isPerBand)
-            {
-                minVal = results.Min(r => r.SplDbByBand[octaveBandIdx]);
-                maxVal = results.Max(r => r.SplDbByBand[octaveBandIdx]);
-            }
-            else
-            {
-                minVal = minSplThreshold ?? results.Min(r => r.SplDb);
-                maxVal = results.Max(r => r.SplDb);
-            }
-            int numBands = BandColors.Length;
-
-            // --- Assign each receiver a band index ---
-            int[] bandIndex = new int[results.Count];
-            for (int i = 0; i < results.Count; i++)
-            {
-                double val;
-                ReceiverResult r = results[i];
-                if (mode == VisualizationMode.STI)
-                    val = r.Sti;
-                else if (mode == VisualizationMode.SPL_A)
-                    val = r.SplDbA;
-                else if (mode == VisualizationMode.C80)
-                    val = r.C80Db;
-                else if (isPerBand)
-                    val = r.SplDbByBand[octaveBandIdx];
-                else
-                    val = r.SplDb;
-                bandIndex[i] = SplToBand(val, minVal, maxVal, numBands);
-            }
-
-            // Stable grid origin for consistent quantisation across all bands
-            double originX = results.Min(r => r.Position.X);
-            double originY = results.Min(r => r.Position.Y);
-
-            // Build row-strip rectangles then merge vertically to minimise
-            // element count while keeping every region a simple rectangle
-            // (100% reliable in Revit, unlike complex boundary extraction).
-            var strips = BuildRowStrips(results, bandIndex, originX, originY,
-                gridSpacingM, halfM, numBands);
-            MergeStripsVertically(strips, numBands);
+            int octaveBandIdx = plan.OctaveBandIndex;
+            bool isPerBand = octaveBandIdx >= 0;
+            double minVal = plan.MinVal;
+            double maxVal = plan.MaxVal;
+            int numBands = plan.NumBands;
+            var strips = plan.Strips;
 
             using (Transaction tx = new Transaction(doc, "SoundCalcs: Render Heatmap"))
             {
@@ -651,159 +536,6 @@ namespace SoundCalcs.Visualization
         // -----------------------------------------------------------------------
 
         /// <summary>
-        /// Build row-strip rectangles: for each grid row, merge consecutive
-        /// same-band cells into a single rectangle. Returns strips grouped by band.
-        /// Each strip is (x0, y0, x1, y1, z) in metres — ready for CurveLoop.
-        /// </summary>
-        private static Dictionary<int, List<(double x0, double y0, double x1, double y1, double z)>>
-            BuildRowStrips(
-                List<ReceiverResult> results,
-                int[] bandIndex,
-                double originX, double originY,
-                double gridSpacingM, double halfM,
-                int numBands)
-        {
-            // Map each receiver to (col, row, band, z)
-            var cellMap = new Dictionary<(int col, int row), (int band, double z)>(results.Count);
-
-            for (int i = 0; i < results.Count; i++)
-            {
-                ReceiverResult r = results[i];
-                int col = Quantise(r.Position.X, originX, gridSpacingM);
-                int row = Quantise(r.Position.Y, originY, gridSpacingM);
-                cellMap[(col, row)] = (bandIndex[i], r.Position.Z);
-            }
-
-            // Group cells by row
-            var byRow = new SortedDictionary<int, SortedDictionary<int, (int band, double z)>>();
-            foreach (var kv in cellMap)
-            {
-                int row = kv.Key.row;
-                int col = kv.Key.col;
-                if (!byRow.TryGetValue(row, out var rowCells))
-                {
-                    rowCells = new SortedDictionary<int, (int band, double z)>();
-                    byRow[row] = rowCells;
-                }
-                rowCells[col] = kv.Value;
-            }
-
-            // Scan each row: merge consecutive same-band columns into strips
-            var strips = new Dictionary<int, List<(double x0, double y0, double x1, double y1, double z)>>();
-            for (int b = 0; b < numBands; b++)
-                strips[b] = new List<(double, double, double, double, double)>();
-
-            foreach (var rowKv in byRow)
-            {
-                int row = rowKv.Key;
-                double yCenter = originY + row * gridSpacingM;
-                double y0 = yCenter - halfM;
-                double y1 = yCenter + halfM;
-
-                var cols = rowKv.Value;
-                int runBand = -1;
-                int runStartCol = 0;
-                int runEndCol = 0;
-                double runZ = 0;
-                bool inRun = false;
-
-                foreach (var colKv in cols)
-                {
-                    int col = colKv.Key;
-                    int band = colKv.Value.band;
-                    double z = colKv.Value.z;
-
-                    if (inRun && band == runBand && col == runEndCol + 1)
-                    {
-                        // Extend current run
-                        runEndCol = col;
-                    }
-                    else
-                    {
-                        // Flush previous run
-                        if (inRun)
-                        {
-                            double x0 = originX + runStartCol * gridSpacingM - halfM;
-                            double x1 = originX + runEndCol * gridSpacingM + halfM;
-                            strips[runBand].Add((x0, y0, x1, y1, runZ));
-                        }
-
-                        // Start new run
-                        runBand = band;
-                        runStartCol = col;
-                        runEndCol = col;
-                        runZ = z;
-                        inRun = true;
-                    }
-                }
-
-                // Flush final run
-                if (inRun)
-                {
-                    double x0 = originX + runStartCol * gridSpacingM - halfM;
-                    double x1 = originX + runEndCol * gridSpacingM + halfM;
-                    strips[runBand].Add((x0, y0, x1, y1, runZ));
-                }
-            }
-
-            return strips;
-        }
-
-        /// <summary>
-        /// Second pass over row-strips: merge vertically adjacent strips that share
-        /// the same x0 and x1 into taller rectangles. Reduces element count
-        /// roughly 5–10× compared to row-strips alone while keeping all regions
-        /// as simple rectangles (no complex boundary extraction).
-        /// </summary>
-        private static void MergeStripsVertically(
-            Dictionary<int, List<(double x0, double y0, double x1, double y1, double z)>> strips,
-            int numBands)
-        {
-            const double eps = 1e-6;
-
-            for (int b = 0; b < numBands; b++)
-            {
-                if (!strips.ContainsKey(b) || strips[b].Count <= 1) continue;
-
-                // Sort by x0, x1, then y0 so vertically stackable strips are adjacent
-                strips[b].Sort((a, c) =>
-                {
-                    int cmpX0 = a.x0.CompareTo(c.x0);
-                    if (cmpX0 != 0) return cmpX0;
-                    int cmpX1 = a.x1.CompareTo(c.x1);
-                    if (cmpX1 != 0) return cmpX1;
-                    return a.y0.CompareTo(c.y0);
-                });
-
-                var merged = new List<(double x0, double y0, double x1, double y1, double z)>();
-                var list = strips[b];
-
-                var cur = list[0];
-                for (int i = 1; i < list.Count; i++)
-                {
-                    var next = list[i];
-
-                    // Same column span and vertically touching?
-                    if (Math.Abs(cur.x0 - next.x0) < eps &&
-                        Math.Abs(cur.x1 - next.x1) < eps &&
-                        Math.Abs(cur.y1 - next.y0) < eps)
-                    {
-                        // Extend current strip downward (merge)
-                        cur = (cur.x0, cur.y0, cur.x1, next.y1, cur.z);
-                    }
-                    else
-                    {
-                        merged.Add(cur);
-                        cur = next;
-                    }
-                }
-                merged.Add(cur);
-
-                strips[b] = merged;
-            }
-        }
-
-        /// <summary>
         /// Convert a band's receiver results into groups of CurveLoops suitable for
         /// FilledRegion.Create.  Connected cells (4-connectivity) are merged; boundaries
         /// are extracted as directed edge chains and stitched into closed loops.
@@ -1252,39 +984,7 @@ namespace SoundCalcs.Visualization
         // Misc utilities
         // -----------------------------------------------------------------------
 
-        private static int SplToBand(double spl, double minSpl, double maxSpl, int numBands)
-        {
-            if (maxSpl <= minSpl) return 0;
-            double t = Math.Max(0.0, Math.Min(1.0, (spl - minSpl) / (maxSpl - minSpl)));
-            int band = (int)(t * numBands);
-            return Math.Min(band, numBands - 1);
-        }
-
         private static int Quantise(double value, double origin, double spacing)
-            => (int)Math.Round((value - origin) / spacing);
-
-        private static double EstimateGridSpacing(List<ReceiverResult> results)
-        {
-            if (results.Count < 2) return 1.0;
-
-            var sorted = results
-                .OrderBy(r => r.Position.X)
-                .ThenBy(r => r.Position.Y)
-                .ToList();
-
-            double minDelta = double.MaxValue;
-            int limit = Math.Min(sorted.Count, 500);
-
-            for (int i = 1; i < limit; i++)
-            {
-                double dx = Math.Abs(sorted[i].Position.X - sorted[i - 1].Position.X);
-                double dy = Math.Abs(sorted[i].Position.Y - sorted[i - 1].Position.Y);
-                double d = Math.Max(dx, dy);
-                if (d > 1e-4 && d < minDelta)
-                    minDelta = d;
-            }
-
-            return minDelta < double.MaxValue ? minDelta : 1.0;
-        }
+            => HeatmapMath.Quantise(value, origin, spacing);
     }
 }

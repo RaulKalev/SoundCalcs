@@ -23,6 +23,14 @@
     <EmbeddedResource Remove="SoundCalcs.Tests\**" />
     <None Remove="SoundCalcs.Tests\**" />
     <Page Remove="SoundCalcs.Tests\**" />
+    <Compile Remove="SoundCalcs.Harness\**" />
+    <EmbeddedResource Remove="SoundCalcs.Harness\**" />
+    <None Remove="SoundCalcs.Harness\**" />
+    <Page Remove="SoundCalcs.Harness\**" />
+    <Compile Remove="SoundCalcs.CompileCheck\**" />
+    <EmbeddedResource Remove="SoundCalcs.CompileCheck\**" />
+    <None Remove="SoundCalcs.CompileCheck\**" />
+    <Page Remove="SoundCalcs.CompileCheck\**" />
   </ItemGroup>
 
   <ItemGroup>

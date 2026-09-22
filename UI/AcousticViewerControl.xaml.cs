@@ -12,6 +12,7 @@ using SkiaSharp.Views.Desktop;
 using SkiaSharp.Views.WPF;
 using SoundCalcs.Domain;
 using SoundCalcs.UI.ViewModels;
+using SoundCalcs.Visualization;
 
 namespace SoundCalcs.UI
 {
@@ -29,44 +30,13 @@ namespace SoundCalcs.UI
     /// </summary>
     public partial class AcousticViewerControl : System.Windows.Controls.UserControl
     {
-        // ── Smooth heatmap gradient: red (low/quiet) → green (high/loud) ──
-        // Stops are evenly spaced 0..1. SampleGradient() lerps between them.
-        static readonly SKColor[] GradientStops =
-        {
-            new SKColor(0xCC, 0x00, 0x00),  // 0.00 – red        (quietest)
-            new SKColor(0xFF, 0x44, 0x00),  // 0.17 – red-orange
-            new SKColor(0xFF, 0xAA, 0x00),  // 0.33 – amber
-            new SKColor(0xFF, 0xFF, 0x00),  // 0.50 – yellow
-            new SKColor(0xAA, 0xFF, 0x00),  // 0.67 – yellow-green
-            new SKColor(0x44, 0xDD, 0x00),  // 0.83 – lime
-            new SKColor(0x00, 0xAA, 0x00),  // 1.00 – green      (loudest)
-        };
-
-        static SKColor SampleGradient(double t)
-        {
-            t = t < 0.0 ? 0.0 : t > 1.0 ? 1.0 : t;
-            double scaled = t * (GradientStops.Length - 1);
-            int    lo     = (int)scaled;
-            int    hi     = lo + 1 < GradientStops.Length ? lo + 1 : lo;
-            double frac   = scaled - lo;
-            SKColor a = GradientStops[lo], b = GradientStops[hi];
-            return new SKColor(
-                (byte)(a.Red   + (b.Red   - a.Red)   * frac),
-                (byte)(a.Green + (b.Green - a.Green) * frac),
-                (byte)(a.Blue  + (b.Blue  - a.Blue)  * frac),
-                210);
-        }
-
+        // ── Heatmap colours: red (low/quiet) → green (high/loud) ──
+        // Gradient stops and interpolation live in HeatmapMath so the headless
+        // harness renders exactly the same colours.
         // Legacy discrete palette used only for the legend swatches
-        static readonly SKColor[] HeatColors = new SKColor[8];
-        static AcousticViewerControl()
-        {
-            for (int i = 0; i < 8; i++)
-            {
-                var c = SampleGradient(i / 7.0);
-                HeatColors[i] = new SKColor(c.Red, c.Green, c.Blue);
-            }
-        }
+        static readonly SKColor[] HeatColors = HeatmapMath.ViewerLegendColors()
+            .Select(c => new SKColor(c.R, c.G, c.B))
+            .ToArray();
 
         static readonly SKColor BgColor       = new SKColor(0x1F, 0x1F, 0x1F);
         static readonly SKColor WallColor      = new SKColor(0xAA, 0xBB, 0xCC);
@@ -354,12 +324,6 @@ namespace SoundCalcs.UI
         {
             if (JobOutput == null || JobOutput.Results.Count == 0) return;
 
-            bool isSti     = Mode == VisualizationMode.STI;
-            bool isSplA    = Mode == VisualizationMode.SPL_A;
-            bool isC80     = Mode == VisualizationMode.C80;
-            int  bandIdx   = MainViewModel.GetOctaveBandIndex(Mode);
-            bool isPerBand = bandIdx >= 0;
-
             // Rebuild bitmap only when the output or mode changes.
             if (_heatBitmap == null ||
                 !ReferenceEquals(_heatBitmapSource, JobOutput) ||
@@ -368,24 +332,9 @@ namespace SoundCalcs.UI
                 var results = JobOutput.Results;
                 var vals = new double[results.Count];
                 for (int i = 0; i < results.Count; i++)
-                    vals[i] = isSti     ? results[i].Sti
-                            : isSplA    ? results[i].SplDbA
-                            : isC80     ? results[i].C80Db
-                            : isPerBand ? results[i].SplDbByBand[bandIdx]
-                            : results[i].SplDb;
+                    vals[i] = HeatmapMath.GetValue(results[i], Mode);
 
-                var sorted = (double[])vals.Clone();
-                System.Array.Sort(sorted);
-                _heatMinVal = sorted[Math.Max(0, (int)(sorted.Length * 0.02))];
-                _heatMaxVal = sorted[Math.Min(sorted.Length - 1, (int)(sorted.Length * 0.98))];
-                double minRange = isSti ? 0.05 : (isC80 ? 1.0 : 3.0);
-                double halfRange = isSti ? 0.25 : (isC80 ? 5.0 : 15.0);
-                if (_heatMaxVal - _heatMinVal < minRange)
-                {
-                    double mid = (_heatMinVal + _heatMaxVal) * 0.5;
-                    _heatMinVal = mid - halfRange;
-                    _heatMaxVal = mid + halfRange;
-                }
+                (_heatMinVal, _heatMaxVal) = HeatmapMath.ComputeViewerRange(vals, Mode);
 
                 _heatBitmap?.Dispose();
                 _heatBitmap       = BuildHeatmapBitmap(results, vals, _heatMinVal, _heatMaxVal - _heatMinVal, GridSpacing, out _heatWorldRect);
@@ -405,37 +354,26 @@ namespace SoundCalcs.UI
             List<ReceiverResult> results, double[] vals,
             double minVal, double range, double spacing, out SKRect worldRect)
         {
-            if (results.Count == 0) { worldRect = SKRect.Empty; return null; }
-            if (spacing <= 0) spacing = 1.0;
+            HeatmapGrid grid = HeatmapMath.BuildViewerGrid(results, vals, minVal, range, spacing);
+            if (grid == null) { worldRect = SKRect.Empty; return null; }
 
-            double xMin = double.MaxValue, xMax = double.MinValue;
-            double yMin = double.MaxValue, yMax = double.MinValue;
-            foreach (var r in results)
-            {
-                if (r.Position.X < xMin) xMin = r.Position.X;
-                if (r.Position.X > xMax) xMax = r.Position.X;
-                if (r.Position.Y < yMin) yMin = r.Position.Y;
-                if (r.Position.Y > yMax) yMax = r.Position.Y;
-            }
-
-            int cols = Math.Max(1, (int)Math.Round((xMax - xMin) / spacing) + 1);
-            int rows = Math.Max(1, (int)Math.Round((yMax - yMin) / spacing) + 1);
-
-            var bmp = new SKBitmap(cols, rows, SKColorType.Bgra8888, SKAlphaType.Premul);
+            var bmp = new SKBitmap(grid.Cols, grid.Rows, SKColorType.Bgra8888, SKAlphaType.Premul);
             bmp.Erase(SKColors.Transparent);
 
-            for (int i = 0; i < results.Count; i++)
+            for (int row = 0; row < grid.Rows; row++)
             {
-                int col = (int)Math.Round((results[i].Position.X - xMin) / spacing);
-                int row = (int)Math.Round((results[i].Position.Y - yMin) / spacing);
-                if ((uint)col < (uint)cols && (uint)row < (uint)rows)
-                    bmp.SetPixel(col, row, SampleGradient((vals[i] - minVal) / range));
+                for (int col = 0; col < grid.Cols; col++)
+                {
+                    int idx = row * grid.Cols + col;
+                    if (!grid.Filled[idx]) continue;
+                    Rgba c = grid.Pixels[idx];
+                    bmp.SetPixel(col, row, new SKColor(c.R, c.G, c.B, c.A));
+                }
             }
 
-            float hs = (float)(spacing * 0.5);
             worldRect = new SKRect(
-                (float)xMin - hs, (float)yMin - hs,
-                (float)xMax + hs, (float)yMax + hs);
+                (float)grid.WorldLeft, (float)grid.WorldBottom,
+                (float)grid.WorldRight, (float)grid.WorldTop);
             return bmp;
         }
 
