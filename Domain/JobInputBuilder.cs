@@ -24,7 +24,7 @@ namespace SoundCalcs.Domain
         /// </summary>
         public static Vec3 ResolveFacing(ProfileSourceType profileSource, Vec3 instanceFacing)
         {
-            if (profileSource == ProfileSourceType.WallMounted)
+            if (IsAimAdjustable(profileSource))
             {
                 double hx = instanceFacing.X;
                 double hy = instanceFacing.Y;
@@ -35,6 +35,14 @@ namespace SoundCalcs.Domain
 
             return new Vec3(0, 0, -1);
         }
+
+        /// <summary>
+        /// Whether the user's horizontal aim (drag in the viewer, stored in Revit) affects
+        /// the calculation. Only wall-mounted speakers aim horizontally; omni and ceiling
+        /// cone speakers always point straight down, so rotating them has no effect.
+        /// </summary>
+        public static bool IsAimAdjustable(ProfileSourceType profileSource) =>
+            profileSource == ProfileSourceType.WallMounted;
 
         /// <summary>
         /// Convert a detail-line wall segment into a compute wall with the given STC,
@@ -58,13 +66,14 @@ namespace SoundCalcs.Domain
         }
 
         /// <summary>
-        /// Derive ceiling height per room from the tallest speaker in each room.
-        /// Speakers are typically ceiling-mounted, so their elevation ≈ ceiling.
+        /// Derive ceiling height per room from the tallest ceiling-mounted speaker in it.
+        /// Pass only ceiling speakers (omni / conical / GLL): a wall-mounted speaker at
+        /// 2.2 m says nothing about the ceiling. Rooms with none keep the default.
         /// </summary>
         public static void ApplyCeilingHeights(
-            IEnumerable<RoomPolygon> rooms, IEnumerable<SpeakerInstance> speakers)
+            IEnumerable<RoomPolygon> rooms, IEnumerable<SpeakerInstance> ceilingSpeakers)
         {
-            var speakerList = speakers.ToList();
+            var speakerList = ceilingSpeakers.ToList();
             foreach (RoomPolygon room in rooms)
             {
                 double maxElevation = 0;

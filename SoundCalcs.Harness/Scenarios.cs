@@ -84,6 +84,7 @@ namespace SoundCalcs.Harness
                 WallPartition(),
                 ConeCeiling(),
                 WallMountedAim(),
+                SpeakerRotation(),
                 ReverberantRoom(),
                 StiReference(),
             };
@@ -403,6 +404,70 @@ namespace SoundCalcs.Harness
                     }
                     ctx.Assert("directivity continuous across the 90° plane (no step > 3 dB)", worstJump <= 3,
                         $"{CheckContext.F(worstJump)} dB step at {OctaveBands.Labels[worstBand]} Hz, y = {CheckContext.F(worstY)} m");
+                }
+            };
+        }
+
+        // -----------------------------------------------------------------
+        // 5b. Rotating speakers in the viewer: wall-mounted aim moves the coverage,
+        //     ceiling speakers ignore it; wall speakers don't set the ceiling height
+        // -----------------------------------------------------------------
+        static Scenario SpeakerRotation()
+        {
+            var spec = new ScenarioSpec
+            {
+                Name = "speaker_rotation",
+                Description = "12×12 m room. A wall-mounted speaker aimed +X, then rotated to +Y (the viewer " +
+                              "drag): the loud lobe must follow the aim. A ceiling cone rotated the same way " +
+                              "must give identical results. Only ceiling speakers set the ceiling height.",
+                Walls = ScenarioSpec.RectangleWalls(-6.3, -6.3, 6.3, 6.3, 50),
+                Quality = CalculationQuality.Full,
+                Speakers =
+                {
+                    new SpeakerSpec { X = 0, Y = 0, HeightM = 2.2, FacingX = 1, FacingY = 0,
+                                      Profile = ScenarioSpec.WallMount(90, 45, -12) }
+                }
+            };
+
+            return new Scenario
+            {
+                Spec = spec,
+                ViewerModes = new[] { VisualizationMode.SPL_2k },
+                Checks = (run, ctx) =>
+                {
+                    ctx.Assert("aim is adjustable only for wall-mounted profiles",
+                        JobInputBuilder.IsAimAdjustable(ProfileSourceType.WallMounted) &&
+                        !JobInputBuilder.IsAimAdjustable(ProfileSourceType.SimpleConical) &&
+                        !JobInputBuilder.IsAimAdjustable(ProfileSourceType.SimpleOmni) &&
+                        !JobInputBuilder.IsAimAdjustable(ProfileSourceType.GllFile), "");
+
+                    var rotatedSpec = run.Spec.Clone("_rotated");
+                    rotatedSpec.Speakers[0].FacingX = 0; rotatedSpec.Speakers[0].FacingY = 1;
+                    var rotated = ScenarioRun.Execute(rotatedSpec);
+
+                    double ex0 = run.Nearest(4, 0).SplDbByBand[4], ey0 = run.Nearest(0, 4).SplDbByBand[4];
+                    double ex1 = rotated.Nearest(4, 0).SplDbByBand[4], ey1 = rotated.Nearest(0, 4).SplDbByBand[4];
+                    ctx.Assert("wall-mounted, aimed +X: 2 kHz louder at (4,0) than at (0,4)", ex0 > ey0 + 3,
+                        $"{CheckContext.F(ex0)} vs {CheckContext.F(ey0)} dB");
+                    ctx.Assert("wall-mounted, rotated to +Y: 2 kHz louder at (0,4) than at (4,0)", ey1 > ex1 + 3,
+                        $"{CheckContext.F(ey1)} vs {CheckContext.F(ex1)} dB");
+                    ctx.Near("rotation by 90° swaps the two probe levels", ex0 - ey0, ey1 - ex1, 0.5, " dB");
+
+                    ctx.Near("wall-mounted speaker does not set the ceiling height (default used)",
+                        run.Input.Rooms[0].CeilingHeightM, 0, 1e-9, " m");
+
+                    var coneSpec = run.Spec.Clone("_cone");
+                    coneSpec.Speakers[0].Profile = ScenarioSpec.Cone(90, 60, -12);
+                    coneSpec.Speakers[0].HeightM = 3.0;
+                    var coneRotSpec = coneSpec.Clone("_rotated");
+                    coneRotSpec.Speakers[0].FacingX = 0; coneRotSpec.Speakers[0].FacingY = 1;
+                    var cone = ScenarioRun.Execute(coneSpec);
+                    var coneRot = ScenarioRun.Execute(coneRotSpec);
+                    double maxDiff = cone.Output.Results.Zip(coneRot.Output.Results, (a, b) => Math.Abs(a.SplDb - b.SplDb)).Max();
+                    ctx.Assert("ceiling cone: rotating the aim changes nothing (always aims down)", maxDiff < 1e-9,
+                        $"max SPL difference {CheckContext.F(maxDiff)} dB");
+                    ctx.Near("ceiling cone sets the ceiling height to its mounting height",
+                        cone.Input.Rooms[0].CeilingHeightM, 3.0, 1e-9, " m");
                 }
             };
         }

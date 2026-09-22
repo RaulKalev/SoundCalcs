@@ -43,6 +43,7 @@ Built-in physics scenarios (`--list`):
 | `wall_partition` | Source side untouched by walls; shadow side carries exactly one partition's per-band TL |
 | `cone_ceiling` | 0 dB on axis, −6 dB at the rated half-angle, never below the off-axis floor, narrower beam at high frequencies |
 | `wall_mounted_aim` | Aims along the drag line; ≈12 dB front/back at 1 kHz, nearly omni at 125 Hz; directivity continuous across 90° |
+| `speaker_rotation` | Rotating a wall-mounted speaker moves its coverage lobe; rotating a ceiling cone changes nothing; only ceiling speakers set the ceiling height |
 | `reverberant_room` | Full ≥ Draft; longer RT60 raises SPL and lowers STI; noise lowers STI; C80 uses 80 ms (≥ C50); SPL never below the Barron reverberant level; STI between the pure-diffuse-field and burst+tail IEC bounds |
 | `sti_reference` | STICalculator end points (SNR ±15, 0 dB), exact agreement (±0.01) with an independent IEC 60268-16:2011 implementation (`IecReference.cs`) for noise, reverberation and both, and the reception threshold for quiet speech |
 

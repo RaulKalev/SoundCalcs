@@ -945,6 +945,7 @@ namespace SoundCalcs.UI.ViewModels
                 FileLogger.Log($"SetSpeakerAimAngle: id={elementId}, angle={angleDeg:F1}°");
             });
             SaveSettingsCore();
+            StatusMessage = $"Speaker aim set to {angleDeg:F0}°. Re-run the analysis to update the heatmap.";
         }
 
         /// <summary>
@@ -1051,7 +1052,9 @@ namespace SoundCalcs.UI.ViewModels
                 // Derive ceiling height per room from the tallest speaker in each room.
                 // Speakers are typically ceiling-mounted, so their elevation ≈ ceiling.
                 JobInputBuilder.ApplyCeilingHeights(analysisRooms,
-                    SpeakerGroups.SelectMany(g => g.GetGroup().Instances));
+                    SpeakerGroups
+                        .Where(g => g.GetMapping().ProfileSource != ProfileSourceType.WallMounted)
+                        .SelectMany(g => g.GetGroup().Instances));
 
                 if (SelectedLink.IsValid)
                     surfaces = collector.ExtractSurfacesFromLink(SelectedLink.LinkInstanceId);

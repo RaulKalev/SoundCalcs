@@ -80,6 +80,11 @@ namespace SoundCalcs.UI
         readonly List<WallSegment2D>   _walls    = new List<WallSegment2D>();
         readonly List<SpeakerInstance> _speakers = new List<SpeakerInstance>();
 
+        // Speakers whose horizontal aim affects the calculation (wall-mounted only):
+        // only these show an aim line and can be rotated by dragging.
+        readonly HashSet<SpeakerInstance> _aimableSpeakers = new HashSet<SpeakerInstance>();
+        readonly List<SpeakerGroupViewModel> _speakerGroupSubscriptions = new List<SpeakerGroupViewModel>();
+
         // ── Heatmap bitmap cache ───────────────────────────────────────────
         SKBitmap          _heatBitmap;
         AcousticJobOutput _heatBitmapSource;
@@ -196,6 +201,10 @@ namespace SoundCalcs.UI
         {
             _walls.Clear();
             _speakers.Clear();
+            _aimableSpeakers.Clear();
+            foreach (var svm in _speakerGroupSubscriptions)
+                svm.PropertyChanged -= OnSpeakerGroupPropertyChanged;
+            _speakerGroupSubscriptions.Clear();
 
             if (WallGroupsSource != null)
                 foreach (WallLineGroupViewModel wvm in WallGroupsSource.OfType<WallLineGroupViewModel>())
@@ -203,7 +212,22 @@ namespace SoundCalcs.UI
 
             if (SpeakerGroupsSource != null)
                 foreach (SpeakerGroupViewModel svm in SpeakerGroupsSource.OfType<SpeakerGroupViewModel>())
+                {
                     _speakers.AddRange(svm.GetGroup().Instances);
+                    if (JobInputBuilder.IsAimAdjustable(svm.ProfileSource))
+                        foreach (var inst in svm.GetGroup().Instances)
+                            _aimableSpeakers.Add(inst);
+                    svm.PropertyChanged += OnSpeakerGroupPropertyChanged;
+                    _speakerGroupSubscriptions.Add(svm);
+                }
+        }
+
+        // Profile changes (e.g. Conical → Wall Mounted) change which speakers can be aimed
+        void OnSpeakerGroupPropertyChanged(object sender, System.ComponentModel.PropertyChangedEventArgs e)
+        {
+            if (e.PropertyName != nameof(SpeakerGroupViewModel.ProfileSource)) return;
+            RebuildGeometry();
+            Refresh();
         }
 
         // ── LOD progression ────────────────────────────────────────────────
@@ -427,7 +451,7 @@ namespace SoundCalcs.UI
                 float dy = (float)s.FacingDirection.Y;
                 float hLen = (float)Math.Sqrt(dx * dx + dy * dy);
 
-                if (hLen > 0.15f)
+                if (hLen > 0.15f && _aimableSpeakers.Contains(s))
                 {
                     // Scale the indicator to 2.5× the symbol radius
                     float scale = radius * 2.5f / hLen;
@@ -771,7 +795,7 @@ namespace SoundCalcs.UI
             float hitR = 10f / _zoom;  // 10 screen-pixel hit radius
             SpeakerInstance best  = null;
             double          bestD = hitR;
-            foreach (var s in _speakers)
+            foreach (var s in _aimableSpeakers)
             {
                 double dx = s.Position.X - wx;
                 double dy = s.Position.Y - wy;

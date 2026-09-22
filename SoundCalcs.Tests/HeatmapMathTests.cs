@@ -254,6 +254,15 @@ namespace SoundCalcs.Tests
         }
 
         [Fact]
+        public void IsAimAdjustable_OnlyForWallMounted()
+        {
+            Assert.True(JobInputBuilder.IsAimAdjustable(ProfileSourceType.WallMounted));
+            Assert.False(JobInputBuilder.IsAimAdjustable(ProfileSourceType.SimpleConical));
+            Assert.False(JobInputBuilder.IsAimAdjustable(ProfileSourceType.SimpleOmni));
+            Assert.False(JobInputBuilder.IsAimAdjustable(ProfileSourceType.GllFile));
+        }
+
+        [Fact]
         public void ToComputeWall_ExtendsBothEnds_AndSetsHalfThickness()
         {
             var seg = new WallSegment2D { Start = new Vec2(0, 0), End = new Vec2(4, 0), ThicknessM = 0.3 };

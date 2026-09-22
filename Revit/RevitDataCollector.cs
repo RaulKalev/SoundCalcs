@@ -34,6 +34,11 @@ namespace SoundCalcs.Revit
         {
             var speakers = new List<SpeakerInstance>();
 
+            List<Level> levels;
+            using (var levelCollector = new FilteredElementCollector(_doc))
+                levels = levelCollector.OfClass(typeof(Level)).Cast<Level>()
+                    .OrderBy(l => l.ProjectElevation).ToList();
+
             using (var collector = new FilteredElementCollector(_doc))
             {
                 var elements = collector
@@ -53,20 +58,16 @@ namespace SoundCalcs.Revit
                     XYZ position = locPt.Point;
                     XYZ facing = fi.FacingOrientation;
 
-                    // Determine level name and elevation
-                    string levelName = "";
-                    double levelElevM = 0;
-                    if (fi.LevelId != null && fi.LevelId != ElementId.InvalidElementId)
-                    {
-                        Level level = _doc.GetElement(fi.LevelId) as Level;
-                        if (level != null)
-                        {
-                            levelName = level.Name;
-                            levelElevM = UnitConversion.FtToM(level.Elevation);
-                        }
-                    }
-
                     Vec3 posM = UnitConversion.XyzToVec3(position);
+
+                    // Determine level name and elevation. ProjectElevation is in the same
+                    // internal coordinates as the location point; Level.Elevation is relative
+                    // to the level type's Elevation Base (project base / survey point).
+                    // Face-hosted families (e.g. on a ceiling or a linked host) often have no
+                    // LevelId: use the reference-level parameter, else the level just below.
+                    Level level = ResolveLevel(fi, position.Z, levels);
+                    string levelName = level?.Name ?? "";
+                    double levelElevM = level != null ? UnitConversion.FtToM(level.ProjectElevation) : 0;
 
                     string familyName = fi.Symbol?.Family?.Name ?? "Unknown";
                     string typeName = fi.Symbol?.Name ?? "Unknown";
@@ -107,6 +108,35 @@ namespace SoundCalcs.Revit
 
             Debug.WriteLine($"[SoundCalcs] Collected {speakers.Count} speakers from category {category}");
             return speakers;
+        }
+
+        /// <summary>
+        /// The level a family instance belongs to: its LevelId, else its schedule /
+        /// reference level parameter, else the highest level at or below its elevation.
+        /// </summary>
+        private Level ResolveLevel(FamilyInstance fi, double zFt, List<Level> levelsByElevation)
+        {
+            if (fi.LevelId != null && fi.LevelId != ElementId.InvalidElementId &&
+                _doc.GetElement(fi.LevelId) is Level direct)
+                return direct;
+
+            foreach (BuiltInParameter bip in new[]
+                     { BuiltInParameter.INSTANCE_SCHEDULE_ONLY_LEVEL_PARAM, BuiltInParameter.INSTANCE_REFERENCE_LEVEL_PARAM })
+            {
+                Parameter p = fi.get_Parameter(bip);
+                ElementId id = p?.AsElementId();
+                if (id != null && id != ElementId.InvalidElementId && _doc.GetElement(id) is Level fromParam)
+                    return fromParam;
+            }
+
+            const double toleranceFt = 0.01;
+            Level below = null;
+            foreach (Level l in levelsByElevation)
+            {
+                if (l.ProjectElevation <= zFt + toleranceFt) below = l;
+                else break;
+            }
+            return below ?? levelsByElevation.FirstOrDefault();
         }
 
         /// <summary>

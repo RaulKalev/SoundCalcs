@@ -171,7 +171,8 @@ namespace SoundCalcs.Harness
                 receivers.AddRange(pts);
             }
 
-            JobInputBuilder.ApplyCeilingHeights(rooms, instances);
+            JobInputBuilder.ApplyCeilingHeights(rooms, instances.Where((inst, i) =>
+                !JobInputBuilder.IsAimAdjustable(Speakers[i].Profile.ProfileSource)));
 
             var walls = new List<ComputeWall>();
             for (int i = 0; i < segments.Count; i++)
