@@ -89,6 +89,7 @@ namespace SoundCalcs.Harness
                 WallMaterials(),
                 ScreenDiffraction(),
                 TwoRooms(),
+                DirectivityData(),
                 ReverberantRoom(),
                 StiReference(),
                 MeasurementComparison(),
@@ -785,6 +786,92 @@ namespace SoundCalcs.Harness
                     ctx.Assert("longer auto RT60 (bare concrete) raises the large room's reverberant level",
                         bigRoom.RT60ByBand[2] > 0.8 && splAuto > far.SplDb,
                         $"{CheckContext.F(far.SplDb)} → {CheckContext.F(splAuto)} dB");
+                }
+            };
+        }
+
+        // -----------------------------------------------------------------
+        // 5f. Measured directivity: datasheet coverage angles and a polar table CSV
+        // -----------------------------------------------------------------
+        static Scenario DirectivityData()
+        {
+            double[] coverage = { 180, 180, 140, 100, 90, 70, 60 };
+            var profile = ScenarioSpec.Cone(90, 60, -12);
+            profile.CoverageAngleByBandDeg = coverage;
+            var spec = new ScenarioSpec
+            {
+                Name = "directivity_data",
+                Description = "Ceiling speaker at 3 m in an open 16×16 m area, Draft, with datasheet coverage " +
+                              "angles 180/180/140/100/90/70/60° (125 Hz–8 kHz): each band must be −6 dB at its " +
+                              "half-angle and omni where 180°. A polar-table CSV must drive the pattern, and an " +
+                              "unreadable file must fall back to the cone model.",
+                Boundary = ScenarioSpec.Rectangle(-8, -8, 8, 8),
+                Quality = CalculationQuality.Draft,
+                Speakers = { new SpeakerSpec { X = 0, Y = 0, HeightM = 3.0, Profile = profile } }
+            };
+
+            return new Scenario
+            {
+                Spec = spec,
+                ViewerModes = new[] { VisualizationMode.SPL_1k, VisualizationMode.SPL_8k },
+                Checks = (run, ctx) =>
+                {
+                    var air = Air(run.Spec);
+                    var src = run.Input.Sources[0].Position;
+                    double bandRef = 90 - 10 * Math.Log10(7);
+                    double Excess(ScenarioRun rr, ReceiverResult r, int k)
+                    {
+                        double d = Dist(r.Position, src);
+                        return r.SplDbByBand[k] - (bandRef - 20 * Math.Log10(d) - air[k] * d);
+                    }
+                    double Angle(ReceiverResult r) { var v = r.Position - src; return Math.Acos(-v.Z / v.Length) * 180 / Math.PI; }
+
+                    var fails = new List<string>();
+                    for (int k = 2; k < 7; k++)
+                    {
+                        var near = run.Output.Results.Where(r => Math.Abs(Angle(r) - coverage[k] / 2) < 1.5).ToList();
+                        if (near.Count == 0) continue;
+                        double e = near.Average(r => Excess(run, r, k));
+                        if (Math.Abs(e + 6.02) > 0.7) fails.Add($"{OctaveBands.Labels[k]} Hz: {CheckContext.F(e)} dB at {coverage[k] / 2}°");
+                    }
+                    ctx.Assert("each band is −6 dB at half its datasheet coverage angle", fails.Count == 0, string.Join("; ", fails));
+                    double lfMax = run.Output.Results.Max(r => Math.Max(Math.Abs(Excess(run, r, 0)), Math.Abs(Excess(run, r, 1))));
+                    ctx.Assert("125/250 Hz with 180° coverage radiate omnidirectionally", lfMax < 0.05, $"max deviation {CheckContext.F(lfMax)} dB");
+
+                    string tmp = Path.Combine(Path.GetTempPath(), $"polar_{Guid.NewGuid():N}.csv");
+                    try
+                    {
+                        // Narrow horn: −6 dB at 20° for 1 kHz and up
+                        File.WriteAllText(tmp,
+                            "angle,125,250,500,1k,2k,4k,8k\n" +
+                            "0,0,0,0,0,0,0,0\n" +
+                            "20,-1,-2,-4,-6,-6,-6,-6\n" +
+                            "40,-3,-6,-10,-14,-16,-18,-20\n" +
+                            "90,-8,-12,-18,-22,-24,-26,-28\n" +
+                            "180,-10,-15,-22,-26,-28,-30,-30\n");
+                        var hornSpec = run.Spec.Clone("_polar");
+                        hornSpec.Speakers[0].Profile.DirectivityFilePath = tmp;
+                        var horn = ScenarioRun.Execute(hornSpec);
+                        var table = PolarTable.Load(tmp);
+                        var worst = horn.Output.Results
+                            .Select(r => (R: r, Err: Excess(horn, r, 3) - table.AttenuationAt(3, Angle(r))))
+                            .OrderByDescending(x => Math.Abs(x.Err)).First();
+                        ctx.Assert("polar table: every receiver's 1 kHz level follows the file at its angle (±0.1 dB)",
+                            Math.Abs(worst.Err) < 0.1,
+                            $"worst {CheckContext.F(worst.Err)} dB at {CheckContext.F(Angle(worst.R))}°");
+                        double on = horn.Nearest(0, 0).SplDbByBand[3], off = horn.Nearest(6, 0).SplDbByBand[3];
+                        double onCov = run.Nearest(0, 0).SplDbByBand[3], offCov = run.Nearest(6, 0).SplDbByBand[3];
+                        ctx.Assert("the horn's 1 kHz coverage is much narrower than the 100° datasheet cone",
+                            on - off > (onCov - offCov) + 5, $"on/off-axis drop {CheckContext.F(on - off)} dB vs {CheckContext.F(onCov - offCov)} dB");
+
+                        var badSpec = run.Spec.Clone("_badfile");
+                        badSpec.Speakers[0].Profile.DirectivityFilePath = tmp + ".missing";
+                        var bad = ScenarioRun.Execute(badSpec);
+                        double diff = bad.Output.Results.Zip(run.Output.Results, (a, b) => Math.Abs(a.SplDb - b.SplDb)).Max();
+                        ctx.Assert("unreadable directivity file falls back to the coverage / cone model", diff < 1e-9,
+                            $"max difference {CheckContext.F(diff)} dB");
+                    }
+                    finally { File.Delete(tmp); }
                 }
             };
         }

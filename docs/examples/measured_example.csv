@@ -1,0 +1,6 @@
+# Example measurement file for: SoundCalcs.Harness --job <id>_input.json --measured measured_example.csv
+# x,y in metres, model coordinates (same as the job input). Leave cells empty for values not measured.
+name,x,y,spl,spla,sti,c80,spl125,spl250,spl500,spl1k,spl2k,spl4k,spl8k
+Front row,2.3,4.3,82.5,79.1,0.71,,,,,,,,
+Back corner,9.8,0.8,78.0,74.6,0.64,2.1,,,,,,,
+Desk 12,6.3,6.8,,,,,72.0,74.5,76.1,75.3,73.0,69.8,64.2

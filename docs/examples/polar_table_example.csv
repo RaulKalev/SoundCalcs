@@ -1,0 +1,14 @@
+# Example polar table for the "Directivity file (CSV)" column in the Speakers tab.
+# Rotationally symmetric about the speaker's aim. Attenuation in dB relative to on-axis,
+# per octave band, for off-axis angles from 0 (on axis) to 180 (behind).
+# Rows must start at 0 and increase; values are interpolated between rows.
+# Copy the numbers from the manufacturer's polar plots or from a CLF/EASE viewer.
+angle,125,250,500,1k,2k,4k,8k
+0,0,0,0,0,0,0,0
+15,0,0,-0.5,-1,-1.5,-2,-3
+30,0,-0.5,-1,-2,-3,-4,-6
+45,-0.5,-1,-2.5,-4,-6,-8,-11
+60,-1,-2,-4,-6,-9,-12,-15
+90,-2,-4,-8,-12,-15,-18,-20
+135,-3,-5,-10,-15,-18,-20,-22
+180,-3,-6,-12,-18,-20,-22,-25

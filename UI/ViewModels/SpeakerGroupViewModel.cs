@@ -103,6 +103,34 @@ namespace SoundCalcs.UI.ViewModels
             }
         }
 
+        /// <summary>
+        /// Datasheet −6 dB coverage angles (full, degrees) per band, "125 250 500 1k 2k 4k 8k".
+        /// Empty = cone model from the Cone Angle column.
+        /// </summary>
+        public string CoverageText
+        {
+            get => _group.Mapping.CoverageAngleByBandDeg == null ? ""
+                : SpeakerResponsePresets.Format(_group.Mapping.CoverageAngleByBandDeg);
+            set
+            {
+                if (string.IsNullOrWhiteSpace(value)) _group.Mapping.CoverageAngleByBandDeg = null;
+                else if (SpeakerResponsePresets.TryParseBands(value, 5, 360, out double[] v)) _group.Mapping.CoverageAngleByBandDeg = v;
+                else return; // ignore invalid input
+                OnPropertyChanged(nameof(CoverageText));
+            }
+        }
+
+        /// <summary>Polar table CSV replacing the cone model (conical / wall-mounted profiles).</summary>
+        public string DirectivityFilePath
+        {
+            get => _group.Mapping.DirectivityFilePath ?? "";
+            set
+            {
+                _group.Mapping.DirectivityFilePath = value?.Trim().Trim('"') ?? "";
+                OnPropertyChanged(nameof(DirectivityFilePath));
+            }
+        }
+
         public double ConeHalfAngleDeg
         {
             get => _group.Mapping.ConeHalfAngleDeg;
@@ -149,6 +177,8 @@ namespace SoundCalcs.UI.ViewModels
             OnPropertyChanged(nameof(IsWallMounted));
             OnPropertyChanged(nameof(ResponsePreset));
             OnPropertyChanged(nameof(ResponseText));
+            OnPropertyChanged(nameof(CoverageText));
+            OnPropertyChanged(nameof(DirectivityFilePath));
         }
 
         /// <summary>

@@ -43,22 +43,26 @@ namespace SoundCalcs.Domain
         public static string Format(double[] responseDb) =>
             string.Join(" ", (responseDb ?? new double[OctaveBands.Count]).Select(v => v.ToString("0.#", CultureInfo.InvariantCulture)));
 
-        /// <summary>Parse 7 numbers separated by spaces, semicolons or commas-with-space.</summary>
-        public static bool TryParse(string text, out double[] responseDb)
+        /// <summary>Parse 7 response values (dB, −60…+20) separated by spaces or semicolons.</summary>
+        public static bool TryParse(string text, out double[] responseDb) =>
+            TryParseBands(text, -60, 20, out responseDb);
+
+        /// <summary>Parse 7 per-band numbers within [min, max], separated by spaces or semicolons.</summary>
+        public static bool TryParseBands(string text, double min, double max, out double[] values)
         {
-            responseDb = null;
+            values = null;
             if (text == null) return false;
             string[] parts = text.Split(new[] { ' ', ';', '\t' }, StringSplitOptions.RemoveEmptyEntries);
             if (parts.Length != OctaveBands.Count) return false;
-            var values = new double[OctaveBands.Count];
+            var v = new double[OctaveBands.Count];
             for (int i = 0; i < parts.Length; i++)
             {
                 string p = parts[i].Trim(',');
-                if (!double.TryParse(p, NumberStyles.Float, CultureInfo.InvariantCulture, out values[i]) ||
-                    values[i] < -60 || values[i] > 20)
+                if (!double.TryParse(p, NumberStyles.Float, CultureInfo.InvariantCulture, out v[i]) ||
+                    v[i] < min || v[i] > max)
                     return false;
             }
-            responseDb = values;
+            values = v;
             return true;
         }
     }

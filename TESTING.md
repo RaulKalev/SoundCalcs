@@ -46,6 +46,9 @@ Built-in physics scenarios (`--list`):
 | `speaker_rotation` | Rotating a wall-mounted speaker moves its coverage lobe; rotating a ceiling cone changes nothing; only ceiling speakers set the ceiling height |
 | `wall_materials` | The line style → wall type mapping carries the surface material: concrete reflects more than curtains, "Open (No Wall)" lines neither block, reflect nor enclose, and carpet / acoustic tiles weaken floor / ceiling reflections, and the RT60 estimate follows wall, floor and ceiling materials |
 | `reverberant_room` | Full ≥ Draft; longer RT60 raises SPL and lowers STI; noise lowers STI; C80 uses 80 ms (≥ C50); SPL never below the Barron reverberant level; STI between the pure-diffuse-field and burst+tail IEC bounds |
+| `screen_diffraction` | Free-standing wall: frequency-dependent shadow via diffraction around its ends, no hard edges; a 1.5 m screen shields a talker but hardly a ceiling speaker |
+| `two_rooms` | Boundary split into walled rooms (and merged by a door gap); per-room volume, Barron level and Eyring RT60; a source's reverberant field stays in its room |
+| `directivity_data` | Datasheet coverage angles (−6 dB at each half-angle, omni at 180°), polar-table CSV followed at every receiver, fallback when the file is unreadable |
 | `measurement_comparison` | The `--measured` tool: zero error for exact data, correct bias and tolerance handling for offset data, CSV parsing, off-grid (wrong unit) detection |
 | `sti_reference` | STICalculator end points (SNR ±15, 0 dB), exact agreement (±0.01) with an independent IEC 60268-16:2011 implementation (`IecReference.cs`) for noise, reverberation and both, and the reception threshold for quiet speech |
 
@@ -84,7 +87,9 @@ Any subset of the metric columns works, and empty cells are skipped. A JSON arra
 
 The report gives, per metric: bias, RMS error, worst point, and how many points fall outside the tolerance. Error means predicted − measured. `<scenario>/measured_vs_predicted.csv` lists every point for a spreadsheet. A consistent bias usually points to a wrong input (speaker level, RT60, noise). A scatter usually points to geometry or directivity.
 
-The `measurement_comparison` built-in scenario tests this tool itself.
+The `measurement_comparison` built-in scenario tests this tool itself. `docs/examples/measured_example.csv` shows the format.
+
+Every scenario also runs a generic **"no isolated hot spots"** check: a receiver more than 3 dB louder than all four neighbours (away from speakers) is almost always a leak through a wall.
 
 ### Adding a built-in scenario
 

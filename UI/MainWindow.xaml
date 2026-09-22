@@ -569,6 +569,20 @@
                             </DataGridTemplateColumn>
                             <DataGridTextColumn Header="Response dB (125…8k)" Binding="{Binding ResponseText, UpdateSourceTrigger=LostFocus}" Width="150"/>
                             <DataGridTextColumn Header="Cone Angle" Binding="{Binding ConeHalfAngleDeg}" Width="80"/>
+                            <DataGridTextColumn Header="Coverage ° (125…8k)" Binding="{Binding CoverageText, UpdateSourceTrigger=LostFocus}" Width="150">
+                                <DataGridTextColumn.HeaderStyle>
+                                    <Style TargetType="DataGridColumnHeader" BasedOn="{StaticResource DgHeaderStyle}">
+                                        <Setter Property="ToolTip" Value="Datasheet -6 dB coverage angle (full) per octave band, e.g. '180 180 140 100 90 70 60'. 180 = omni. Empty = use Cone Angle."/>
+                                    </Style>
+                                </DataGridTextColumn.HeaderStyle>
+                            </DataGridTextColumn>
+                            <DataGridTextColumn Header="Directivity file (CSV)" Binding="{Binding DirectivityFilePath, UpdateSourceTrigger=LostFocus}" Width="200">
+                                <DataGridTextColumn.HeaderStyle>
+                                    <Style TargetType="DataGridColumnHeader" BasedOn="{StaticResource DgHeaderStyle}">
+                                        <Setter Property="ToolTip" Value="Polar table: header 'angle,125,250,500,1k,2k,4k,8k', rows 0..180 degrees with attenuation in dB. Replaces the cone model."/>
+                                    </Style>
+                                </DataGridTextColumn.HeaderStyle>
+                            </DataGridTextColumn>
                             <DataGridTextColumn Header="GLL Path" Binding="{Binding GllFilePath}" Width="180"/>
                         </DataGrid.Columns>
                     </DataGrid>

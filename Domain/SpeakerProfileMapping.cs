@@ -57,5 +57,19 @@ namespace SoundCalcs.Domain
         /// Example for speech: { -3, -1, 0, 0, -2, -5, -8 } emphasizing 500–1k Hz.
         /// </summary>
         public double[] SpectrumShapeByBand { get; set; }
+
+        // --- Measured directivity (conical and wall-mounted profiles) ---
+        /// <summary>
+        /// Optional full coverage angle (−6 dB, degrees) per octave band, 125 Hz – 8 kHz, as on
+        /// datasheets. ≥ 180° = omnidirectional in that band. Null = cone model from
+        /// <see cref="ConeHalfAngleDeg"/> narrowing with frequency.
+        /// </summary>
+        public double[] CoverageAngleByBandDeg { get; set; }
+
+        /// <summary>
+        /// Optional polar table CSV (see <c>PolarTable</c>). When set and readable it replaces the
+        /// cone model and coverage angles for conical and wall-mounted profiles.
+        /// </summary>
+        public string DirectivityFilePath { get; set; } = "";
     }
 }

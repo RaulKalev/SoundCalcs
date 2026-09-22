@@ -16,7 +16,9 @@ A Revit plugin for room acoustics analysis. Calculates per-receiver SPL and Spee
 - **STI test signal** — IEC 60268-16 standard male/female speech spectrum played through each speaker's response
 - **RT60 estimate** — Eyring from the actual boundary perimeter, wall lines (internal partitions count both faces, open boundary absorbs fully), floor/ceiling/wall materials, occupancy and air absorption
 - **Air absorption** — frequency-dependent attenuation per IEC
-- **Speaker directivity** — configurable cone angle or omnidirectional; GLL stub support
+- **Speaker directivity** — cone angle, datasheet coverage angles per octave band, or a measured polar table CSV (see `docs/examples/polar_table_example.csv`); omnidirectional; GLL stub
+- **Wall height & diffraction** — per line style height (screens, low partitions); thin-screen diffraction (Kurze–Anderson / Maekawa) around free wall ends and over partial walls, with no hard shadow edges
+- **Rooms** — the boundary is split into the rooms its walls form plus the open remainder; each has its own volume and reverberant field, optionally its own RT60 estimated from its geometry ("Per room")
 - **Linked IFC support** — wall boundaries are drawn as detail lines (not Revit wall elements), which works reliably with linked IFC models
 - **Configurable environment** — temperature, per-band RT60, per-band background noise
 - **Live legend** — always reflects the exact rendered min/max range
