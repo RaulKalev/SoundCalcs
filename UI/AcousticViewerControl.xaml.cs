@@ -26,7 +26,12 @@ namespace SoundCalcs.UI
     /// 4× block size (coarse, instant), then sharpened to 2× after ~350 ms,
     /// and to native grid resolution after ~700 ms — giving a "focus-in" feel.
     ///
-    /// Pan: left-drag   Zoom: scroll wheel   Fit: Fit button
+    /// Pan: left-drag (glides on after a flick)   Zoom: scroll wheel (smoothed, anchored at the cursor)
+    /// Fit: Fit button (animates to the fitted view). Every motion starts from the current view and stops the
+    /// moment new input arrives; with reduced motion the view jumps instead.
+    ///
+    /// Skia draws in device pixels while WPF reports the mouse in DIPs: <see cref="ToCanvas"/> converts, so the
+    /// plan stays under the cursor at any display scaling.
     /// </summary>
     public partial class AcousticViewerControl : System.Windows.Controls.UserControl
     {
@@ -57,7 +62,39 @@ namespace SoundCalcs.UI
 
         // ── Pan input ──────────────────────────────────────────────────────
         bool              _isPanning;
-        System.Windows.Point _lastMouse;
+        SKPoint           _lastMouse;   // device pixels
+        // Recent pointer samples (time s, x, y) for the release velocity
+        readonly List<(double T, float X, float Y)> _panHistory = new List<(double, float, float)>();
+
+        // ── Motion: animated fit, smoothed zoom, glide ─────────────────────
+        static readonly System.Diagnostics.Stopwatch Clock = System.Diagnostics.Stopwatch.StartNew();
+        static double Now => Clock.Elapsed.TotalSeconds;
+
+        const double FitDuration   = 0.32;   // s, ease-out
+        const float  ZoomTau       = 0.06f;  // s, time constant of the zoom smoothing
+        const double GlideDecel    = 0.995;  // velocity kept per millisecond (Apple's scroll projection uses 0.998)
+        const float  MinGlideSpeed = 150f;   // px/s at release to start a glide
+        const float  StopSpeed     = 20f;    // px/s where a glide ends
+
+        float  _canvasW, _canvasH;           // last painted size, device pixels
+        bool   _hasView;                      // content has been shown (later fits animate)
+        bool   _animateNextFit;
+        bool   _ticking;
+        double _lastFrame;
+
+        bool   _fitAnimating;
+        double _fitT0;
+        float  _fromCx, _fromCy, _fromZoom, _toCx, _toCy, _toZoom;
+
+        bool    _zoomAnimating;
+        float   _zoomTarget;
+        SKPoint _zoomAnchor;                  // screen point that keeps its world point during a zoom
+        float   _anchorWx, _anchorWy;
+
+        bool  _gliding;
+        float _velX, _velY;                   // px/s
+
+        SpeakerInstance _hoverSpk;            // aimable speaker under the cursor
 
         // ── Probe ──────────────────────────────────────────────────────────
         bool                    _probeMode;
@@ -114,6 +151,7 @@ namespace SoundCalcs.UI
                 {
                     var c = (AcousticViewerControl)d;
                     c._fitPending = true;
+                    c._animateNextFit = true;
                     c.RefreshPinValues();
                     c.StartLodProgression();
                 }));
@@ -192,6 +230,7 @@ namespace SoundCalcs.UI
         {
             InitializeComponent();
             Loaded += (s, e) => ApplyAppearance();
+            Unloaded += (s, e) => StopMotion();
         }
 
         /// <summary>
@@ -222,6 +261,7 @@ namespace SoundCalcs.UI
         {
             RebuildGeometry();
             _fitPending = true;
+            _animateNextFit = true;   // show where the new content is
             Refresh();
         }
         // ── Geometry cache ─────────────────────────────────────────────────
@@ -290,6 +330,51 @@ namespace SoundCalcs.UI
         // ── Fit-to-content ─────────────────────────────────────────────────
         void FitView(float canvasW, float canvasH)
         {
+            if (!ComputeFit(canvasW, canvasH, out float cx, out float cy, out float zoom))
+            {
+                _zoom = 50f;
+                _panX = canvasW / 2f;
+                _panY = canvasH / 2f;
+                _fitPending = false;
+                return;
+            }
+            SetView(cx, cy, zoom);
+            _fitPending = false;
+        }
+
+        // Animates from the current view to the fitted one (the user sees where the content went).
+        void StartFitAnimation(float canvasW, float canvasH)
+        {
+            _fitPending = false;
+            if (!ComputeFit(canvasW, canvasH, out _toCx, out _toCy, out _toZoom)) return;
+            _gliding = false;
+            _zoomAnimating = false;
+            CurrentCenter(out _fromCx, out _fromCy);
+            _fromZoom = _zoom;
+            _fitT0 = Now;
+            _fitAnimating = true;
+            EnsureTicking();
+        }
+
+        // World point at the canvas centre.
+        void CurrentCenter(out float cx, out float cy)
+        {
+            cx = (_canvasW * 0.5f - _panX) / _zoom;
+            cy = (_panY - _canvasH * 0.5f) / _zoom;
+        }
+
+        // Centres the world point (cx, cy) at the given zoom.
+        void SetView(float cx, float cy, float zoom)
+        {
+            _zoom = zoom;
+            _panX = _canvasW * 0.5f - cx * zoom;
+            _panY = _canvasH * 0.5f + cy * zoom;   // Y flipped: screen↓ = world↑
+        }
+
+        bool ComputeFit(float canvasW, float canvasH, out float cx, out float cy, out float zoom)
+        {
+            cx = cy = 0f;
+            zoom = 50f;
             var pts = new List<(float x, float y)>();
 
             foreach (var w in _walls)
@@ -304,14 +389,7 @@ namespace SoundCalcs.UI
                 foreach (var r in JobOutput.Results)
                     pts.Add(((float)r.Position.X, (float)r.Position.Y));
 
-            if (pts.Count == 0)
-            {
-                _zoom = 50f;
-                _panX = canvasW / 2f;
-                _panY = canvasH / 2f;
-                _fitPending = false;
-                return;
-            }
+            if (pts.Count == 0) return false;
 
             float xMin = pts.Min(p => p.x), xMax = pts.Max(p => p.x);
             float yMin = pts.Min(p => p.y), yMax = pts.Max(p => p.y);
@@ -319,15 +397,88 @@ namespace SoundCalcs.UI
             float bh = Math.Max(yMax - yMin, 0.1f);
 
             const float pad = 64f;
-            _zoom = Math.Min((canvasW - 2f * pad) / bw, (canvasH - 2f * pad) / bh);
-            _zoom = Math.Max(_zoom, 1f);
+            zoom = Math.Min((canvasW - 2f * pad) / bw, (canvasH - 2f * pad) / bh);
+            zoom = Math.Max(zoom, 1f);
 
-            float cx = (xMin + xMax) * 0.5f;
-            float cy = (yMin + yMax) * 0.5f;
-            _panX = canvasW * 0.5f - cx * _zoom;
-            _panY = canvasH * 0.5f + cy * _zoom;  // Y flipped: screen↓ = world↑
-            _fitPending = false;
+            cx = (xMin + xMax) * 0.5f;
+            cy = (yMin + yMax) * 0.5f;
+            return true;
         }
+
+        // ── Motion loop: runs only while something moves ──────────────────
+        void EnsureTicking()
+        {
+            if (_ticking) return;
+            _ticking = true;
+            _lastFrame = Now;
+            CompositionTarget.Rendering += OnFrame;
+        }
+
+        void StopTickingIfIdle()
+        {
+            if (!_ticking || _fitAnimating || _zoomAnimating || _gliding) return;
+            CompositionTarget.Rendering -= OnFrame;
+            _ticking = false;
+        }
+
+        /// <summary>Stops every motion where it is (new input takes over from the current view).</summary>
+        void StopMotion()
+        {
+            _fitAnimating = _zoomAnimating = _gliding = false;
+            StopTickingIfIdle();
+        }
+
+        void OnFrame(object sender, EventArgs e)
+        {
+            double now = Now;
+            float dt = (float)Math.Min(0.05, Math.Max(0, now - _lastFrame));
+            _lastFrame = now;
+
+            if (_fitAnimating)
+            {
+                double p = Math.Min(1.0, (now - _fitT0) / FitDuration);
+                float k = (float)(1 - Math.Pow(1 - p, 3));                    // ease-out: fast start, gentle landing
+                float z = (float)Math.Exp(Lerp((float)Math.Log(_fromZoom), (float)Math.Log(_toZoom), k)); // zoom in log space
+                SetView(Lerp(_fromCx, _toCx, k), Lerp(_fromCy, _toCy, k), z);
+                if (p >= 1.0) _fitAnimating = false;
+            }
+
+            if (_zoomAnimating)
+            {
+                float a = 1f - (float)Math.Exp(-dt / ZoomTau);
+                float lz = (float)Math.Log(_zoom);
+                float lt = (float)Math.Log(_zoomTarget);
+                if (Math.Abs(lt - lz) < 0.002f) { _zoom = _zoomTarget; _zoomAnimating = false; }
+                else _zoom = (float)Math.Exp(lz + (lt - lz) * a);
+                _panX = _zoomAnchor.X - _anchorWx * _zoom;
+                _panY = _zoomAnchor.Y + _anchorWy * _zoom;
+            }
+
+            if (_gliding)
+            {
+                _panX += _velX * dt;
+                _panY += _velY * dt;
+                float keep = (float)Math.Pow(GlideDecel, dt * 1000.0);
+                _velX *= keep;
+                _velY *= keep;
+                if (Math.Sqrt(_velX * _velX + _velY * _velY) < StopSpeed) _gliding = false;
+            }
+
+            Refresh();
+            StopTickingIfIdle();
+        }
+
+        static float Lerp(float a, float b, float t) => a + (b - a) * t;
+
+        // Mouse position (DIPs) → canvas device pixels.
+        SKPoint ToCanvas(System.Windows.Point p)
+        {
+            float s = PixelScale;
+            return new SKPoint((float)p.X * s, (float)p.Y * s);
+        }
+
+        // Device pixels per DIP, as the Skia surface was last sized (1 at 100 % display scaling).
+        float PixelScale => SkCanvas.ActualWidth > 0 && _canvasW > 0 ? (float)(_canvasW / SkCanvas.ActualWidth) : 1f;
 
         // ── SKElement PaintSurface ─────────────────────────────────────────
         void OnPaintSurface(object sender, SKPaintSurfaceEventArgs e)
@@ -335,20 +486,28 @@ namespace SoundCalcs.UI
             SKCanvas canvas = e.Surface.Canvas;
             float w = e.Info.Width;
             float h = e.Info.Height;
-
-            if (_fitPending && w > 0 && h > 0)
-                FitView(w, h);
-
-            canvas.Clear(BgColor);
+            _canvasW = w;
+            _canvasH = h;
 
             bool hasContent = _walls.Count > 0 || _speakers.Count > 0 ||
                               (JobOutput != null && JobOutput.Results.Count > 0);
+
+            if (_fitPending && w > 0 && h > 0)
+            {
+                // The first view appears in place; later fits move there so the change is easy to follow.
+                if (_animateNextFit && _hasView && hasContent && !ThemeManager.ReducedMotion) StartFitAnimation(w, h);
+                else FitView(w, h);
+                _animateNextFit = false;
+            }
+
+            canvas.Clear(BgColor);
 
             if (!hasContent)
             {
                 DrawEmptyMessage(canvas, w, h);
                 return;
             }
+            _hasView = true;
 
             // ── World-space layer ─────────────────────────────────────────
             // Transform: screenX = worldX * _zoom + _panX
@@ -369,6 +528,7 @@ namespace SoundCalcs.UI
             DrawLodBadge(canvas, w, h);
             DrawScaleBar(canvas, w, h);
             DrawPinLabels(canvas, w, h);
+            DrawAimHint(canvas);
         }
 
         // ── Heatmap ────────────────────────────────────────────────────────
@@ -489,6 +649,13 @@ namespace SoundCalcs.UI
                 canvas.DrawCircle(sx, sy, radius, fill);
                 canvas.DrawCircle(sx, sy, radius, ring);
 
+                // Aimable speaker under the cursor or being dragged: a halo says it can be grabbed
+                if (s == _hoverSpk || s == _rotatingSpk)
+                {
+                    using var halo = new SKPaint { Color = DirColor, StrokeWidth = 2f * sw, Style = SKPaintStyle.Stroke, IsAntialias = true };
+                    canvas.DrawCircle(sx, sy, radius * 1.7f, halo);
+                }
+
                 // Draw A/B line label centered on the speaker icon
                 if (!string.IsNullOrEmpty(s.AbLine))
                 {
@@ -510,6 +677,35 @@ namespace SoundCalcs.UI
                     canvas.Restore();
                 }
             }
+        }
+
+        // ── Aim hint (screen-space): "Drag to aim" on hover, the live angle while dragging ──
+        void DrawAimHint(SKCanvas canvas)
+        {
+            SpeakerInstance s = _rotatingSpk ?? _hoverSpk;
+            if (s == null) return;
+
+            string text = _rotatingSpk != null
+                ? $"{(Math.Atan2(s.FacingDirection.Y, s.FacingDirection.X) * 180.0 / Math.PI + 360.0) % 360.0:F0}°"
+                : "Drag to aim";
+            float sx =  (float)s.Position.X * _zoom + _panX;
+            float sy = -(float)s.Position.Y * _zoom + _panY;
+            float r  = Math.Max(0.25f * _zoom, 8f) * 1.7f;
+
+            using var tf = new SKPaint
+            {
+                Color       = TextBright,
+                TextSize    = 11f * PixelScale,
+                IsAntialias = true,
+                Typeface    = SKTypeface.FromFamilyName("Segoe UI") ?? SKTypeface.Default,
+            };
+            using var bg = new SKPaint { Color = LegendBg, Style = SKPaintStyle.Fill, IsAntialias = true };
+            float tw = tf.MeasureText(text);
+            float padX = 6f * PixelScale, h = 18f * PixelScale;
+            float bx = sx + r + 4f * PixelScale;
+            float by = sy - h * 0.5f;
+            canvas.DrawRoundRect(bx, by, tw + 2 * padX, h, h * 0.5f, h * 0.5f, bg);
+            canvas.DrawText(text, bx + padX, by + h * 0.5f + tf.TextSize * 0.35f, tf);
         }
 
         // ── Colour legend (screen-space) ───────────────────────────────────
@@ -660,39 +856,44 @@ namespace SoundCalcs.UI
         {
             if (e.LeftButton == MouseButtonState.Pressed)
             {
+                // Grabbing the plan stops any glide or animated fit exactly where it is.
+                StopMotion();
+                var mpos = ToCanvas(e.GetPosition(SkCanvas));
+
                 if (_probeMode)
                 {
-                    var pos = e.GetPosition(SkCanvas);
-                    PlaceProbePin((float)pos.X, (float)pos.Y);
+                    PlaceProbePin(mpos.X, mpos.Y);
                     e.Handled = true;
                     return;
                 }
 
                 // Start speaker-rotation drag when clicking near a speaker symbol
-                var mpos = e.GetPosition(SkCanvas);
-                var spk  = HitTestSpeaker((float)mpos.X, (float)mpos.Y);
+                var spk  = HitTestSpeaker(mpos.X, mpos.Y);
                 if (spk != null)
                 {
                     _rotatingSpk = spk;
                     SkCanvas.CaptureMouse();
+                    Refresh();
                     e.Handled = true;
                     return;
                 }
 
                 _isPanning  = true;
                 _lastMouse  = mpos;
+                _panHistory.Clear();
+                _panHistory.Add((Now, mpos.X, mpos.Y));
                 SkCanvas.CaptureMouse();
             }
         }
 
         void Canvas_MouseMove(object sender, MouseEventArgs e)
         {
-            var cur = e.GetPosition(SkCanvas);
+            var cur = ToCanvas(e.GetPosition(SkCanvas));
 
             if (_rotatingSpk != null)
             {
-                float wx = (float)(cur.X - _panX) / _zoom;
-                float wy = -(float)(cur.Y - _panY) / _zoom;
+                float wx = (cur.X - _panX) / _zoom;
+                float wy = -(cur.Y - _panY) / _zoom;
                 double dx   = wx - _rotatingSpk.Position.X;
                 double dy   = wy - _rotatingSpk.Position.Y;
                 double dist = Math.Sqrt(dx * dx + dy * dy);
@@ -710,19 +911,34 @@ namespace SoundCalcs.UI
 
             if (_isPanning)
             {
-                _panX += (float)(cur.X - _lastMouse.X);
-                _panY += (float)(cur.Y - _lastMouse.Y);
+                // 1:1 with the pointer: the point grabbed stays under it
+                _panX += cur.X - _lastMouse.X;
+                _panY += cur.Y - _lastMouse.Y;
                 _lastMouse = cur;
+                double now = Now;
+                _panHistory.Add((now, cur.X, cur.Y));
+                _panHistory.RemoveAll(s => now - s.T > 0.1);
                 Refresh();
                 return;
             }
 
-            // Hover: change cursor when over a speaker to hint rotation is available
+            // Hover: highlight an aimable speaker and label it ("Drag to aim"); the canvas keeps its pan cursor.
             if (!_probeMode)
             {
-                var spk = HitTestSpeaker((float)cur.X, (float)cur.Y);
-                SkCanvas.Cursor = spk != null ? Cursors.SizeAll : Cursors.Hand;
+                var spk = HitTestSpeaker(cur.X, cur.Y);
+                if (spk != _hoverSpk)
+                {
+                    _hoverSpk = spk;
+                    Refresh();
+                }
             }
+        }
+
+        void Canvas_MouseLeave(object sender, MouseEventArgs e)
+        {
+            if (_hoverSpk == null || _rotatingSpk != null) return;
+            _hoverSpk = null;
+            Refresh();
         }
 
         void Canvas_MouseUp(object sender, MouseButtonEventArgs e)
@@ -735,38 +951,72 @@ namespace SoundCalcs.UI
                 OnSpeakerRotated?.Invoke(_rotatingSpk.ElementId, angleDeg);
                 _rotatingSpk = null;
                 SkCanvas.ReleaseMouseCapture();
+                Refresh();
                 return;
             }
 
             if (!_isPanning) return;
             _isPanning = false;
             SkCanvas.ReleaseMouseCapture();
+            StartGlide();
+        }
+
+        // Continues a flick at the release velocity and lets it slow down (no glide after a pause).
+        void StartGlide()
+        {
+            if (ThemeManager.ReducedMotion || _panHistory.Count < 2) return;
+            var first = _panHistory[0];
+            var last = _panHistory[_panHistory.Count - 1];
+            double span = last.T - first.T;
+            if (span < 0.01 || Now - last.T > 0.05) return;
+
+            _velX = (float)((last.X - first.X) / span);
+            _velY = (float)((last.Y - first.Y) / span);
+            float speed = (float)Math.Sqrt(_velX * _velX + _velY * _velY);
+            if (speed < MinGlideSpeed) return;
+            const float maxSpeed = 6000f;
+            if (speed > maxSpeed)
+            {
+                _velX *= maxSpeed / speed;
+                _velY *= maxSpeed / speed;
+            }
+            _gliding = true;
+            EnsureTicking();
         }
 
         void Canvas_MouseWheel(object sender, MouseWheelEventArgs e)
         {
-            var pos = e.GetPosition(SkCanvas);
-            float cx = (float)pos.X;
-            float cy = (float)pos.Y;
+            var pos = ToCanvas(e.GetPosition(SkCanvas));
+            _fitAnimating = false;
+            _gliding = false;
 
-            // World coords under the cursor (accounting for Y flip)
-            float wx =  (cx - _panX) / _zoom;
-            float wy = -(cy - _panY) / _zoom;
+            // World point under the cursor now; it stays under the cursor while the zoom settles.
+            _zoomAnchor = pos;
+            _anchorWx =  (pos.X - _panX) / _zoom;
+            _anchorWy = -(pos.Y - _panY) / _zoom;
 
-            float factor = e.Delta > 0 ? 1.15f : 1f / 1.15f;
-            _zoom = Math.Min(Math.Max(_zoom * factor, 2f), 8000f);
+            // Proportional to the wheel delta, so precision touchpads zoom in small steps
+            float factor = (float)Math.Pow(1.15, e.Delta / 120.0);
+            float from = _zoomAnimating ? _zoomTarget : _zoom;
+            _zoomTarget = Math.Min(Math.Max(from * factor, 2f), 8000f);
 
-            // Keep the world point under the cursor pinned to cursor position
-            _panX = cx - wx * _zoom;
-            _panY = cy + wy * _zoom;
-
-            Refresh();
+            if (ThemeManager.ReducedMotion)
+            {
+                _zoom = _zoomTarget;
+                _panX = pos.X - _anchorWx * _zoom;
+                _panY = pos.Y + _anchorWy * _zoom;
+                Refresh();
+                return;
+            }
+            _zoomAnimating = true;
+            EnsureTicking();
         }
 
         // ── Fit button ─────────────────────────────────────────────────────
         void FitBtn_Click(object sender, RoutedEventArgs e)
         {
             _fitPending = true;
+            _animateNextFit = true;
             Refresh();
         }
 
@@ -825,7 +1075,7 @@ namespace SoundCalcs.UI
             if (_speakers.Count == 0) return null;
             float wx   = (screenX - _panX) / _zoom;
             float wy   = -(screenY - _panY) / _zoom;
-            float hitR = 10f / _zoom;  // 10 screen-pixel hit radius
+            float hitR = 10f * PixelScale / _zoom;  // 10 DIP hit radius
             SpeakerInstance best  = null;
             double          bestD = hitR;
             foreach (var s in _aimableSpeakers)

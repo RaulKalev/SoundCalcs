@@ -57,6 +57,8 @@ namespace SoundCalcs.UI
             AcousticViewer.OnSpeakerRotated = (elementId, angleDeg) =>
                 _vm.SetSpeakerAimAngle(elementId, angleDeg);
 
+            ApplyTextScale();
+
             SoundCalcsPage page;
             if (Enum.TryParse(prefs.LastPage, out page)) ShowPage(page);
 
@@ -76,6 +78,12 @@ namespace SoundCalcs.UI
 
         private void ShowPage(SoundCalcsPage page)
         {
+            // The new page slides in from the direction of travel in the sidebar: moving down the list it rises
+            // from below, moving up it comes down from above (Motion falls back to a fade with reduced motion).
+            if (page != _page)
+                Motion.SetFromY(PageElement(page), page > _page ? 8.0 : -8.0);
+            if (page == SoundCalcsPage.Run) _vm?.RefreshPreflight();
+
             _page = page;
             ModelPage.Visibility = page == SoundCalcsPage.Model ? Visibility.Visible : Visibility.Collapsed;
             SpeakersPage.Visibility = page == SoundCalcsPage.Speakers ? Visibility.Visible : Visibility.Collapsed;
@@ -97,6 +105,18 @@ namespace SoundCalcs.UI
                 case SoundCalcsPage.Room: return "Receiver grid, room acoustics and surfaces";
                 case SoundCalcsPage.Run: return "Calculate the sound field";
                 default: return "Heatmaps, figures and the Revit view";
+            }
+        }
+
+        private FrameworkElement PageElement(SoundCalcsPage page)
+        {
+            switch (page)
+            {
+                case SoundCalcsPage.Model: return ModelPage;
+                case SoundCalcsPage.Speakers: return SpeakersPage;
+                case SoundCalcsPage.Room: return RoomPage;
+                case SoundCalcsPage.Run: return RunPage;
+                default: return ResultsPage;
             }
         }
 
@@ -125,13 +145,38 @@ namespace SoundCalcs.UI
 
         private void GoToRun_Click(object sender, RoutedEventArgs e) => ShowPage(SoundCalcsPage.Run);
 
+        // A checklist item's "Go to …" button: its Tag names the page that fixes it.
+        private void PreflightFix_Click(object sender, RoutedEventArgs e)
+        {
+            SoundCalcsPage page;
+            if ((sender as FrameworkElement)?.Tag is string name && Enum.TryParse(name, out page))
+                ShowPage(page);
+        }
+
         // ------------------------------------------------------------------ layout
 
         private void UpdateLayoutMode()
         {
             IsCompact = ActualWidth < CompactWidth;
-            SidebarColumn.Width = new GridLength(IsCompact ? 60 : 212);
+            SidebarColumn.Width = new GridLength((IsCompact ? 60 : 212) * _textScale);
             PageSubtitleText.Visibility = ActualWidth < 1100 ? Visibility.Collapsed : Visibility.Visible;
+        }
+
+        private double _textScale = 1.0;
+
+        /// <summary>
+        /// Follows Windows' "Text size" (Accessibility): the sidebar, title, pages and status line scale with it,
+        /// layout included, so larger text never clips. The plan viewer keeps its own zoom.
+        /// </summary>
+        private void ApplyTextScale()
+        {
+            _textScale = ThemeManager.TextScaleFactor;
+            if (_textScale <= 1.01) return;
+            var scale = new System.Windows.Media.ScaleTransform(_textScale, _textScale);
+            foreach (FrameworkElement el in new FrameworkElement[] { SidebarBorder, TitleArea, ModelPage, SpeakersPage, RoomPage, RunPage, ResultsPage, StatusLine })
+                el.LayoutTransform = scale;
+            PageColumn.MinWidth *= _textScale;
+            UpdateLayoutMode();
         }
 
         private void UpdateMaximizedState()
@@ -172,6 +217,9 @@ namespace SoundCalcs.UI
             if (Keyboard.Modifiers != ModifierKeys.Control) return;
             switch (key)
             {
+                // Text fields keep their own Ctrl+Z (typing undo).
+                case Key.Z when _vm.CanUndo && !(Keyboard.FocusedElement is System.Windows.Controls.Primitives.TextBoxBase):
+                    _vm.Undo(); e.Handled = true; break;
                 case Key.D1: case Key.NumPad1: ShowPage(SoundCalcsPage.Model); e.Handled = true; break;
                 case Key.D2: case Key.NumPad2: ShowPage(SoundCalcsPage.Speakers); e.Handled = true; break;
                 case Key.D3: case Key.NumPad3: ShowPage(SoundCalcsPage.Room); e.Handled = true; break;
@@ -197,6 +245,7 @@ namespace SoundCalcs.UI
         {
             try
             {
+                _vm.FlushPendingSave();
                 _theme.CaptureWindowPlacement();
                 _theme.Preferences.LastPage = _page.ToString();
                 _theme.Preferences.PanelWidth = PageColumn.ActualWidth;
@@ -246,9 +295,16 @@ namespace SoundCalcs.UI
             _vm.ClearPickedSpeakers();
         }
 
-        private void SaveSettings_Click(object sender, RoutedEventArgs e)
+        private void UseConeAngle_Click(object sender, RoutedEventArgs e)
         {
-            _vm.SaveSettings();
+            _vm.SelectedSpeakerGroup?.ClearCoverage();
+        }
+
+        // ============ Status line ============
+
+        private void Undo_Click(object sender, RoutedEventArgs e)
+        {
+            _vm.Undo();
         }
 
         // ============ Room page ============

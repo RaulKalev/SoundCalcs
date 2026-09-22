@@ -108,28 +108,56 @@
         <Setter Property="SnapsToDevicePixels" Value="True" />
         <Setter Property="Template">
             <Setter.Value>
+                <!--
+                    Hover fades in over 100 ms (out over 150 ms) on its own layer, so the palette's hover colour is
+                    reached exactly; press is instant (fill + 0.97 scale on pointer-down).
+                -->
                 <ControlTemplate TargetType="{x:Type ButtonBase}">
-                    <Border
-                        x:Name="Bd"
-                        Padding="{TemplateBinding Padding}"
-                        Background="{TemplateBinding Background}"
-                        BorderBrush="{TemplateBinding BorderBrush}"
-                        BorderThickness="{TemplateBinding BorderThickness}"
-                        CornerRadius="{StaticResource Radius.Control}"
-                        RenderTransformOrigin="0.5,0.5">
-                        <ContentPresenter
-                            HorizontalAlignment="Center"
-                            VerticalAlignment="Center"
-                            RecognizesAccessKey="True"
-                            TextElement.Foreground="{TemplateBinding Foreground}" />
-                    </Border>
+                    <Grid x:Name="Root" RenderTransformOrigin="0.5,0.5">
+                        <Border
+                            x:Name="Bd"
+                            Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}"
+                            CornerRadius="{StaticResource Radius.Control}" />
+                        <Border
+                            x:Name="HoverLayer"
+                            Margin="{TemplateBinding BorderThickness}"
+                            Background="{DynamicResource Control.FillHover}"
+                            CornerRadius="5"
+                            Opacity="0" />
+                        <Border
+                            Padding="{TemplateBinding Padding}"
+                            BorderBrush="Transparent"
+                            BorderThickness="{TemplateBinding BorderThickness}">
+                            <ContentPresenter
+                                HorizontalAlignment="Center"
+                                VerticalAlignment="Center"
+                                RecognizesAccessKey="True"
+                                TextElement.Foreground="{TemplateBinding Foreground}" />
+                        </Border>
+                    </Grid>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsMouseOver" Value="True">
-                            <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Control.FillHover}" />
+                            <Trigger.EnterActions>
+                                <BeginStoryboard>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetName="HoverLayer" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.1" />
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </Trigger.EnterActions>
+                            <Trigger.ExitActions>
+                                <BeginStoryboard>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetName="HoverLayer" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.15" />
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </Trigger.ExitActions>
                         </Trigger>
                         <Trigger Property="IsPressed" Value="True">
                             <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Control.FillPressed}" />
-                            <Setter TargetName="Bd" Property="RenderTransform">
+                            <Setter TargetName="HoverLayer" Property="Background" Value="{DynamicResource Control.FillPressed}" />
+                            <Setter TargetName="Root" Property="RenderTransform">
                                 <Setter.Value>
                                     <ScaleTransform ScaleX="0.97" ScaleY="0.97" />
                                 </Setter.Value>
@@ -157,27 +185,50 @@
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="{x:Type ButtonBase}">
-                    <Border
-                        x:Name="Bd"
-                        Padding="{TemplateBinding Padding}"
-                        Background="{TemplateBinding Background}"
-                        BorderBrush="{TemplateBinding BorderBrush}"
-                        BorderThickness="{TemplateBinding BorderThickness}"
-                        CornerRadius="{StaticResource Radius.Control}"
-                        RenderTransformOrigin="0.5,0.5">
-                        <ContentPresenter
-                            HorizontalAlignment="Center"
-                            VerticalAlignment="Center"
-                            RecognizesAccessKey="True"
-                            TextElement.Foreground="{TemplateBinding Foreground}" />
-                    </Border>
+                    <Grid x:Name="Root" RenderTransformOrigin="0.5,0.5">
+                        <Border
+                            x:Name="Bd"
+                            Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}"
+                            CornerRadius="{StaticResource Radius.Control}" />
+                        <Border
+                            x:Name="HoverLayer"
+                            Background="{DynamicResource Accent.Hover}"
+                            CornerRadius="{StaticResource Radius.Control}"
+                            Opacity="0" />
+                        <Border
+                            Padding="{TemplateBinding Padding}"
+                            BorderBrush="Transparent"
+                            BorderThickness="{TemplateBinding BorderThickness}">
+                            <ContentPresenter
+                                HorizontalAlignment="Center"
+                                VerticalAlignment="Center"
+                                RecognizesAccessKey="True"
+                                TextElement.Foreground="{TemplateBinding Foreground}" />
+                        </Border>
+                    </Grid>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsMouseOver" Value="True">
-                            <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Accent.Hover}" />
+                            <Trigger.EnterActions>
+                                <BeginStoryboard>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetName="HoverLayer" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.1" />
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </Trigger.EnterActions>
+                            <Trigger.ExitActions>
+                                <BeginStoryboard>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetName="HoverLayer" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.15" />
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </Trigger.ExitActions>
                         </Trigger>
                         <Trigger Property="IsPressed" Value="True">
                             <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Accent.Pressed}" />
-                            <Setter TargetName="Bd" Property="RenderTransform">
+                            <Setter TargetName="HoverLayer" Property="Background" Value="{DynamicResource Accent.Pressed}" />
+                            <Setter TargetName="Root" Property="RenderTransform">
                                 <Setter.Value>
                                     <ScaleTransform ScaleX="0.97" ScaleY="0.97" />
                                 </Setter.Value>
@@ -208,25 +259,44 @@
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="{x:Type ButtonBase}">
-                    <Border
-                        x:Name="Bd"
-                        Padding="{TemplateBinding Padding}"
-                        Background="{TemplateBinding Background}"
-                        CornerRadius="{StaticResource Radius.Control}"
-                        RenderTransformOrigin="0.5,0.5">
+                    <Grid x:Name="Root" RenderTransformOrigin="0.5,0.5">
+                        <Border
+                            x:Name="Bd"
+                            Background="{TemplateBinding Background}"
+                            CornerRadius="{StaticResource Radius.Control}" />
+                        <Border
+                            x:Name="HoverLayer"
+                            Background="{DynamicResource Control.Plain.Hover}"
+                            CornerRadius="{StaticResource Radius.Control}"
+                            Opacity="0" />
                         <ContentPresenter
+                            Margin="{TemplateBinding Padding}"
                             HorizontalAlignment="Center"
                             VerticalAlignment="Center"
                             RecognizesAccessKey="True"
                             TextElement.Foreground="{TemplateBinding Foreground}" />
-                    </Border>
+                    </Grid>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsMouseOver" Value="True">
-                            <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Control.Plain.Hover}" />
+                            <Trigger.EnterActions>
+                                <BeginStoryboard>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetName="HoverLayer" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.1" />
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </Trigger.EnterActions>
+                            <Trigger.ExitActions>
+                                <BeginStoryboard>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetName="HoverLayer" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.15" />
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </Trigger.ExitActions>
                         </Trigger>
                         <Trigger Property="IsPressed" Value="True">
                             <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Control.Plain.Pressed}" />
-                            <Setter TargetName="Bd" Property="RenderTransform">
+                            <Setter TargetName="HoverLayer" Property="Background" Value="Transparent" />
+                            <Setter TargetName="Root" Property="RenderTransform">
                                 <Setter.Value>
                                     <ScaleTransform ScaleX="0.97" ScaleY="0.97" />
                                 </Setter.Value>
@@ -260,24 +330,43 @@
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="{x:Type ButtonBase}">
-                    <Border
-                        x:Name="Bd"
-                        Background="{TemplateBinding Background}"
-                        CornerRadius="{StaticResource Radius.Control}"
-                        RenderTransformOrigin="0.5,0.5">
+                    <Grid x:Name="Root" RenderTransformOrigin="0.5,0.5">
+                        <Border
+                            x:Name="Bd"
+                            Background="{TemplateBinding Background}"
+                            CornerRadius="{StaticResource Radius.Control}" />
+                        <Border
+                            x:Name="HoverLayer"
+                            Background="{DynamicResource Control.Plain.Hover}"
+                            CornerRadius="{StaticResource Radius.Control}"
+                            Opacity="0" />
                         <ContentPresenter
                             HorizontalAlignment="Center"
                             VerticalAlignment="Center"
                             TextElement.Foreground="{TemplateBinding Foreground}" />
-                    </Border>
+                    </Grid>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsMouseOver" Value="True">
-                            <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Control.Plain.Hover}" />
                             <Setter Property="Foreground" Value="{DynamicResource Text.Primary}" />
+                            <Trigger.EnterActions>
+                                <BeginStoryboard>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetName="HoverLayer" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.1" />
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </Trigger.EnterActions>
+                            <Trigger.ExitActions>
+                                <BeginStoryboard>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetName="HoverLayer" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.15" />
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </Trigger.ExitActions>
                         </Trigger>
                         <Trigger Property="IsPressed" Value="True">
                             <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Control.Plain.Pressed}" />
-                            <Setter TargetName="Bd" Property="RenderTransform">
+                            <Setter TargetName="HoverLayer" Property="Background" Value="Transparent" />
+                            <Setter TargetName="Root" Property="RenderTransform">
                                 <Setter.Value>
                                     <ScaleTransform ScaleX="0.92" ScaleY="0.92" />
                                 </Setter.Value>
@@ -772,16 +861,37 @@
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="{x:Type RadioButton}">
-                    <Border
-                        x:Name="Bd"
-                        Padding="{TemplateBinding Padding}"
-                        Background="Transparent"
-                        CornerRadius="{StaticResource Radius.Control}">
-                        <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalAlignment="Center" />
-                    </Border>
+                    <Grid>
+                        <Border
+                            x:Name="Bd"
+                            Background="Transparent"
+                            CornerRadius="{StaticResource Radius.Control}" />
+                        <Border
+                            x:Name="HoverLayer"
+                            Background="{DynamicResource Control.Plain.Hover}"
+                            CornerRadius="{StaticResource Radius.Control}"
+                            Opacity="0" />
+                        <ContentPresenter
+                            Margin="{TemplateBinding Padding}"
+                            HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                            VerticalAlignment="Center" />
+                    </Grid>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsMouseOver" Value="True">
-                            <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Control.Plain.Hover}" />
+                            <Trigger.EnterActions>
+                                <BeginStoryboard>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetName="HoverLayer" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.1" />
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </Trigger.EnterActions>
+                            <Trigger.ExitActions>
+                                <BeginStoryboard>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetName="HoverLayer" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.15" />
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </Trigger.ExitActions>
                         </Trigger>
                         <Trigger Property="IsPressed" Value="True">
                             <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Control.Plain.Pressed}" />

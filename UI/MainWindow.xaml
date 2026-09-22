@@ -154,6 +154,7 @@
 
         <!--  ============ Sidebar (structural material: gradient + right edge highlight) ============  -->
         <Border
+            x:Name="SidebarBorder"
             Background="{DynamicResource Sidebar.Material}"
             BorderBrush="{DynamicResource Sidebar.Edge}"
             BorderThickness="0,0,1,0">
@@ -293,6 +294,20 @@
                                     Visibility="{Binding IsRunning, Converter={StaticResource BoolToVis}}">
                                     <TextBlock Text="{Binding ProgressPercent}" />
                                 </Border>
+                                <!--  Things to check before running (hidden while a run is in progress)  -->
+                                <Border ToolTip="Things to check before you run: see the Run page">
+                                    <Border.Style>
+                                        <Style BasedOn="{StaticResource Badge.Warning}" TargetType="{x:Type Border}">
+                                            <Setter Property="Visibility" Value="{Binding PreflightIssueCount, Converter={StaticResource CountToVis}}" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsRunning}" Value="True">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Border.Style>
+                                    <TextBlock Text="{Binding PreflightIssueCount}" />
+                                </Border>
                             </Grid>
                             <StackPanel Orientation="Horizontal">
                                 <materialDesign:PackIcon Kind="PlayCircleOutline" Style="{StaticResource SidebarIcon}" />
@@ -325,7 +340,7 @@
             </Grid.RowDefinitions>
 
             <!--  Title area: page title and caption buttons (draggable)  -->
-            <DockPanel Background="Transparent">
+            <DockPanel x:Name="TitleArea" Background="Transparent">
                 <StackPanel
                     VerticalAlignment="Top"
                     DockPanel.Dock="Right"
@@ -571,10 +586,11 @@
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
-                        <RowDefinition Height="*" />
+                        <RowDefinition Height="*" MinHeight="140" />
+                        <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
 
-                    <!--  Toolbar: the next step first, the destructive action apart  -->
+                    <!--  Toolbar: the next step first, the destructive action apart (changes save automatically)  -->
                     <DockPanel Margin="0,0,0,12">
                         <Button
                             Height="28"
@@ -582,7 +598,7 @@
                             Click="ClearPickedSpeakers_Click"
                             DockPanel.Dock="Right"
                             Style="{StaticResource Button.Plain.Destructive}"
-                            ToolTip="Remove all picked speakers from the list">
+                            ToolTip="Remove all picked speakers from the list (you can undo this)">
                             Clear
                         </Button>
                         <WrapPanel>
@@ -594,15 +610,6 @@
                                 <StackPanel Orientation="Horizontal">
                                     <materialDesign:PackIcon Kind="CursorDefaultClickOutline" Style="{StaticResource ButtonIconLabel}" />
                                     <TextBlock Text="Pick speakers" />
-                                </StackPanel>
-                            </Button>
-                            <Button
-                                Click="SaveSettings_Click"
-                                Style="{StaticResource Button.Secondary}"
-                                ToolTip="Save the speaker settings (profiles, levels, directivity) for next time">
-                                <StackPanel Orientation="Horizontal">
-                                    <materialDesign:PackIcon Kind="ContentSaveOutline" Style="{StaticResource ButtonIconLabel}" />
-                                    <TextBlock Text="Save" />
                                 </StackPanel>
                             </Button>
                         </WrapPanel>
@@ -619,16 +626,12 @@
                                 Width="220"
                                 VerticalAlignment="Center"
                                 AutomationProperties.Name="Speaker category"
+                                DisplayMemberPath="Label"
                                 DockPanel.Dock="Right"
-                                SelectedItem="{Binding SpeakerCategoryName}"
-                                Style="{StaticResource Input.Combo}">
-                                <sys:String>OST_DataDevices</sys:String>
-                                <sys:String>OST_MechanicalEquipment</sys:String>
-                                <sys:String>OST_ElectricalFixtures</sys:String>
-                                <sys:String>OST_ElectricalEquipment</sys:String>
-                                <sys:String>OST_CommunicationDevices</sys:String>
-                                <sys:String>OST_GenericModel</sys:String>
-                            </ComboBox>
+                                ItemsSource="{Binding SpeakerCategoryOptions}"
+                                SelectedValue="{Binding SpeakerCategoryName}"
+                                SelectedValuePath="Key"
+                                Style="{StaticResource Input.Combo}" />
                             <StackPanel Style="{StaticResource SettingText}">
                                 <TextBlock Style="{StaticResource Type.RowLabel}" Text="Speaker category" />
                                 <TextBlock Style="{StaticResource Type.RowHint}" Text="{Binding PickedSpeakerSummary}" />
@@ -644,6 +647,7 @@
                             <DataGrid
                                 AutomationProperties.Name="Speakers"
                                 ItemsSource="{Binding SpeakerGroups}"
+                                SelectedItem="{Binding SelectedSpeakerGroup}"
                                 Style="{StaticResource DataGrid.Edit}"
                                 Visibility="{Binding SpeakerGroups.Count, Converter={StaticResource CountToVis}}">
                                 <DataGrid.Columns>
@@ -695,45 +699,28 @@
                                             <TextBlock Text="SPL (dB)" ToolTip="On-axis sound pressure level at 1 m" />
                                         </DataGridTextColumn.Header>
                                     </DataGridTextColumn>
-                                    <DataGridTemplateColumn Width="190" Header="Response">
-                                        <DataGridTemplateColumn.CellTemplate>
-                                            <DataTemplate>
-                                                <ComboBox
-                                                    AutomationProperties.Name="Frequency response"
-                                                    ItemsSource="{Binding AvailableResponsePresets}"
-                                                    SelectedItem="{Binding ResponsePreset, UpdateSourceTrigger=PropertyChanged}"
-                                                    Style="{StaticResource Input.Combo.Cell}"
-                                                    ToolTip="Speaker frequency response. Generic presets; enter manufacturer data in the next column for accuracy." />
-                                            </DataTemplate>
-                                        </DataGridTemplateColumn.CellTemplate>
-                                    </DataGridTemplateColumn>
-                                    <DataGridTextColumn
-                                        Width="150"
-                                        Binding="{Binding ResponseText, UpdateSourceTrigger=LostFocus}"
-                                        EditingElementStyle="{StaticResource Grid.EditBox}"
-                                        ElementStyle="{StaticResource Grid.EditableText}">
-                                        <DataGridTextColumn.Header>
-                                            <TextBlock Text="Response dB (125…8k)" ToolTip="Manufacturer response per octave band, 125 Hz to 8 kHz, e.g. '-6 -2 0 0 0 -1 -4'" />
-                                        </DataGridTextColumn.Header>
-                                    </DataGridTextColumn>
                                     <DataGridTextColumn
                                         Width="90"
                                         Binding="{Binding ConeHalfAngleDeg}"
                                         EditingElementStyle="{StaticResource Grid.EditBox}"
                                         ElementStyle="{StaticResource Grid.EditableText}">
                                         <DataGridTextColumn.Header>
-                                            <TextBlock Text="Cone angle (°)" ToolTip="Half-angle of the coverage cone, used when no coverage data is entered" />
+                                            <TextBlock Text="Cone angle (°)" ToolTip="Half-angle of the coverage cone, used when no datasheet coverage is entered" />
                                         </DataGridTextColumn.Header>
                                     </DataGridTextColumn>
+                                    <!--  Per-band response and coverage are edited in the card under the table  -->
                                     <DataGridTextColumn
                                         Width="150"
-                                        Binding="{Binding CoverageText, UpdateSourceTrigger=LostFocus}"
-                                        EditingElementStyle="{StaticResource Grid.EditBox}"
-                                        ElementStyle="{StaticResource Grid.EditableText}">
-                                        <DataGridTextColumn.Header>
-                                            <TextBlock Text="Coverage ° (125…8k)" ToolTip="Datasheet -6 dB coverage angle (full) per octave band, e.g. '180 180 140 100 90 70 60'. 180 = omni. Empty = use Cone angle." />
-                                        </DataGridTextColumn.Header>
-                                    </DataGridTextColumn>
+                                        Binding="{Binding ResponsePreset}"
+                                        ElementStyle="{StaticResource Grid.ReadOnlyText}"
+                                        Header="Response"
+                                        IsReadOnly="True" />
+                                    <DataGridTextColumn
+                                        Width="96"
+                                        Binding="{Binding CoverageSummary}"
+                                        ElementStyle="{StaticResource Grid.ReadOnlyText}"
+                                        Header="Coverage"
+                                        IsReadOnly="True" />
                                     <DataGridTextColumn
                                         Width="200"
                                         Binding="{Binding DirectivityFilePath, UpdateSourceTrigger=LostFocus}"
@@ -770,6 +757,117 @@
                             </StackPanel>
                         </Grid>
                     </Border>
+
+                    <!--  Selected type: response and coverage per octave band, one field per band  -->
+                    <Border
+                        Grid.Row="3"
+                        Margin="0,12,0,0"
+                        Style="{StaticResource Card}"
+                        Visibility="{Binding SelectedSpeakerGroup, Converter={StaticResource NotEmptyToVis}}">
+                        <StackPanel>
+                            <TextBlock
+                                Style="{StaticResource Type.RowLabel}"
+                                Text="{Binding SelectedSpeakerGroup.DisplayName}"
+                                TextTrimming="CharacterEllipsis"
+                                TextWrapping="NoWrap"
+                                ToolTip="{Binding SelectedSpeakerGroup.DisplayName}" />
+                            <TextBlock Style="{StaticResource Type.RowHint}" Text="Per octave band. Select a row above to edit another type." />
+                            <DockPanel Margin="0,12,0,0">
+                                <ComboBox
+                                    Width="200"
+                                    VerticalAlignment="Center"
+                                    AutomationProperties.Name="Response preset"
+                                    DockPanel.Dock="Right"
+                                    ItemsSource="{Binding SelectedSpeakerGroup.AvailableResponsePresets}"
+                                    SelectedItem="{Binding SelectedSpeakerGroup.ResponsePreset, UpdateSourceTrigger=PropertyChanged}"
+                                    Style="{StaticResource Input.Combo}"
+                                    ToolTip="Fill the response from a generic preset, then adjust bands to the manufacturer's data" />
+                                <TextBlock
+                                    VerticalAlignment="Center"
+                                    Style="{StaticResource Type.Label}"
+                                    Text="Response preset" />
+                            </DockPanel>
+
+                            <Grid x:Name="SpeakerBandTable" Margin="0,14,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="96" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <Grid.Resources>
+                                    <Style BasedOn="{StaticResource Type.Caption}" TargetType="{x:Type TextBlock}">
+                                        <Setter Property="Margin" Value="0,0,4,4" />
+                                        <Setter Property="TextAlignment" Value="Center" />
+                                    </Style>
+                                </Grid.Resources>
+                                <TextBlock Grid.Column="0" Text="Hz" TextAlignment="Left" />
+                                <TextBlock Grid.Column="1" Text="125" />
+                                <TextBlock Grid.Column="2" Text="250" />
+                                <TextBlock Grid.Column="3" Text="500" />
+                                <TextBlock Grid.Column="4" Text="1k" />
+                                <TextBlock Grid.Column="5" Text="2k" />
+                                <TextBlock Grid.Column="6" Text="4k" />
+                                <TextBlock Grid.Column="7" Text="8k" />
+
+                                <TextBlock
+                                    Grid.Row="1"
+                                    Margin="0,0,0,6"
+                                    VerticalAlignment="Center"
+                                    Style="{StaticResource Type.Label}"
+                                    Text="Response (dB)"
+                                    ToolTip="Level relative to the on-axis SPL in each band, from the manufacturer's frequency response" />
+                                <TextBox Grid.Row="1" Grid.Column="1" Margin="0,0,4,6" AutomationProperties.Name="Response at 125 Hz" Style="{StaticResource Input.Band}" Text="{Binding SelectedSpeakerGroup.Response[0], UpdateSourceTrigger=LostFocus, ValidatesOnExceptions=True}" />
+                                <TextBox Grid.Row="1" Grid.Column="2" Margin="0,0,4,6" AutomationProperties.Name="Response at 250 Hz" Style="{StaticResource Input.Band}" Text="{Binding SelectedSpeakerGroup.Response[1], UpdateSourceTrigger=LostFocus, ValidatesOnExceptions=True}" />
+                                <TextBox Grid.Row="1" Grid.Column="3" Margin="0,0,4,6" AutomationProperties.Name="Response at 500 Hz" Style="{StaticResource Input.Band}" Text="{Binding SelectedSpeakerGroup.Response[2], UpdateSourceTrigger=LostFocus, ValidatesOnExceptions=True}" />
+                                <TextBox Grid.Row="1" Grid.Column="4" Margin="0,0,4,6" AutomationProperties.Name="Response at 1 kHz" Style="{StaticResource Input.Band}" Text="{Binding SelectedSpeakerGroup.Response[3], UpdateSourceTrigger=LostFocus, ValidatesOnExceptions=True}" />
+                                <TextBox Grid.Row="1" Grid.Column="5" Margin="0,0,4,6" AutomationProperties.Name="Response at 2 kHz" Style="{StaticResource Input.Band}" Text="{Binding SelectedSpeakerGroup.Response[4], UpdateSourceTrigger=LostFocus, ValidatesOnExceptions=True}" />
+                                <TextBox Grid.Row="1" Grid.Column="6" Margin="0,0,4,6" AutomationProperties.Name="Response at 4 kHz" Style="{StaticResource Input.Band}" Text="{Binding SelectedSpeakerGroup.Response[5], UpdateSourceTrigger=LostFocus, ValidatesOnExceptions=True}" />
+                                <TextBox Grid.Row="1" Grid.Column="7" Margin="0,0,0,6" AutomationProperties.Name="Response at 8 kHz" Style="{StaticResource Input.Band}" Text="{Binding SelectedSpeakerGroup.Response[6], UpdateSourceTrigger=LostFocus, ValidatesOnExceptions=True}" />
+
+                                <TextBlock
+                                    Grid.Row="2"
+                                    VerticalAlignment="Center"
+                                    Style="{StaticResource Type.Label}"
+                                    Text="Coverage (°)"
+                                    ToolTip="Datasheet -6 dB coverage angle (full) per band; 180 = omnidirectional. Empty = cone model from the Cone angle column." />
+                                <TextBox Grid.Row="2" Grid.Column="1" AutomationProperties.Name="Coverage at 125 Hz" Style="{StaticResource Input.Band}" Tag="{Binding SelectedSpeakerGroup.ConeFullAngleText}" Text="{Binding SelectedSpeakerGroup.Coverage[0], UpdateSourceTrigger=LostFocus, ValidatesOnExceptions=True}" />
+                                <TextBox Grid.Row="2" Grid.Column="2" AutomationProperties.Name="Coverage at 250 Hz" Style="{StaticResource Input.Band}" Tag="{Binding SelectedSpeakerGroup.ConeFullAngleText}" Text="{Binding SelectedSpeakerGroup.Coverage[1], UpdateSourceTrigger=LostFocus, ValidatesOnExceptions=True}" />
+                                <TextBox Grid.Row="2" Grid.Column="3" AutomationProperties.Name="Coverage at 500 Hz" Style="{StaticResource Input.Band}" Tag="{Binding SelectedSpeakerGroup.ConeFullAngleText}" Text="{Binding SelectedSpeakerGroup.Coverage[2], UpdateSourceTrigger=LostFocus, ValidatesOnExceptions=True}" />
+                                <TextBox Grid.Row="2" Grid.Column="4" AutomationProperties.Name="Coverage at 1 kHz" Style="{StaticResource Input.Band}" Tag="{Binding SelectedSpeakerGroup.ConeFullAngleText}" Text="{Binding SelectedSpeakerGroup.Coverage[3], UpdateSourceTrigger=LostFocus, ValidatesOnExceptions=True}" />
+                                <TextBox Grid.Row="2" Grid.Column="5" AutomationProperties.Name="Coverage at 2 kHz" Style="{StaticResource Input.Band}" Tag="{Binding SelectedSpeakerGroup.ConeFullAngleText}" Text="{Binding SelectedSpeakerGroup.Coverage[4], UpdateSourceTrigger=LostFocus, ValidatesOnExceptions=True}" />
+                                <TextBox Grid.Row="2" Grid.Column="6" AutomationProperties.Name="Coverage at 4 kHz" Style="{StaticResource Input.Band}" Tag="{Binding SelectedSpeakerGroup.ConeFullAngleText}" Text="{Binding SelectedSpeakerGroup.Coverage[5], UpdateSourceTrigger=LostFocus, ValidatesOnExceptions=True}" />
+                                <TextBox Grid.Row="2" Grid.Column="7" Margin="0" AutomationProperties.Name="Coverage at 8 kHz" Style="{StaticResource Input.Band}" Tag="{Binding SelectedSpeakerGroup.ConeFullAngleText}" Text="{Binding SelectedSpeakerGroup.Coverage[6], UpdateSourceTrigger=LostFocus, ValidatesOnExceptions=True}" />
+                            </Grid>
+
+                            <DockPanel Margin="0,8,0,0">
+                                <Button
+                                    Height="28"
+                                    Click="UseConeAngle_Click"
+                                    DockPanel.Dock="Right"
+                                    IsEnabled="{Binding SelectedSpeakerGroup.Coverage.HasValues}"
+                                    Style="{StaticResource Button.Plain}"
+                                    ToolTip="Clear the datasheet angles and use the cone angle from the table">
+                                    Use cone angle
+                                </Button>
+                                <!--  Shows the first invalid band; collapsed while every band is valid  -->
+                                <TextBlock
+                                    VerticalAlignment="Center"
+                                    ui:FieldHint.For="{Binding ElementName=SpeakerBandTable}"
+                                    Style="{StaticResource Type.RowHint}"
+                                    TextWrapping="Wrap" />
+                            </DockPanel>
+                        </StackPanel>
+                    </Border>
                 </Grid>
 
                 <!--  ================= ROOM =================  -->
@@ -793,6 +891,7 @@
                                         DockPanel.Dock="Right"
                                         Orientation="Horizontal">
                                         <TextBox
+                                            x:Name="GridSpacingBox"
                                             AutomationProperties.Name="Grid spacing in metres"
                                             Style="{StaticResource Input.Number}"
                                             Text="{Binding GridSpacing, UpdateSourceTrigger=PropertyChanged}" />
@@ -800,7 +899,10 @@
                                     </StackPanel>
                                     <StackPanel Style="{StaticResource SettingText}">
                                         <TextBlock Style="{StaticResource Type.RowLabel}" Text="Spacing" />
-                                        <TextBlock Style="{StaticResource Type.RowHint}" Text="Distance between receiver points" />
+                                        <TextBlock
+                                            ui:FieldHint.For="{Binding ElementName=GridSpacingBox}"
+                                            Style="{StaticResource Type.RowHint}"
+                                            Text="Distance between receiver points" />
                                     </StackPanel>
                                 </DockPanel>
                                 <Rectangle Style="{StaticResource Hairline}" />
@@ -810,6 +912,7 @@
                                         DockPanel.Dock="Right"
                                         Orientation="Horizontal">
                                         <TextBox
+                                            x:Name="ReceiverHeightBox"
                                             AutomationProperties.Name="Receiver height in metres"
                                             Style="{StaticResource Input.Number}"
                                             Text="{Binding ReceiverHeight, UpdateSourceTrigger=PropertyChanged}" />
@@ -817,7 +920,10 @@
                                     </StackPanel>
                                     <StackPanel Style="{StaticResource SettingText}">
                                         <TextBlock Style="{StaticResource Type.RowLabel}" Text="Listener height" />
-                                        <TextBlock Style="{StaticResource Type.RowHint}" Text="Above the floor: 1.2 m seated, 1.5 m standing" />
+                                        <TextBlock
+                                            ui:FieldHint.For="{Binding ElementName=ReceiverHeightBox}"
+                                            Style="{StaticResource Type.RowHint}"
+                                            Text="Above the floor: 1.2 m seated, 1.5 m standing" />
                                     </StackPanel>
                                 </DockPanel>
                                 <Rectangle Style="{StaticResource Hairline}" />
@@ -827,6 +933,7 @@
                                         DockPanel.Dock="Right"
                                         Orientation="Horizontal">
                                         <TextBox
+                                            x:Name="BoundaryOffsetBox"
                                             AutomationProperties.Name="Boundary offset in metres"
                                             Style="{StaticResource Input.Number}"
                                             Text="{Binding BoundaryOffset, UpdateSourceTrigger=PropertyChanged}" />
@@ -834,7 +941,10 @@
                                     </StackPanel>
                                     <StackPanel Style="{StaticResource SettingText}">
                                         <TextBlock Style="{StaticResource Type.RowLabel}" Text="Boundary offset" />
-                                        <TextBlock Style="{StaticResource Type.RowHint}" Text="Inset from the room walls" />
+                                        <TextBlock
+                                            ui:FieldHint.For="{Binding ElementName=BoundaryOffsetBox}"
+                                            Style="{StaticResource Type.RowHint}"
+                                            Text="Inset from the room walls" />
                                     </StackPanel>
                                 </DockPanel>
                             </StackPanel>
@@ -862,7 +972,7 @@
                                 </DockPanel>
 
                                 <!--  Octave-band table: one column per band, one row per quantity  -->
-                                <Grid Margin="0,14,0,0">
+                                <Grid x:Name="RoomBandTable" Margin="0,14,0,0">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="84" />
                                         <ColumnDefinition Width="*" />
@@ -920,6 +1030,12 @@
                                     <TextBox Grid.Row="2" Grid.Column="6" AutomationProperties.Name="Background noise at 4 kHz" Style="{StaticResource Input.Band}" Text="{Binding Noise_4k, UpdateSourceTrigger=PropertyChanged}" />
                                     <TextBox Grid.Row="2" Grid.Column="7" Margin="0" AutomationProperties.Name="Background noise at 8 kHz" Style="{StaticResource Input.Band}" Text="{Binding Noise_8k, UpdateSourceTrigger=PropertyChanged}" />
                                 </Grid>
+                                <!--  Shows the first invalid band; collapsed while every band is valid  -->
+                                <TextBlock
+                                    Margin="0,8,0,0"
+                                    ui:FieldHint.For="{Binding ElementName=RoomBandTable}"
+                                    Style="{StaticResource Type.RowHint}"
+                                    TextWrapping="Wrap" />
 
                                 <CheckBox
                                     Margin="0,14,0,0"
@@ -972,6 +1088,7 @@
                                         DockPanel.Dock="Right"
                                         Orientation="Horizontal">
                                         <TextBox
+                                            x:Name="OccupancyBox"
                                             AutomationProperties.Name="Occupancy in people"
                                             Style="{StaticResource Input.Number}"
                                             Text="{Binding Occupants, UpdateSourceTrigger=PropertyChanged}"
@@ -980,7 +1097,10 @@
                                     </StackPanel>
                                     <StackPanel Style="{StaticResource SettingText}">
                                         <TextBlock Style="{StaticResource Type.RowLabel}" Text="Occupancy" />
-                                        <TextBlock Style="{StaticResource Type.RowHint}" Text="People in the room" />
+                                        <TextBlock
+                                            ui:FieldHint.For="{Binding ElementName=OccupancyBox}"
+                                            Style="{StaticResource Type.RowHint}"
+                                            Text="People in the room" />
                                     </StackPanel>
                                 </DockPanel>
                                 <Rectangle Style="{StaticResource Hairline}" />
@@ -990,6 +1110,7 @@
                                         DockPanel.Dock="Right"
                                         Orientation="Horizontal">
                                         <TextBox
+                                            x:Name="HumidityBox"
                                             AutomationProperties.Name="Relative humidity in percent"
                                             Style="{StaticResource Input.Number}"
                                             Text="{Binding Humidity, UpdateSourceTrigger=PropertyChanged}"
@@ -998,7 +1119,10 @@
                                     </StackPanel>
                                     <StackPanel Style="{StaticResource SettingText}">
                                         <TextBlock Style="{StaticResource Type.RowLabel}" Text="Humidity" />
-                                        <TextBlock Style="{StaticResource Type.RowHint}" Text="Affects air absorption at 4–8 kHz" />
+                                        <TextBlock
+                                            ui:FieldHint.For="{Binding ElementName=HumidityBox}"
+                                            Style="{StaticResource Type.RowHint}"
+                                            Text="Affects air absorption at 4–8 kHz" />
                                     </StackPanel>
                                 </DockPanel>
                             </StackPanel>
@@ -1017,6 +1141,7 @@
                                         DockPanel.Dock="Right"
                                         Orientation="Horizontal">
                                         <TextBox
+                                            x:Name="MinSplBox"
                                             AutomationProperties.Name="Minimum level in dB"
                                             IsEnabled="{Binding UseMinSplThreshold}"
                                             Style="{StaticResource Input.Number}"
@@ -1030,6 +1155,7 @@
                                             Style="{StaticResource Input.Check}" />
                                         <TextBlock
                                             Margin="24,2,0,0"
+                                            ui:FieldHint.For="{Binding ElementName=MinSplBox}"
                                             Style="{StaticResource Type.RowHint}"
                                             Text="Areas below this level are left out of the heatmap" />
                                     </StackPanel>
@@ -1053,18 +1179,31 @@
                             </StackPanel>
                         </Border>
 
+                        <!--  Changes save as they are made; the next step is the run  -->
                         <DockPanel Margin="4,16,0,0">
                             <Button
-                                Click="SaveSettings_Click"
+                                Click="GoToRun_Click"
                                 DockPanel.Dock="Right"
                                 Style="{StaticResource Button.Primary}"
-                                ToolTip="Save these settings for next time">
-                                Save settings
+                                ToolTip="Check the setup and calculate (Ctrl+4)">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="Continue to Run" />
+                                    <materialDesign:PackIcon
+                                        Margin="6,0,0,0"
+                                        Kind="ArrowRight"
+                                        Style="{StaticResource ButtonIconLabel}" />
+                                </StackPanel>
                             </Button>
-                            <TextBlock
-                                VerticalAlignment="Center"
-                                Style="{StaticResource Type.Caption}"
-                                Text="Settings are saved on this computer." />
+                            <StackPanel VerticalAlignment="Center" Orientation="Horizontal">
+                                <materialDesign:PackIcon
+                                    Width="14"
+                                    Height="14"
+                                    Margin="0,0,6,0"
+                                    VerticalAlignment="Center"
+                                    Foreground="{DynamicResource Text.Tertiary}"
+                                    Kind="CheckCircleOutline" />
+                                <TextBlock Style="{StaticResource Type.Caption}" Text="Changes are saved automatically on this computer." />
+                            </StackPanel>
                         </DockPanel>
                     </StackPanel>
                 </ScrollViewer>
@@ -1117,10 +1256,61 @@
                             </DockPanel>
                         </Border>
 
+                        <!--  Checklist: what the run will use, and anything that looks wrong, with the way to fix it  -->
+                        <TextBlock Style="{StaticResource Type.GroupTitle}" Text="Before you run" />
+                        <Border Padding="0,4" Style="{StaticResource Card}">
+                            <ItemsControl AutomationProperties.Name="Checklist" ItemsSource="{Binding PreflightItems}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <DockPanel Margin="14,8,8,8">
+                                            <Button
+                                                Height="28"
+                                                Margin="12,0,0,0"
+                                                VerticalAlignment="Center"
+                                                Click="PreflightFix_Click"
+                                                DockPanel.Dock="Right"
+                                                Style="{StaticResource Button.Plain}"
+                                                Tag="{Binding FixPage}"
+                                                Visibility="{Binding FixPage, Converter={StaticResource NotEmptyToVis}}">
+                                                <TextBlock Text="{Binding FixPage, StringFormat=Go to {0}}" />
+                                            </Button>
+                                            <materialDesign:PackIcon
+                                                x:Name="Glyph"
+                                                Width="16"
+                                                Height="16"
+                                                Margin="0,1,10,0"
+                                                VerticalAlignment="Top"
+                                                DockPanel.Dock="Left"
+                                                Foreground="{DynamicResource Status.Ok}"
+                                                Kind="CheckCircle" />
+                                            <StackPanel>
+                                                <TextBlock Style="{StaticResource Type.RowLabel}" Text="{Binding Title}" />
+                                                <TextBlock
+                                                    Margin="0,2,0,0"
+                                                    Style="{StaticResource Type.RowHint}"
+                                                    Text="{Binding Detail}"
+                                                    TextWrapping="Wrap" />
+                                            </StackPanel>
+                                        </DockPanel>
+                                        <DataTemplate.Triggers>
+                                            <DataTrigger Binding="{Binding IsWarning}" Value="True">
+                                                <Setter TargetName="Glyph" Property="Kind" Value="AlertCircle" />
+                                                <Setter TargetName="Glyph" Property="Foreground" Value="{DynamicResource Status.Warning}" />
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding IsBlocker}" Value="True">
+                                                <Setter TargetName="Glyph" Property="Kind" Value="CloseCircle" />
+                                                <Setter TargetName="Glyph" Property="Foreground" Value="{DynamicResource Status.Error}" />
+                                            </DataTrigger>
+                                        </DataTemplate.Triggers>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </Border>
+
                         <TextBlock Style="{StaticResource Type.GroupTitle}" Text="Calculate" />
                         <Border Style="{StaticResource Card}">
                             <StackPanel>
-                                <WrapPanel>
+                                <WrapPanel ToolTipService.ShowOnDisabled="True">
                                     <Button
                                         Margin="0,0,8,0"
                                         Click="StartFull_Click"
@@ -1154,6 +1344,22 @@
                                         </StackPanel>
                                     </Button>
                                 </WrapPanel>
+                                <!--  Why Run is unavailable (the first blocker of the checklist)  -->
+                                <DockPanel Margin="0,10,0,0" Visibility="{Binding RunBlockedReason, Converter={StaticResource NotEmptyToVis}}">
+                                    <materialDesign:PackIcon
+                                        Width="14"
+                                        Height="14"
+                                        Margin="0,1,6,0"
+                                        VerticalAlignment="Top"
+                                        DockPanel.Dock="Left"
+                                        Foreground="{DynamicResource Status.Error}"
+                                        Kind="CloseCircle" />
+                                    <TextBlock
+                                        Foreground="{DynamicResource Status.Error}"
+                                        Style="{StaticResource Type.Caption}"
+                                        Text="{Binding RunBlockedReason}"
+                                        TextWrapping="Wrap" />
+                                </DockPanel>
                                 <TextBlock
                                     Margin="0,10,0,0"
                                     Style="{StaticResource Type.Caption}"
@@ -1456,6 +1662,7 @@
 
             <!--  Status line: result of the last action, directly under the content (glyph + text)  -->
             <DockPanel
+                x:Name="StatusLine"
                 Grid.Row="2"
                 MinHeight="34"
                 Margin="24,6,24,6"
@@ -1496,6 +1703,21 @@
                         Text="{Binding StatusMessage}"
                         TextTrimming="CharacterEllipsis"
                         ToolTip="{Binding StatusMessage}" />
+                    <!--  Forgiveness instead of confirmation: destructive actions happen at once and can be undone here  -->
+                    <Button
+                        Height="26"
+                        Margin="10,0,0,0"
+                        Padding="10,0"
+                        VerticalAlignment="Center"
+                        Click="Undo_Click"
+                        Style="{StaticResource Button.Plain}"
+                        ToolTip="Undo the last action (Ctrl+Z)"
+                        Visibility="{Binding CanUndo, Converter={StaticResource BoolToVis}}">
+                        <StackPanel Orientation="Horizontal">
+                            <materialDesign:PackIcon Kind="Undo" Style="{StaticResource ButtonIconLabel}" />
+                            <TextBlock Foreground="{DynamicResource Accent.Text}" Text="{Binding UndoLabel}" />
+                        </StackPanel>
+                    </Button>
                 </StackPanel>
             </DockPanel>
         </Grid>

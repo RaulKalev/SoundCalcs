@@ -25,6 +25,13 @@ namespace SoundCalcs.IO
 
         /// <summary>Speaker type groups (instances + mappings) last picked by the user.</summary>
         public List<SpeakerTypeGroup> SavedSpeakerGroups { get; set; } = new List<SpeakerTypeGroup>();
+
+        // Where the boundary/walls and the speakers were taken from (document path, else title), so a run can
+        // warn when they belong to another project. Empty in settings written before this was recorded.
+        public string LayoutProjectKey { get; set; }
+        public string LayoutProjectName { get; set; }
+        public string SpeakersProjectKey { get; set; }
+        public string SpeakersProjectName { get; set; }
     }
 
     /// <summary>

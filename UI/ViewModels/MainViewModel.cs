@@ -15,12 +15,15 @@ using SoundCalcs.Visualization;
 
 namespace SoundCalcs.UI.ViewModels
 {
-    public class MainViewModel : INotifyPropertyChanged
+    public class MainViewModel : INotifyPropertyChanged, INotifyDataErrorInfo
     {
         private readonly UIApplication _uiApp;
         private readonly RevitApiDispatcher _dispatcher;
         private readonly JobRunner _jobRunner;
         private readonly FilledRegionRenderer _renderer;
+
+        // True while the constructor applies stored settings (no autosave, no validation noise).
+        private bool _loading = true;
 
         public MainViewModel(UIApplication uiApp)
         {
@@ -31,8 +34,17 @@ namespace SoundCalcs.UI.ViewModels
 
             _jobRunner.JobCompleted += OnJobCompleted;
 
+            _saveTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(600) };
+            _saveTimer.Tick += (s, e) => { _saveTimer.Stop(); SaveSettingsCore(); };
+            _undoTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(15) };
+            _undoTimer.Tick += (s, e) => ClearUndo();
+
             // Load persisted settings
             PluginSettings settings = SettingsStore.Load();
+            _layoutProjectKey = settings.LayoutProjectKey;
+            _layoutProjectName = settings.LayoutProjectName;
+            _speakersProjectKey = settings.SpeakersProjectKey;
+            _speakersProjectName = settings.SpeakersProjectName;
             _selectedLink = settings.LinkSelection;
             GridSpacing = settings.AnalysisSettings.GridSpacingM;
             ReceiverHeight = settings.AnalysisSettings.ReceiverHeightM;
@@ -70,6 +82,271 @@ namespace SoundCalcs.UI.ViewModels
             }
             foreach (var room in settings.BoundaryRooms)
                 DetectedRooms.Add(room);
+
+            // Every change is saved shortly after it is made; the checklist follows the inputs.
+            _speakerGroups.CollectionChanged += OnInputCollectionChanged;
+            _wallLineGroups.CollectionChanged += OnInputCollectionChanged;
+            _detectedRooms.CollectionChanged += OnInputCollectionChanged;
+            foreach (var g in _speakerGroups) g.PropertyChanged += OnRowChanged;
+            foreach (var w in _wallLineGroups) w.PropertyChanged += OnRowChanged;
+            SelectedSpeakerGroup = _speakerGroups.FirstOrDefault();
+
+            _loading = false;
+            ValidateStoredValues();
+            RefreshPreflight();
+        }
+
+        // Settings saved while a field was out of range come back flagged, so Run stays blocked until fixed.
+        private void ValidateStoredValues()
+        {
+            InRange(nameof(GridSpacing), GridSpacing, 0.1, 10, "m");
+            InRange(nameof(ReceiverHeight), ReceiverHeight, 0, 10, "m");
+            InRange(nameof(BoundaryOffset), BoundaryOffset, 0, 10, "m");
+            InRange(nameof(MinSplThreshold), MinSplThreshold, 0, 150, "dB");
+            InRange(nameof(Humidity), Humidity, 0, 100, "%");
+            string[] rt = { nameof(RT60_125), nameof(RT60_250), nameof(RT60_500), nameof(RT60_1k), nameof(RT60_2k), nameof(RT60_4k), nameof(RT60_8k) };
+            string[] noise = { nameof(Noise_125), nameof(Noise_250), nameof(Noise_500), nameof(Noise_1k), nameof(Noise_2k), nameof(Noise_4k), nameof(Noise_8k) };
+            double[] rtValues = GetRT60Array(), noiseValues = GetNoiseArray();
+            for (int i = 0; i < OctaveBands.Count; i++)
+            {
+                InRange(rt[i], rtValues[i], MinRt60, MaxRt60, "s");
+                InRange(noise[i], noiseValues[i], MinNoise, MaxNoise, "dB");
+            }
+        }
+
+        // ========================= AUTOSAVE =========================
+
+        private readonly System.Windows.Threading.DispatcherTimer _saveTimer;
+
+        // Properties stored in settings.json: changing one schedules a save.
+        private static readonly HashSet<string> PersistedProperties = new HashSet<string>
+        {
+            nameof(SelectedLink), nameof(GridSpacing), nameof(ReceiverHeight), nameof(BoundaryOffset),
+            nameof(SpeakerCategoryName), nameof(UseMinSplThreshold), nameof(MinSplThreshold), nameof(AbLineParameterName),
+            nameof(BackgroundNoiseDb), nameof(Humidity), nameof(Occupants), nameof(AutoRt60PerRoom),
+            nameof(FloorSurface), nameof(CeilingSurface),
+            nameof(RT60_125), nameof(RT60_250), nameof(RT60_500), nameof(RT60_1k), nameof(RT60_2k), nameof(RT60_4k), nameof(RT60_8k),
+            nameof(Noise_125), nameof(Noise_250), nameof(Noise_500), nameof(Noise_1k), nameof(Noise_2k), nameof(Noise_4k), nameof(Noise_8k)
+        };
+
+        private void ScheduleSave()
+        {
+            if (_loading) return;
+            _saveTimer.Stop();
+            _saveTimer.Start();
+        }
+
+        /// <summary>Writes a pending change now (the window is closing).</summary>
+        public void FlushPendingSave()
+        {
+            if (!_saveTimer.IsEnabled) return;
+            _saveTimer.Stop();
+            SaveSettingsCore();
+        }
+
+        private void OnInputCollectionChanged(object sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
+        {
+            if (e.OldItems != null)
+                foreach (INotifyPropertyChanged item in e.OldItems.OfType<INotifyPropertyChanged>())
+                    item.PropertyChanged -= OnRowChanged;
+            if (e.NewItems != null)
+                foreach (INotifyPropertyChanged item in e.NewItems.OfType<INotifyPropertyChanged>())
+                    item.PropertyChanged += OnRowChanged;
+            if (sender == _speakerGroups && (SelectedSpeakerGroup == null || !_speakerGroups.Contains(SelectedSpeakerGroup)))
+                SelectedSpeakerGroup = _speakerGroups.FirstOrDefault();
+            RefreshPreflight();
+        }
+
+        // A speaker or wall row was edited in a table.
+        private void OnRowChanged(object sender, PropertyChangedEventArgs e) => ScheduleSave();
+
+        // ========================= PROJECT ORIGIN =========================
+
+        private string _layoutProjectKey, _layoutProjectName, _speakersProjectKey, _speakersProjectName;
+
+        /// <summary>The active document's identity: its path (title while unsaved) and its title.</summary>
+        private void CurrentProject(out string key, out string name)
+        {
+            Document doc = _uiApp?.ActiveUIDocument?.Document;
+            name = doc?.Title ?? "";
+            key = doc == null ? "" : (string.IsNullOrEmpty(doc.PathName) ? doc.Title : doc.PathName);
+        }
+
+        private void MarkLayoutFromCurrentProject()
+        {
+            CurrentProject(out _layoutProjectKey, out _layoutProjectName);
+        }
+
+        private void MarkSpeakersFromCurrentProject()
+        {
+            CurrentProject(out _speakersProjectKey, out _speakersProjectName);
+        }
+
+        // ========================= RUN CHECKLIST =========================
+
+        private List<PreflightItem> _preflightItems = new List<PreflightItem>();
+
+        /// <summary>The Run page checklist: what the run will use and anything that looks wrong.</summary>
+        public List<PreflightItem> PreflightItems
+        {
+            get => _preflightItems;
+            private set { _preflightItems = value; OnPropertyChanged(nameof(PreflightItems)); }
+        }
+
+        private string _runBlockedReason;
+        /// <summary>Why Run is disabled, or null.</summary>
+        public string RunBlockedReason
+        {
+            get => _runBlockedReason;
+            private set { _runBlockedReason = value; OnPropertyChanged(nameof(RunBlockedReason)); }
+        }
+
+        /// <summary>Warnings and blockers, for the sidebar badge.</summary>
+        public int PreflightIssueCount => _preflightItems.Count(i => !i.IsOk);
+
+        /// <summary>Recomputes the checklist from the current inputs.</summary>
+        public void RefreshPreflight()
+        {
+            if (_loading) return;
+            var all = SpeakerGroups.SelectMany(g => g.GetGroup().Instances).ToList();
+            string lineName = _speakerLineFilter == SpeakerLineFilterType.ALine ? "A line"
+                : _speakerLineFilter == SpeakerLineFilterType.BLine ? "B line" : null;
+            var included = lineName == null ? all
+                : all.Where(s => string.Equals(s.AbLine, lineName.Substring(0, 1), StringComparison.OrdinalIgnoreCase)).ToList();
+
+            CurrentProject(out string key, out _);
+            var items = RunPreflight.Check(new PreflightInput
+            {
+                Boundary = DetectedRooms.ToList(),
+                WallLineStyleCount = WallLineGroups.Count,
+                Speakers = all,
+                IncludedSpeakers = included,
+                LineFilterName = lineName,
+                ProjectKey = key,
+                LayoutProjectKey = _layoutProjectKey,
+                LayoutProjectName = _layoutProjectName,
+                SpeakersProjectKey = _speakersProjectKey,
+                SpeakersProjectName = _speakersProjectName,
+                InvalidFieldCount = _errors.Count
+            });
+
+            PreflightItems = items;
+            RunBlockedReason = RunPreflight.BlockReason(items);
+            OnPropertyChanged(nameof(CanRun));
+            OnPropertyChanged(nameof(PreflightIssueCount));
+        }
+
+        // ========================= UNDO =========================
+
+        private Action _undoAction;
+        private string _undoLabel = "Undo";
+        private bool _offeringUndo;
+        private readonly System.Windows.Threading.DispatcherTimer _undoTimer;
+
+        /// <summary>True while the status line offers to undo the last destructive action.</summary>
+        public bool CanUndo => _undoAction != null;
+
+        /// <summary>Label of the status line's undo button ("Undo", "Draw again").</summary>
+        public string UndoLabel => _undoLabel;
+
+        /// <summary>Shows <paramref name="message"/> with an undo button for a while, instead of asking first.</summary>
+        private void OfferUndo(string message, string label, Action undo)
+        {
+            _offeringUndo = true;
+            StatusMessage = message;
+            _offeringUndo = false;
+            _undoAction = undo;
+            _undoLabel = label;
+            _undoTimer.Stop();
+            _undoTimer.Start();
+            OnPropertyChanged(nameof(CanUndo));
+            OnPropertyChanged(nameof(UndoLabel));
+        }
+
+        private void ClearUndo()
+        {
+            _undoTimer.Stop();
+            if (_undoAction == null) return;
+            _undoAction = null;
+            OnPropertyChanged(nameof(CanUndo));
+        }
+
+        public void Undo()
+        {
+            Action undo = _undoAction;
+            ClearUndo();
+            undo?.Invoke();
+        }
+
+        // ========================= VALIDATION =========================
+
+        // Fields whose last entry was out of range, with the message shown under the field.
+        private readonly Dictionary<string, string> _errors = new Dictionary<string, string>();
+
+        public bool HasErrors => _errors.Count > 0;
+
+        public event EventHandler<DataErrorsChangedEventArgs> ErrorsChanged;
+
+        public System.Collections.IEnumerable GetErrors(string propertyName)
+        {
+            if (propertyName != null && _errors.TryGetValue(propertyName, out string message))
+                return new[] { message };
+            return Enumerable.Empty<string>();
+        }
+
+        /// <summary>
+        /// True when <paramref name="value"/> is within range. Otherwise the field shows why under its label.
+        /// The value is kept as typed (reverting it would fight the user mid-typing: "0" on the way to "0.3"),
+        /// and the Run checklist blocks until every field is back in range.
+        /// </summary>
+        private bool InRange(string property, double value, double min, double max, string unit)
+        {
+            bool ok = !double.IsNaN(value) && value >= min && value <= max;
+            if (_loading) return ok;
+            bool changed;
+            if (ok) changed = _errors.Remove(property);
+            else
+            {
+                // Numbers as the field reads them (WPF bindings parse with a '.' decimal point)
+                string message = string.Format(System.Globalization.CultureInfo.InvariantCulture,
+                    "Enter a value from {0:0.##} to {1:0.##} {2}.", min, max, unit);
+                changed = !_errors.TryGetValue(property, out string old) || old != message;
+                _errors[property] = message;
+            }
+            if (changed)
+            {
+                ErrorsChanged?.Invoke(this, new DataErrorsChangedEventArgs(property));
+                OnPropertyChanged(nameof(HasErrors));
+                RefreshPreflight();
+            }
+            return ok;
+        }
+
+        // ========================= SPEAKER CATEGORY =========================
+
+        public class CategoryOption
+        {
+            public string Key { get; set; }
+            public string Label { get; set; }
+        }
+
+        /// <summary>Revit categories a speaker family may use, with the names Revit shows.</summary>
+        public List<CategoryOption> SpeakerCategoryOptions { get; } = new List<CategoryOption>
+        {
+            new CategoryOption { Key = "OST_DataDevices", Label = "Data Devices" },
+            new CategoryOption { Key = "OST_CommunicationDevices", Label = "Communication Devices" },
+            new CategoryOption { Key = "OST_ElectricalFixtures", Label = "Electrical Fixtures" },
+            new CategoryOption { Key = "OST_ElectricalEquipment", Label = "Electrical Equipment" },
+            new CategoryOption { Key = "OST_MechanicalEquipment", Label = "Mechanical Equipment" },
+            new CategoryOption { Key = "OST_GenericModel", Label = "Generic Models" }
+        };
+
+        private SpeakerGroupViewModel _selectedSpeakerGroup;
+        /// <summary>The speaker type whose per-band data the detail card edits.</summary>
+        public SpeakerGroupViewModel SelectedSpeakerGroup
+        {
+            get => _selectedSpeakerGroup;
+            set { _selectedSpeakerGroup = value; OnPropertyChanged(nameof(SelectedSpeakerGroup)); }
         }
 
         // ========================= MODEL TAB =========================
@@ -254,14 +531,13 @@ namespace SoundCalcs.UI.ViewModels
 
             DetectedRooms.Clear();
             DetectedRooms.Add(boundary);
-
-            StatusMessage = $"{WallLineGroups.Count} line style(s), {allSegments.Count} segments, " +
-                $"area={boundary.Area:F1} m²";
+            MarkLayoutFromCurrentProject();
 
             // Auto-persist so walls survive window close/reopen
-            SaveSettings();
-            StatusMessage = $"{WallLineGroups.Count} line style(s), {allSegments.Count} segments, " +
-                $"area={boundary.Area:F1} m²";
+            SaveSettingsCore();
+            RefreshPreflight();
+            StatusMessage = $"Boundary selected: {boundary.Area:F0} m², {WallLineGroups.Count} line style(s), " +
+                $"{allSegments.Count} segments.";
         }
 
         /// <summary>
@@ -297,27 +573,45 @@ namespace SoundCalcs.UI.ViewModels
             WallLineGroups.Clear();
             foreach (var grp in allGroups)
                 WallLineGroups.Add(new WallLineGroupViewModel(grp));
+            MarkLayoutFromCurrentProject();
 
             int totalSegs = allGroups.Sum(g => g.SegmentCount);
             FileLogger.Log($"AutoDetectWalls: {WallLineGroups.Count} types, {totalSegs} segments");
-            StatusMessage = $"Detected {WallLineGroups.Count} wall type(s), {totalSegs} segment(s). " +
-                "Review STC ratings in the table and re-run the analysis.";
 
             // Auto-persist so walls survive window close/reopen
-            SaveSettings();
+            SaveSettingsCore();
+            RefreshPreflight();
             StatusMessage = $"Detected {WallLineGroups.Count} wall type(s), {totalSegs} segment(s). " +
-                "Review STC ratings in the table and re-run the analysis.";
+                "Check the wall types in the table.";
         }
 
         /// <summary>
         /// Clear all selected walls and the boundary polygon so the user can pick fresh ones.
+        /// The status line offers Undo for a while instead of asking first.
         /// </summary>
         public void ClearWalls()
         {
+            if (WallLineGroups.Count == 0 && DetectedRooms.Count == 0) return;
+            var walls = WallLineGroups.ToList();
+            var rooms = DetectedRooms.ToList();
+            string key = _layoutProjectKey, name = _layoutProjectName;
+
             WallLineGroups.Clear();
             DetectedRooms.Clear();
-            SaveSettings();
-            StatusMessage = "Walls cleared. Use \"Select Boundary\" or \"Auto-Detect Walls\" to pick new walls.";
+            _layoutProjectKey = _layoutProjectName = null;
+            SaveSettingsCore();
+            RefreshPreflight();
+
+            OfferUndo("Boundary and walls cleared.", "Undo", () =>
+            {
+                foreach (var w in walls) WallLineGroups.Add(w);
+                foreach (var r in rooms) DetectedRooms.Add(r);
+                _layoutProjectKey = key;
+                _layoutProjectName = name;
+                SaveSettingsCore();
+                RefreshPreflight();
+                StatusMessage = "Boundary and walls restored.";
+            });
         }
 
         /// <summary>
@@ -434,21 +728,40 @@ namespace SoundCalcs.UI.ViewModels
             string msg = $"{added} speaker(s) added.";
             if (skipped > 0) msg += $" {skipped} non-speaker element(s) ignored.";
             msg += $" {PickedSpeakerSummary}";
+            MarkSpeakersFromCurrentProject();
             SaveSettingsCore();
+            RefreshPreflight();
             StatusMessage = msg;
         }
 
         /// <summary>
-        /// Clear the picked-speaker filter and re-collect speakers from Revit
-        /// so positions reflect any changes made since last collection.
+        /// Clear the picked speakers. The status line offers Undo for a while instead of asking first.
         /// </summary>
         public void ClearPickedSpeakers()
         {
+            if (SpeakerGroups.Count == 0 && _pickedSpeakerIds.Count == 0) return;
+            var groups = SpeakerGroups.ToList();
+            var ids = _pickedSpeakerIds.ToList();
+            string key = _speakersProjectKey, name = _speakersProjectName;
+
             _pickedSpeakerIds.Clear();
             SpeakerGroups.Clear();
+            _speakersProjectKey = _speakersProjectName = null;
             OnPropertyChanged(nameof(PickedSpeakerSummary));
             SaveSettingsCore();
-            StatusMessage = "Speaker selection cleared.";
+            RefreshPreflight();
+
+            OfferUndo("Speakers cleared.", "Undo", () =>
+            {
+                foreach (int id in ids) _pickedSpeakerIds.Add(id);
+                foreach (var g in groups) SpeakerGroups.Add(g);
+                _speakersProjectKey = key;
+                _speakersProjectName = name;
+                OnPropertyChanged(nameof(PickedSpeakerSummary));
+                SaveSettingsCore();
+                RefreshPreflight();
+                StatusMessage = "Speakers restored.";
+            });
         }
 
         // ========================= GRID TAB =========================
@@ -457,21 +770,21 @@ namespace SoundCalcs.UI.ViewModels
         public double GridSpacing
         {
             get => _gridSpacing;
-            set { _gridSpacing = value; OnPropertyChanged(nameof(GridSpacing)); }
+            set { InRange(nameof(GridSpacing), value, 0.1, 10, "m"); _gridSpacing = value; OnPropertyChanged(nameof(GridSpacing)); }
         }
 
         private double _receiverHeight = 1.2;
         public double ReceiverHeight
         {
             get => _receiverHeight;
-            set { _receiverHeight = value; OnPropertyChanged(nameof(ReceiverHeight)); }
+            set { InRange(nameof(ReceiverHeight), value, 0, 10, "m"); _receiverHeight = value; OnPropertyChanged(nameof(ReceiverHeight)); }
         }
 
         private double _boundaryOffset = 0.3;
         public double BoundaryOffset
         {
             get => _boundaryOffset;
-            set { _boundaryOffset = value; OnPropertyChanged(nameof(BoundaryOffset)); }
+            set { InRange(nameof(BoundaryOffset), value, 0, 10, "m"); _boundaryOffset = value; OnPropertyChanged(nameof(BoundaryOffset)); }
         }
 
         private bool _useMinSplThreshold;
@@ -485,7 +798,7 @@ namespace SoundCalcs.UI.ViewModels
         public double MinSplThreshold
         {
             get => _minSplThreshold;
-            set { _minSplThreshold = value; OnPropertyChanged(nameof(MinSplThreshold)); }
+            set { InRange(nameof(MinSplThreshold), value, 0, 150, "dB"); _minSplThreshold = value; OnPropertyChanged(nameof(MinSplThreshold)); }
         }
 
         private string _abLineParameterName = "";
@@ -506,7 +819,7 @@ namespace SoundCalcs.UI.ViewModels
         public double Humidity
         {
             get => _humidity;
-            set { _humidity = value; OnPropertyChanged(nameof(Humidity)); }
+            set { InRange(nameof(Humidity), value, 0, 100, "%"); _humidity = value; OnPropertyChanged(nameof(Humidity)); }
         }
 
         // --- Floor / ceiling finishes (reflections + RT60 estimate) ---
@@ -549,36 +862,39 @@ namespace SoundCalcs.UI.ViewModels
         }
 
         // --- Per-octave-band RT60 properties ---
+        // Valid ranges of the octave-band table
+        private const double MinRt60 = 0.05, MaxRt60 = 20, MinNoise = 0, MaxNoise = 130;
+
         private double _rt60_125 = OctaveBands.DefaultRT60[0];
-        public double RT60_125 { get => _rt60_125; set { _rt60_125 = value; OnPropertyChanged(nameof(RT60_125)); } }
+        public double RT60_125 { get => _rt60_125; set { InRange(nameof(RT60_125), value, MinRt60, MaxRt60, "s"); _rt60_125 = value; OnPropertyChanged(nameof(RT60_125)); } }
         private double _rt60_250 = OctaveBands.DefaultRT60[1];
-        public double RT60_250 { get => _rt60_250; set { _rt60_250 = value; OnPropertyChanged(nameof(RT60_250)); } }
+        public double RT60_250 { get => _rt60_250; set { InRange(nameof(RT60_250), value, MinRt60, MaxRt60, "s"); _rt60_250 = value; OnPropertyChanged(nameof(RT60_250)); } }
         private double _rt60_500 = OctaveBands.DefaultRT60[2];
-        public double RT60_500 { get => _rt60_500; set { _rt60_500 = value; OnPropertyChanged(nameof(RT60_500)); } }
+        public double RT60_500 { get => _rt60_500; set { InRange(nameof(RT60_500), value, MinRt60, MaxRt60, "s"); _rt60_500 = value; OnPropertyChanged(nameof(RT60_500)); } }
         private double _rt60_1k = OctaveBands.DefaultRT60[3];
-        public double RT60_1k { get => _rt60_1k; set { _rt60_1k = value; OnPropertyChanged(nameof(RT60_1k)); } }
+        public double RT60_1k { get => _rt60_1k; set { InRange(nameof(RT60_1k), value, MinRt60, MaxRt60, "s"); _rt60_1k = value; OnPropertyChanged(nameof(RT60_1k)); } }
         private double _rt60_2k = OctaveBands.DefaultRT60[4];
-        public double RT60_2k { get => _rt60_2k; set { _rt60_2k = value; OnPropertyChanged(nameof(RT60_2k)); } }
+        public double RT60_2k { get => _rt60_2k; set { InRange(nameof(RT60_2k), value, MinRt60, MaxRt60, "s"); _rt60_2k = value; OnPropertyChanged(nameof(RT60_2k)); } }
         private double _rt60_4k = OctaveBands.DefaultRT60[5];
-        public double RT60_4k { get => _rt60_4k; set { _rt60_4k = value; OnPropertyChanged(nameof(RT60_4k)); } }
+        public double RT60_4k { get => _rt60_4k; set { InRange(nameof(RT60_4k), value, MinRt60, MaxRt60, "s"); _rt60_4k = value; OnPropertyChanged(nameof(RT60_4k)); } }
         private double _rt60_8k = OctaveBands.DefaultRT60[6];
-        public double RT60_8k { get => _rt60_8k; set { _rt60_8k = value; OnPropertyChanged(nameof(RT60_8k)); } }
+        public double RT60_8k { get => _rt60_8k; set { InRange(nameof(RT60_8k), value, MinRt60, MaxRt60, "s"); _rt60_8k = value; OnPropertyChanged(nameof(RT60_8k)); } }
 
         // --- Per-octave-band background noise properties ---
         private double _noise_125 = OctaveBands.DefaultBackgroundNoise[0];
-        public double Noise_125 { get => _noise_125; set { _noise_125 = value; OnPropertyChanged(nameof(Noise_125)); } }
+        public double Noise_125 { get => _noise_125; set { InRange(nameof(Noise_125), value, MinNoise, MaxNoise, "dB"); _noise_125 = value; OnPropertyChanged(nameof(Noise_125)); } }
         private double _noise_250 = OctaveBands.DefaultBackgroundNoise[1];
-        public double Noise_250 { get => _noise_250; set { _noise_250 = value; OnPropertyChanged(nameof(Noise_250)); } }
+        public double Noise_250 { get => _noise_250; set { InRange(nameof(Noise_250), value, MinNoise, MaxNoise, "dB"); _noise_250 = value; OnPropertyChanged(nameof(Noise_250)); } }
         private double _noise_500 = OctaveBands.DefaultBackgroundNoise[2];
-        public double Noise_500 { get => _noise_500; set { _noise_500 = value; OnPropertyChanged(nameof(Noise_500)); } }
+        public double Noise_500 { get => _noise_500; set { InRange(nameof(Noise_500), value, MinNoise, MaxNoise, "dB"); _noise_500 = value; OnPropertyChanged(nameof(Noise_500)); } }
         private double _noise_1k = OctaveBands.DefaultBackgroundNoise[3];
-        public double Noise_1k { get => _noise_1k; set { _noise_1k = value; OnPropertyChanged(nameof(Noise_1k)); } }
+        public double Noise_1k { get => _noise_1k; set { InRange(nameof(Noise_1k), value, MinNoise, MaxNoise, "dB"); _noise_1k = value; OnPropertyChanged(nameof(Noise_1k)); } }
         private double _noise_2k = OctaveBands.DefaultBackgroundNoise[4];
-        public double Noise_2k { get => _noise_2k; set { _noise_2k = value; OnPropertyChanged(nameof(Noise_2k)); } }
+        public double Noise_2k { get => _noise_2k; set { InRange(nameof(Noise_2k), value, MinNoise, MaxNoise, "dB"); _noise_2k = value; OnPropertyChanged(nameof(Noise_2k)); } }
         private double _noise_4k = OctaveBands.DefaultBackgroundNoise[5];
-        public double Noise_4k { get => _noise_4k; set { _noise_4k = value; OnPropertyChanged(nameof(Noise_4k)); } }
+        public double Noise_4k { get => _noise_4k; set { InRange(nameof(Noise_4k), value, MinNoise, MaxNoise, "dB"); _noise_4k = value; OnPropertyChanged(nameof(Noise_4k)); } }
         private double _noise_8k = OctaveBands.DefaultBackgroundNoise[6];
-        public double Noise_8k { get => _noise_8k; set { _noise_8k = value; OnPropertyChanged(nameof(Noise_8k)); } }
+        public double Noise_8k { get => _noise_8k; set { InRange(nameof(Noise_8k), value, MinNoise, MaxNoise, "dB"); _noise_8k = value; OnPropertyChanged(nameof(Noise_8k)); } }
 
         private double[] GetRT60Array() => new[] { _rt60_125, _rt60_250, _rt60_500, _rt60_1k, _rt60_2k, _rt60_4k, _rt60_8k };
         private double[] GetNoiseArray() => new[] { _noise_125, _noise_250, _noise_500, _noise_1k, _noise_2k, _noise_4k, _noise_8k };
@@ -664,7 +980,8 @@ namespace SoundCalcs.UI.ViewModels
             set { _isRunning = value; OnPropertyChanged(nameof(IsRunning)); OnPropertyChanged(nameof(CanRun)); }
         }
 
-        public bool CanRun => !_isRunning;
+        /// <summary>Run is possible when nothing is running and the checklist has no blocker (see <see cref="RunBlockedReason"/>).</summary>
+        public bool CanRun => !_isRunning && _runBlockedReason == null;
 
         private SpeakerLineFilterType _speakerLineFilter = SpeakerLineFilterType.Both;
         public SpeakerLineFilterType SpeakerLineFilter
@@ -677,6 +994,7 @@ namespace SoundCalcs.UI.ViewModels
                 OnPropertyChanged(nameof(FilterBoth));
                 OnPropertyChanged(nameof(FilterALine));
                 OnPropertyChanged(nameof(FilterBLine));
+                RefreshPreflight();
             }
         }
 
@@ -711,7 +1029,13 @@ namespace SoundCalcs.UI.ViewModels
         public string StatusMessage
         {
             get => _statusMessage;
-            set { _statusMessage = value; OnPropertyChanged(nameof(StatusMessage)); }
+            set
+            {
+                // A new message replaces an Undo offer (it no longer describes what the button would undo).
+                if (!_offeringUndo) ClearUndo();
+                _statusMessage = value;
+                OnPropertyChanged(nameof(StatusMessage));
+            }
         }
 
         private string _lastRunSummary = "";
@@ -975,7 +1299,11 @@ namespace SoundCalcs.UI.ViewModels
                 SpeakerMappings    = SpeakerGroups.Select(g => g.GetMapping()).ToList(),
                 WallGroups         = WallLineGroups.Select(vm => vm.GetGroup()).ToList(),
                 BoundaryRooms      = DetectedRooms.ToList(),
-                SavedSpeakerGroups = SpeakerGroups.Select(vm => vm.GetGroup()).ToList()
+                SavedSpeakerGroups = SpeakerGroups.Select(vm => vm.GetGroup()).ToList(),
+                LayoutProjectKey    = _layoutProjectKey,
+                LayoutProjectName   = _layoutProjectName,
+                SpeakersProjectKey  = _speakersProjectKey,
+                SpeakersProjectName = _speakersProjectName
             };
 
             SettingsStore.Save(settings);
@@ -1010,9 +1338,10 @@ namespace SoundCalcs.UI.ViewModels
             Document doc = _uiApp.ActiveUIDocument?.Document;
             if (doc == null) { StatusMessage = "No active document."; return; }
 
-            if (SpeakerGroups.Count == 0)
+            RefreshPreflight();
+            if (_runBlockedReason != null)
             {
-                StatusMessage = "No speakers selected. Pick speakers first.";
+                StatusMessage = _runBlockedReason;
                 return;
             }
 
@@ -1179,10 +1508,11 @@ namespace SoundCalcs.UI.ViewModels
                         $"Receiver Z=[{rcvMinZ:F3}..{rcvMaxZ:F3}]m");
                 }
 
-                StatusMessage = $"Job started ({quality}): {sources.Count} sources, {receivers.Count} receivers...";
+                // Save settings before running (silently: the status line shows the run)
+                _saveTimer.Stop();
+                SaveSettingsCore();
 
-                // Save settings before running
-                SaveSettings();
+                StatusMessage = $"Job started ({quality}): {sources.Count} sources, {receivers.Count} receivers...";
 
                 // Run on background thread — capture dispatcher so progress
                 // updates marshal correctly even when SynchronizationContext is
@@ -1338,7 +1668,14 @@ namespace SoundCalcs.UI.ViewModels
                     }
 
                     _renderer.Clear(doc, view);
-                    SetStatusFromRevitThread("Visualization cleared.");
+                    string viewName = view.Name;
+                    System.Windows.Application.Current?.Dispatcher?.Invoke(() =>
+                    {
+                        if (HasResults)
+                            OfferUndo($"Heatmap removed from '{viewName}'.", "Draw again", VisualizeResults);
+                        else
+                            StatusMessage = $"Heatmap removed from '{viewName}'.";
+                    });
                 }
                 catch (Exception ex)
                 {
@@ -1402,6 +1739,7 @@ namespace SoundCalcs.UI.ViewModels
         private void OnPropertyChanged(string name)
         {
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+            if (PersistedProperties.Contains(name)) ScheduleSave();
         }
     }
 

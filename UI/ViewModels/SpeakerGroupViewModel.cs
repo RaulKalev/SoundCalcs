@@ -14,6 +14,49 @@ namespace SoundCalcs.UI.ViewModels
         public SpeakerGroupViewModel(SpeakerTypeGroup group)
         {
             _group = group;
+            Response = new BandFields(
+                () => _group.Mapping.SpectrumShapeByBand ?? new double[OctaveBands.Count],
+                v => { _group.Mapping.SpectrumShapeByBand = v; OnPropertyChanged(nameof(ResponsePreset)); OnPropertyChanged(nameof(ResponseText)); },
+                -40, 20, "dB",
+                () => new double[OctaveBands.Count]);
+            Coverage = new BandFields(
+                () => _group.Mapping.CoverageAngleByBandDeg,
+                v => { _group.Mapping.CoverageAngleByBandDeg = v; OnPropertyChanged(nameof(CoverageText)); OnPropertyChanged(nameof(CoverageSummary)); },
+                5, 360, "°",
+                () =>
+                {
+                    // First datasheet value entered: start every band from the cone's full angle.
+                    double full = System.Math.Min(360, 2 * _group.Mapping.ConeHalfAngleDeg);
+                    var v = new double[OctaveBands.Count];
+                    for (int i = 0; i < v.Length; i++) v[i] = full;
+                    return v;
+                });
+        }
+
+        /// <summary>Per-band response in dB, one field per band (Speakers page detail card).</summary>
+        public BandFields Response { get; }
+
+        /// <summary>Per-band datasheet coverage angle, one field per band; empty = cone model.</summary>
+        public BandFields Coverage { get; }
+
+        /// <summary>Header of the detail card.</summary>
+        public string DisplayName => $"{FamilyName} : {TypeName}";
+
+        /// <summary>Short description of the coverage model for the table.</summary>
+        public string CoverageSummary => _group.Mapping.CoverageAngleByBandDeg != null
+            ? "Datasheet"
+            : $"Cone {_group.Mapping.ConeHalfAngleDeg:0.#}°";
+
+        /// <summary>Placeholder of empty coverage fields: the full angle the cone model uses.</summary>
+        public string ConeFullAngleText => System.Math.Min(360, 2 * _group.Mapping.ConeHalfAngleDeg).ToString("0.#");
+
+        /// <summary>Back to the cone model (clears the datasheet angles).</summary>
+        public void ClearCoverage()
+        {
+            _group.Mapping.CoverageAngleByBandDeg = null;
+            Coverage.Refresh();
+            OnPropertyChanged(nameof(CoverageText));
+            OnPropertyChanged(nameof(CoverageSummary));
         }
 
         public string TypeKey => _group.TypeKey;
@@ -87,6 +130,7 @@ namespace SoundCalcs.UI.ViewModels
                 _group.Mapping.SpectrumShapeByBand = values;
                 OnPropertyChanged(nameof(ResponsePreset));
                 OnPropertyChanged(nameof(ResponseText));
+                Response.Refresh();
             }
         }
 
@@ -138,6 +182,8 @@ namespace SoundCalcs.UI.ViewModels
             {
                 _group.Mapping.ConeHalfAngleDeg = value;
                 OnPropertyChanged(nameof(ConeHalfAngleDeg));
+                OnPropertyChanged(nameof(CoverageSummary));
+                OnPropertyChanged(nameof(ConeFullAngleText));
             }
         }
 
@@ -178,7 +224,11 @@ namespace SoundCalcs.UI.ViewModels
             OnPropertyChanged(nameof(ResponsePreset));
             OnPropertyChanged(nameof(ResponseText));
             OnPropertyChanged(nameof(CoverageText));
+            OnPropertyChanged(nameof(CoverageSummary));
+            OnPropertyChanged(nameof(ConeFullAngleText));
             OnPropertyChanged(nameof(DirectivityFilePath));
+            Response.Refresh();
+            Coverage.Refresh();
         }
 
         /// <summary>

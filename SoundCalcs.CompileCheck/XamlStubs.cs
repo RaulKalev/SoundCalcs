@@ -24,7 +24,8 @@ namespace SoundCalcs.UI
         internal Button ThemeButton = null, MaximizeButton = null;
         internal RadioButton NavModel = null, NavSpeakers = null, NavRoom = null, NavRun = null, NavResults = null;
         internal ScrollViewer ModelPage = null, RoomPage = null, RunPage = null, ResultsPage = null;
-        internal Border ViewerFrame = null;
+        internal Border ViewerFrame = null, SidebarBorder = null;
+        internal DockPanel TitleArea = null, StatusLine = null;
         public void InitializeComponent() { }
     }
 }

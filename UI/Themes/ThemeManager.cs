@@ -87,6 +87,30 @@ namespace SoundCalcs.UI
         /// <summary>Windows "Animation effects" switched off.</summary>
         public static bool ReducedMotion => ForceReducedMotion ?? !SystemParameters.ClientAreaAnimation;
 
+        /// <summary>
+        /// Windows "Text size" (Settings › Accessibility), 1.0–2.25. WPF follows display scaling on its own but not
+        /// this setting, so the window scales its text areas by it.
+        /// </summary>
+        public static double TextScaleFactor
+        {
+            get
+            {
+                try
+                {
+                    using (var key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Accessibility"))
+                    {
+                        if (key?.GetValue("TextScaleFactor") is int percent && percent >= 100 && percent <= 225)
+                            return percent / 100.0;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine("SoundCalcs: reading the text size failed: " + ex.Message);
+                }
+                return 1.0;
+            }
+        }
+
         private void OnSystemParametersChanged(object sender, System.ComponentModel.PropertyChangedEventArgs e)
         {
             if (e.PropertyName == nameof(SystemParameters.HighContrast) || e.PropertyName == nameof(SystemParameters.ClientAreaAnimation))
