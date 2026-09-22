@@ -1,316 +1,92 @@
-<Window x:Class="SoundCalcs.UI.MainWindow"
-        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        xmlns:local="clr-namespace:SoundCalcs.UI.Converters"
-        xmlns:domain="clr-namespace:SoundCalcs.Domain"
-        xmlns:ui="clr-namespace:SoundCalcs.UI"
-        xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes"
-        Title="SoundCalcs"
-        Height="720" Width="1380"
-        MinHeight="520" MinWidth="820"
-        AllowsTransparency="True"
-        Background="Transparent"
-        WindowStyle="None"
-        MouseMove="Window_MouseMove"
-        MouseUp="Window_MouseUp">
+<Window
+    x:Class="SoundCalcs.UI.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:conv="clr-namespace:SoundCalcs.UI.Converters"
+    xmlns:domain="clr-namespace:SoundCalcs.Domain"
+    xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes"
+    xmlns:sys="clr-namespace:System;assembly=mscorlib"
+    xmlns:ui="clr-namespace:SoundCalcs.UI"
+    x:Name="Root"
+    Title="SoundCalcs"
+    Width="1380"
+    Height="820"
+    MinWidth="1000"
+    MinHeight="600"
+    Background="{DynamicResource Window.Background}"
+    TextOptions.TextFormattingMode="Display"
+    UseLayoutRounding="True"
+    WindowStartupLocation="Manual">
+    <!--
+        Same design language as Sentinel: sidebar navigation, a title area with the page name, grouped cards,
+        one primary action per task, and a status line under the content. Standard Windows frame behaviour
+        (Snap, Win+arrows, native resize borders, DWM shadow, Windows 11 corners) with the caption drawn here.
+    -->
+    <WindowChrome.WindowChrome>
+        <WindowChrome
+            CaptionHeight="52"
+            CornerRadius="0"
+            GlassFrameThickness="0,0,0,1"
+            NonClientFrameEdges="None"
+            ResizeBorderThickness="6"
+            UseAeroCaptionButtons="False" />
+    </WindowChrome.WindowChrome>
 
     <Window.Resources>
         <ResourceDictionary>
             <ResourceDictionary.MergedDictionaries>
-                <ResourceDictionary>
-                    <SolidColorBrush x:Key="PrimaryBackgroundBrush" Color="#FF1F1F1F" />
-                    <SolidColorBrush x:Key="SecondaryBackgroundBrush" Color="#FF292929" />
-                    <SolidColorBrush x:Key="BorderBrush" Color="#FF444444" />
-                    <SolidColorBrush x:Key="ForegroundBrush" Color="#EEEEEE" />
-                    <SolidColorBrush x:Key="HighlightBrush" Color="#FF505050" />
-                    <SolidColorBrush x:Key="IconForegroundBrush" Color="#FF808080" />
-                </ResourceDictionary>
-                <ResourceDictionary Source="pack://application:,,,/MaterialDesignThemes.Wpf;component/Themes/MaterialDesignTheme.Dark.xaml" />
-                <ResourceDictionary Source="pack://application:,,,/SoundCalcs;component/UI/Themes/ElementStyles.xaml" />
+                <!--  Palette + materials are inserted at runtime by ThemeManager; styles use DynamicResource  -->
+                <ResourceDictionary Source="pack://application:,,,/SoundCalcs;component/UI/Themes/DarkTheme.xaml" />
+                <ResourceDictionary Source="pack://application:,,,/SoundCalcs;component/UI/Themes/SoundCalcsStyles.xaml" />
             </ResourceDictionary.MergedDictionaries>
 
-            <local:BoolToVisibilityConverter x:Key="BoolToVis"/>
-            <local:InverseBoolConverter x:Key="InverseBool"/>
-            <BooleanToVisibilityConverter x:Key="BoolToVisStd"/>
-            <local:VisualizationModeToDisplayNameConverter x:Key="VisModeDisplayName"/>
+            <conv:VisualizationModeToDisplayNameConverter x:Key="VisModeDisplayName" />
 
-            <!-- Label style -->
-            <Style x:Key="LabelStyle" TargetType="TextBlock">
-                <Setter Property="Foreground" Value="{DynamicResource IconForegroundBrush}"/>
-                <Setter Property="Margin" Value="0,4,8,4"/>
-                <Setter Property="VerticalAlignment" Value="Center"/>
-                <Setter Property="FontSize" Value="12"/>
-            </Style>
-
-            <Style x:Key="ValueLabelStyle" TargetType="TextBlock">
-                <Setter Property="Foreground" Value="{DynamicResource ForegroundBrush}"/>
-                <Setter Property="Margin" Value="0,4"/>
-                <Setter Property="VerticalAlignment" Value="Center"/>
-            </Style>
-
-            <!-- Input text box (uses theme brushes) -->
-            <Style x:Key="InputBoxStyle" TargetType="TextBox">
-                <Setter Property="Background" Value="{DynamicResource PrimaryBackgroundBrush}"/>
-                <Setter Property="Foreground" Value="{DynamicResource ForegroundBrush}"/>
-                <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}"/>
-                <Setter Property="CaretBrush" Value="{DynamicResource ForegroundBrush}"/>
-                <Setter Property="BorderThickness" Value="1"/>
-                <Setter Property="Padding" Value="6,4"/>
-                <Setter Property="Margin" Value="0,2"/>
+            <!--  Windows caption buttons (familiar placement and size; close turns red)  -->
+            <Style x:Key="CaptionButton" TargetType="{x:Type Button}">
+                <Setter Property="Width" Value="46" />
+                <Setter Property="Height" Value="36" />
+                <Setter Property="Foreground" Value="{DynamicResource Text.Secondary}" />
+                <Setter Property="Background" Value="Transparent" />
+                <Setter Property="WindowChrome.IsHitTestVisibleInChrome" Value="True" />
+                <Setter Property="IsTabStop" Value="False" />
                 <Setter Property="Template">
                     <Setter.Value>
-                        <ControlTemplate TargetType="TextBox">
-                            <Border x:Name="Bd"
-                                    Background="{TemplateBinding Background}"
-                                    BorderBrush="{TemplateBinding BorderBrush}"
-                                    BorderThickness="{TemplateBinding BorderThickness}"
-                                    CornerRadius="4"
-                                    Padding="{TemplateBinding Padding}">
-                                <ScrollViewer x:Name="PART_ContentHost"
-                                              Focusable="False"
-                                              VerticalAlignment="Center"
-                                              HorizontalScrollBarVisibility="Hidden"
-                                              VerticalScrollBarVisibility="Hidden"/>
-                            </Border>
-                            <ControlTemplate.Triggers>
-                                <Trigger Property="IsFocused" Value="True">
-                                    <Setter TargetName="Bd" Property="BorderBrush" Value="#FF0078D7"/>
-                                </Trigger>
-                                <Trigger Property="IsMouseOver" Value="True">
-                                    <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource IconForegroundBrush}"/>
-                                </Trigger>
-                            </ControlTemplate.Triggers>
-                        </ControlTemplate>
-                    </Setter.Value>
-                </Setter>
-            </Style>
-
-            <!-- Section header -->
-            <Style x:Key="SectionHeader" TargetType="TextBlock">
-                <Setter Property="FontSize" Value="13"/>
-                <Setter Property="FontWeight" Value="SemiBold"/>
-                <Setter Property="Foreground" Value="{DynamicResource ForegroundBrush}"/>
-                <Setter Property="Margin" Value="0,8,0,6"/>
-            </Style>
-
-            <Style x:Key="Separator" TargetType="Border">
-                <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}"/>
-                <Setter Property="BorderThickness" Value="0,0,0,1"/>
-                <Setter Property="Margin" Value="0,6"/>
-            </Style>
-
-            <!-- ComboBox (inline dark) -->
-            <Style x:Key="ComboStyle" TargetType="ComboBox">
-                <Setter Property="OverridesDefaultStyle" Value="True"/>
-                <Setter Property="SnapsToDevicePixels" Value="True"/>
-                <Setter Property="Background" Value="{DynamicResource SecondaryBackgroundBrush}"/>
-                <Setter Property="Foreground" Value="{DynamicResource ForegroundBrush}"/>
-                <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}"/>
-                <Setter Property="BorderThickness" Value="1"/>
-                <Setter Property="Height" Value="26"/>
-                <Setter Property="FontSize" Value="11"/>
-                <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
-                <Setter Property="Template">
-                    <Setter.Value>
-                        <ControlTemplate TargetType="ComboBox">
-                            <Grid>
-                                <Border x:Name="Bd"
-                                        Background="{TemplateBinding Background}"
-                                        BorderBrush="{TemplateBinding BorderBrush}"
-                                        BorderThickness="{TemplateBinding BorderThickness}"
-                                        CornerRadius="4">
-                                    <Grid>
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*"/>
-                                            <ColumnDefinition Width="22"/>
-                                        </Grid.ColumnDefinitions>
-                                        <ContentPresenter Grid.Column="0"
-                                                          Content="{TemplateBinding SelectionBoxItem}"
-                                                          ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
-                                                          Margin="8,0,2,0"
-                                                          VerticalAlignment="Center"
-                                                          HorizontalAlignment="Left"
-                                                          IsHitTestVisible="False"/>
-                                        <Path Grid.Column="1"
-                                              Data="M 0,0 L 4,4 L 8,0"
-                                              Stroke="{DynamicResource IconForegroundBrush}"
-                                              StrokeThickness="1.5" StrokeLineJoin="Round"
-                                              Width="8" Height="4"
-                                              HorizontalAlignment="Center"
-                                              VerticalAlignment="Center"
-                                              IsHitTestVisible="False"/>
-                                    </Grid>
-                                </Border>
-                                <ToggleButton OverridesDefaultStyle="True"
-                                              Background="Transparent" BorderThickness="0"
-                                              IsChecked="{Binding Path=IsDropDownOpen,
-                                                                  RelativeSource={RelativeSource TemplatedParent},
-                                                                  Mode=TwoWay}"
-                                              Focusable="False" Cursor="Hand">
-                                    <ToggleButton.Template>
-                                        <ControlTemplate TargetType="ToggleButton">
-                                            <Border Background="Transparent" CornerRadius="4"/>
-                                        </ControlTemplate>
-                                    </ToggleButton.Template>
-                                </ToggleButton>
-                                <Popup x:Name="PART_Popup"
-                                       IsOpen="{TemplateBinding IsDropDownOpen}"
-                                       AllowsTransparency="True"
-                                       Focusable="False"
-                                       Placement="Bottom"
-                                       PopupAnimation="Slide">
-                                    <Border Background="{DynamicResource SecondaryBackgroundBrush}"
-                                            BorderBrush="{DynamicResource BorderBrush}"
-                                            BorderThickness="1"
-                                            CornerRadius="4"
-                                            MinWidth="{Binding ActualWidth, RelativeSource={RelativeSource AncestorType=Grid}}"
-                                            MaxHeight="200"
-                                            Margin="0,2,0,0">
-                                        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Hidden">
-                                            <ItemsPresenter KeyboardNavigation.DirectionalNavigation="Contained"/>
-                                        </ScrollViewer>
-                                    </Border>
-                                </Popup>
-                            </Grid>
-                            <ControlTemplate.Triggers>
-                                <Trigger Property="IsMouseOver" Value="True">
-                                    <Setter TargetName="Bd" Property="BorderBrush"
-                                            Value="{DynamicResource IconForegroundBrush}"/>
-                                </Trigger>
-                                <Trigger Property="IsDropDownOpen" Value="True">
-                                    <Setter TargetName="Bd" Property="BorderBrush" Value="#FF0078D7"/>
-                                </Trigger>
-                            </ControlTemplate.Triggers>
-                        </ControlTemplate>
-                    </Setter.Value>
-                </Setter>
-                <Setter Property="ItemContainerStyle">
-                    <Setter.Value>
-                        <Style TargetType="ComboBoxItem">
-                            <Setter Property="OverridesDefaultStyle" Value="True"/>
-                            <Setter Property="Background" Value="Transparent"/>
-                            <Setter Property="Foreground" Value="{DynamicResource ForegroundBrush}"/>
-                            <Setter Property="Padding" Value="8,5"/>
-                            <Setter Property="FontSize" Value="11"/>
-                            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
-                            <Setter Property="Template">
-                                <Setter.Value>
-                                    <ControlTemplate TargetType="ComboBoxItem">
-                                        <Border x:Name="Bg"
-                                                Background="{TemplateBinding Background}"
-                                                Padding="{TemplateBinding Padding}">
-                                            <ContentPresenter/>
-                                        </Border>
-                                        <ControlTemplate.Triggers>
-                                            <Trigger Property="IsHighlighted" Value="True">
-                                                <Setter TargetName="Bg" Property="Background" Value="{DynamicResource HighlightBrush}"/>
-                                            </Trigger>
-                                            <Trigger Property="IsSelected" Value="True">
-                                                <Setter TargetName="Bg" Property="Background" Value="#FF555555"/>
-                                            </Trigger>
-                                        </ControlTemplate.Triggers>
-                                    </ControlTemplate>
-                                </Setter.Value>
-                            </Setter>
-                        </Style>
-                    </Setter.Value>
-                </Setter>
-            </Style>
-
-            <!-- Action button (Pulse style) -->
-            <Style x:Key="BtnStyle" TargetType="Button">
-                <Setter Property="Background" Value="{DynamicResource SecondaryBackgroundBrush}"/>
-                <Setter Property="Foreground" Value="{DynamicResource ForegroundBrush}"/>
-                <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}"/>
-                <Setter Property="BorderThickness" Value="1"/>
-                <Setter Property="Padding" Value="12,6"/>
-                <Setter Property="Margin" Value="0,0,4,0"/>
-                <Setter Property="FontSize" Value="12"/>
-                <Setter Property="Cursor" Value="Hand"/>
-                <Setter Property="Template">
-                    <Setter.Value>
-                        <ControlTemplate TargetType="Button">
-                            <Border x:Name="ButtonBorder"
-                                    Background="{TemplateBinding Background}"
-                                    BorderBrush="{TemplateBinding BorderBrush}"
-                                    BorderThickness="{TemplateBinding BorderThickness}"
-                                    CornerRadius="5"
-                                    Padding="{TemplateBinding Padding}">
-                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        <ControlTemplate TargetType="{x:Type Button}">
+                            <Border x:Name="Bd" Background="{TemplateBinding Background}">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
                             </Border>
                             <ControlTemplate.Triggers>
                                 <Trigger Property="IsMouseOver" Value="True">
-                                    <Setter TargetName="ButtonBorder" Property="Background" Value="{DynamicResource HighlightBrush}"/>
+                                    <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Control.Plain.Hover}" />
+                                    <Setter Property="Foreground" Value="{DynamicResource Text.Primary}" />
                                 </Trigger>
                                 <Trigger Property="IsPressed" Value="True">
-                                    <Setter TargetName="ButtonBorder" Property="Background" Value="#FF555555"/>
-                                </Trigger>
-                                <Trigger Property="IsEnabled" Value="False">
-                                    <Setter Property="Opacity" Value="0.5"/>
+                                    <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Control.Plain.Pressed}" />
                                 </Trigger>
                             </ControlTemplate.Triggers>
                         </ControlTemplate>
                     </Setter.Value>
                 </Setter>
             </Style>
-
-            <!-- Primary button (blue) -->
-            <Style x:Key="SuccessBtnStyle" TargetType="Button" BasedOn="{StaticResource BtnStyle}">
-                <Setter Property="Background" Value="#FF0078D7"/>
-                <Setter Property="Foreground" Value="White"/>
-                <Setter Property="BorderBrush" Value="#FF0078D7"/>
-            </Style>
-
-            <!-- Danger / negative button -->
-            <Style x:Key="DangerBtnStyle" TargetType="Button" BasedOn="{StaticResource BtnStyle}">
-                <Setter Property="Foreground" Value="#FFDC6B6B"/>
-                <Setter Property="BorderBrush" Value="#66DC6B6B"/>
-            </Style>
-
-            <!-- Accent / draft button (amber) -->
-            <Style x:Key="AccentBtnStyle" TargetType="Button" BasedOn="{StaticResource BtnStyle}">
-                <Setter Property="Background" Value="#FFCA8A04"/>
-                <Setter Property="Foreground" Value="White"/>
-                <Setter Property="BorderBrush" Value="#FFCA8A04"/>
-            </Style>
-
-            <!-- DataGrid column header -->
-            <Style x:Key="DgHeaderStyle" TargetType="DataGridColumnHeader">
-                <Setter Property="Background" Value="{DynamicResource SecondaryBackgroundBrush}"/>
-                <Setter Property="Foreground" Value="{DynamicResource IconForegroundBrush}"/>
-                <Setter Property="Padding" Value="8,6"/>
-                <Setter Property="FontWeight" Value="SemiBold"/>
-                <Setter Property="FontSize" Value="11"/>
-                <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}"/>
-                <Setter Property="BorderThickness" Value="0,0,0,1"/>
-            </Style>
-
-            <!-- Tab Item style -->
-            <Style TargetType="TabItem">
-                <Setter Property="Foreground" Value="{DynamicResource IconForegroundBrush}"/>
-                <Setter Property="FontSize" Value="12"/>
-                <Setter Property="Padding" Value="12,6"/>
+            <Style
+                x:Key="CaptionCloseButton"
+                BasedOn="{StaticResource CaptionButton}"
+                TargetType="{x:Type Button}">
                 <Setter Property="Template">
                     <Setter.Value>
-                        <ControlTemplate TargetType="TabItem">
-                            <Border x:Name="Bd"
-                                    Background="Transparent"
-                                    Padding="{TemplateBinding Padding}"
-                                    Cursor="Hand">
-                                <ContentPresenter x:Name="Content"
-                                                  ContentSource="Header"
-                                                  HorizontalAlignment="Center"
-                                                  VerticalAlignment="Center"/>
+                        <ControlTemplate TargetType="{x:Type Button}">
+                            <Border x:Name="Bd" Background="{TemplateBinding Background}">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
                             </Border>
                             <ControlTemplate.Triggers>
-                                <Trigger Property="IsSelected" Value="True">
-                                    <Setter TargetName="Bd" Property="Background" Value="{DynamicResource SecondaryBackgroundBrush}"/>
-                                    <Setter TargetName="Bd" Property="BorderBrush" Value="#FF0078D7"/>
-                                    <Setter TargetName="Bd" Property="BorderThickness" Value="0,0,0,2"/>
-                                    <Setter Property="Foreground" Value="{DynamicResource ForegroundBrush}"/>
-                                </Trigger>
                                 <Trigger Property="IsMouseOver" Value="True">
-                                    <Setter TargetName="Bd" Property="Background" Value="{DynamicResource HighlightBrush}"/>
+                                    <Setter TargetName="Bd" Property="Background" Value="#C42B1C" />
+                                    <Setter Property="Foreground" Value="White" />
+                                </Trigger>
+                                <Trigger Property="IsPressed" Value="True">
+                                    <Setter TargetName="Bd" Property="Background" Value="#A32519" />
+                                    <Setter Property="Foreground" Value="White" />
                                 </Trigger>
                             </ControlTemplate.Triggers>
                         </ControlTemplate>
@@ -318,684 +94,1410 @@
                 </Setter>
             </Style>
 
-            <!-- TabControl style -->
-            <Style TargetType="TabControl">
-                <Setter Property="Background" Value="Transparent"/>
-                <Setter Property="BorderThickness" Value="0"/>
+            <!--  Sidebar label: hidden in compact (icon-only) mode  -->
+            <Style x:Key="SidebarLabel" TargetType="{x:Type TextBlock}">
+                <Setter Property="Margin" Value="10,0,0,0" />
+                <Setter Property="VerticalAlignment" Value="Center" />
+                <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+                <Style.Triggers>
+                    <DataTrigger Binding="{Binding IsCompact, ElementName=Root}" Value="True">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                    </DataTrigger>
+                </Style.Triggers>
+            </Style>
+            <Style
+                x:Key="SidebarGroup"
+                BasedOn="{StaticResource SidebarLabel}"
+                TargetType="{x:Type TextBlock}">
+                <Setter Property="Margin" Value="20,16,0,6" />
+                <Setter Property="FontSize" Value="{StaticResource FontSize.Caption}" />
+                <Setter Property="FontWeight" Value="SemiBold" />
+                <Setter Property="Foreground" Value="{DynamicResource Text.Tertiary}" />
+            </Style>
+            <!--  Holds a sidebar badge; the icon-only sidebar has no room for it  -->
+            <Style x:Key="SidebarBadgeHost" TargetType="{x:Type Grid}">
+                <Setter Property="Margin" Value="6,0,0,0" />
+                <Setter Property="VerticalAlignment" Value="Center" />
+                <Style.Triggers>
+                    <DataTrigger Binding="{Binding IsCompact, ElementName=Root}" Value="True">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                    </DataTrigger>
+                </Style.Triggers>
+            </Style>
+            <Style x:Key="SidebarIcon" TargetType="{x:Type materialDesign:PackIcon}">
+                <Setter Property="Width" Value="18" />
+                <Setter Property="Height" Value="18" />
+                <Setter Property="VerticalAlignment" Value="Center" />
+                <Setter Property="Foreground" Value="{DynamicResource Accent.Text}" />
             </Style>
 
-            <!-- Checkbox -->
-            <Style TargetType="CheckBox">
-                <Setter Property="Foreground" Value="{DynamicResource ForegroundBrush}"/>
-                <Setter Property="FontSize" Value="12"/>
+            <!--  Page body: scrolls vertically; right padding keeps cards clear of the scrollbar  -->
+            <Style x:Key="PageScroll" TargetType="{x:Type ScrollViewer}">
+                <Setter Property="HorizontalScrollBarVisibility" Value="Disabled" />
+                <Setter Property="VerticalScrollBarVisibility" Value="Auto" />
+                <Setter Property="Focusable" Value="False" />
+                <Setter Property="Padding" Value="0,0,10,0" />
             </Style>
         </ResourceDictionary>
     </Window.Resources>
 
-    <!-- Outer transparent grid for blur + resize grips -->
-    <Grid>
-        <!-- Shadow border -->
-        <Border Margin="10" CornerRadius="10">
-            <Border.Effect>
-                <BlurEffect Radius="10"/>
-            </Border.Effect>
-            <Border.Background>
-                <SolidColorBrush Color="Black" Opacity="0.6"/>
-            </Border.Background>
+    <Grid
+        x:Name="RootGrid"
+        Background="{DynamicResource Window.Background}"
+        TextElement.FontFamily="{StaticResource Font.Text}"
+        TextElement.FontSize="{StaticResource FontSize.Body}"
+        TextElement.Foreground="{DynamicResource Text.Primary}">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition x:Name="SidebarColumn" Width="212" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+
+        <!--  ============ Sidebar (structural material: gradient + right edge highlight) ============  -->
+        <Border
+            Background="{DynamicResource Sidebar.Material}"
+            BorderBrush="{DynamicResource Sidebar.Edge}"
+            BorderThickness="0,0,1,0">
+            <DockPanel>
+                <!--  App identity (part of the draggable caption)  -->
+                <StackPanel
+                    Height="52"
+                    Margin="18,0,12,0"
+                    DockPanel.Dock="Top"
+                    Orientation="Horizontal">
+                    <Border
+                        Width="26"
+                        Height="26"
+                        VerticalAlignment="Center"
+                        Background="{DynamicResource Accent}"
+                        CornerRadius="7">
+                        <materialDesign:PackIcon
+                            Width="16"
+                            Height="16"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center"
+                            Foreground="{DynamicResource Text.OnAccent}"
+                            Kind="Waveform" />
+                    </Border>
+                    <StackPanel Margin="10,0,0,0" VerticalAlignment="Center">
+                        <TextBlock
+                            FontWeight="SemiBold"
+                            Style="{StaticResource SidebarLabel}"
+                            Text="SoundCalcs" />
+                        <TextBlock
+                            x:Name="DocumentTitleText"
+                            MaxWidth="140"
+                            FontSize="{StaticResource FontSize.Caption}"
+                            Foreground="{DynamicResource Text.Tertiary}"
+                            Style="{StaticResource SidebarLabel}"
+                            Text="Acoustic analysis" />
+                    </StackPanel>
+                </StackPanel>
+
+                <!--  Footer: appearance toggle  -->
+                <StackPanel Margin="0,0,0,12" DockPanel.Dock="Bottom">
+                    <Button
+                        x:Name="ThemeButton"
+                        Height="32"
+                        Margin="8,0"
+                        Padding="10,0"
+                        HorizontalAlignment="Stretch"
+                        HorizontalContentAlignment="Left"
+                        AutomationProperties.Name="Switch between dark and light appearance"
+                        Click="ToggleTheme_Click"
+                        Style="{StaticResource Button.Plain}"
+                        ToolTip="Switch between dark and light appearance">
+                        <StackPanel Orientation="Horizontal">
+                            <materialDesign:PackIcon
+                                x:Name="ThemeIcon"
+                                Width="16"
+                                Height="16"
+                                VerticalAlignment="Center"
+                                Foreground="{DynamicResource Text.Secondary}"
+                                Kind="WeatherNight" />
+                            <TextBlock
+                                x:Name="ThemeText"
+                                Foreground="{DynamicResource Text.Secondary}"
+                                Style="{StaticResource SidebarLabel}"
+                                Text="Dark appearance" />
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
+
+                <!--  Navigation: the workflow in order  -->
+                <StackPanel
+                    Margin="0,-10,0,0"
+                    AutomationProperties.Name="Pages"
+                    KeyboardNavigation.DirectionalNavigation="Cycle"
+                    KeyboardNavigation.TabNavigation="Once">
+                    <TextBlock Style="{StaticResource SidebarGroup}" Text="Set up" />
+                    <RadioButton
+                        x:Name="NavModel"
+                        AutomationProperties.Name="Model"
+                        Checked="Nav_Checked"
+                        GroupName="Nav"
+                        IsChecked="True"
+                        Style="{StaticResource SidebarItem}"
+                        ToolTip="Linked model, room boundary and walls (Ctrl+1)">
+                        <StackPanel Orientation="Horizontal">
+                            <materialDesign:PackIcon Kind="FloorPlan" Style="{StaticResource SidebarIcon}" />
+                            <TextBlock Style="{StaticResource SidebarLabel}" Text="Model" />
+                        </StackPanel>
+                    </RadioButton>
+                    <RadioButton
+                        x:Name="NavSpeakers"
+                        AutomationProperties.Name="Speakers"
+                        Checked="Nav_Checked"
+                        GroupName="Nav"
+                        Style="{StaticResource SidebarItem}"
+                        ToolTip="Speakers and their acoustic data (Ctrl+2)">
+                        <DockPanel>
+                            <Grid DockPanel.Dock="Right" Style="{StaticResource SidebarBadgeHost}">
+                                <Border
+                                    Style="{StaticResource Badge}"
+                                    ToolTip="Speaker types found"
+                                    Visibility="{Binding SpeakerGroups.Count, Converter={StaticResource CountToVis}}">
+                                    <TextBlock Text="{Binding SpeakerGroups.Count}" />
+                                </Border>
+                            </Grid>
+                            <StackPanel Orientation="Horizontal">
+                                <materialDesign:PackIcon Kind="SpeakerMultiple" Style="{StaticResource SidebarIcon}" />
+                                <TextBlock Style="{StaticResource SidebarLabel}" Text="Speakers" />
+                            </StackPanel>
+                        </DockPanel>
+                    </RadioButton>
+                    <RadioButton
+                        x:Name="NavRoom"
+                        AutomationProperties.Name="Room"
+                        Checked="Nav_Checked"
+                        GroupName="Nav"
+                        Style="{StaticResource SidebarItem}"
+                        ToolTip="Receiver grid, room acoustics and surfaces (Ctrl+3)">
+                        <StackPanel Orientation="Horizontal">
+                            <materialDesign:PackIcon Kind="TuneVariant" Style="{StaticResource SidebarIcon}" />
+                            <TextBlock Style="{StaticResource SidebarLabel}" Text="Room" />
+                        </StackPanel>
+                    </RadioButton>
+                    <TextBlock Style="{StaticResource SidebarGroup}" Text="Analysis" />
+                    <RadioButton
+                        x:Name="NavRun"
+                        AutomationProperties.Name="Run"
+                        Checked="Nav_Checked"
+                        GroupName="Nav"
+                        Style="{StaticResource SidebarItem}"
+                        ToolTip="Calculate the sound field (Ctrl+4)">
+                        <DockPanel>
+                            <Grid DockPanel.Dock="Right" Style="{StaticResource SidebarBadgeHost}">
+                                <Border
+                                    Style="{StaticResource Badge.Accent}"
+                                    ToolTip="An analysis is running"
+                                    Visibility="{Binding IsRunning, Converter={StaticResource BoolToVis}}">
+                                    <TextBlock Text="{Binding ProgressPercent}" />
+                                </Border>
+                            </Grid>
+                            <StackPanel Orientation="Horizontal">
+                                <materialDesign:PackIcon Kind="PlayCircleOutline" Style="{StaticResource SidebarIcon}" />
+                                <TextBlock Style="{StaticResource SidebarLabel}" Text="Run" />
+                            </StackPanel>
+                        </DockPanel>
+                    </RadioButton>
+                    <RadioButton
+                        x:Name="NavResults"
+                        AutomationProperties.Name="Results"
+                        Checked="Nav_Checked"
+                        GroupName="Nav"
+                        Style="{StaticResource SidebarItem}"
+                        ToolTip="Heatmaps, figures and the Revit view (Ctrl+5)">
+                        <StackPanel Orientation="Horizontal">
+                            <materialDesign:PackIcon Kind="ChartBoxOutline" Style="{StaticResource SidebarIcon}" />
+                            <TextBlock Style="{StaticResource SidebarLabel}" Text="Results" />
+                        </StackPanel>
+                    </RadioButton>
+                </StackPanel>
+            </DockPanel>
         </Border>
 
-        <!-- Main content border -->
-        <Border Margin="10"
-                Background="{DynamicResource PrimaryBackgroundBrush}"
-                BorderBrush="{DynamicResource BorderBrush}"
-                BorderThickness="1"
-                CornerRadius="10">
-            <Border.Clip>
-                <RectangleGeometry RadiusX="10" RadiusY="10">
-                    <RectangleGeometry.Rect>
-                        <MultiBinding Converter="{x:Static local:SizeToRectConverter.Instance}">
-                            <Binding Path="ActualWidth" RelativeSource="{RelativeSource AncestorType=Border}"/>
-                            <Binding Path="ActualHeight" RelativeSource="{RelativeSource AncestorType=Border}"/>
-                        </MultiBinding>
-                    </RectangleGeometry.Rect>
-                </RectangleGeometry>
-            </Border.Clip>
-            <Grid>
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="30"/>
-                    <RowDefinition Height="*"/>
-                    <RowDefinition Height="24"/>
-                </Grid.RowDefinitions>
+        <!--  ============ Content column ============  -->
+        <Grid Grid.Column="1">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="52" />
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
 
-                <!-- Title Bar -->
-                <ui:TitleBar Grid.Row="0"/>
+            <!--  Title area: page title and caption buttons (draggable)  -->
+            <DockPanel Background="Transparent">
+                <StackPanel
+                    VerticalAlignment="Top"
+                    DockPanel.Dock="Right"
+                    Orientation="Horizontal">
+                    <Button
+                        AutomationProperties.Name="Minimize"
+                        Click="Minimize_Click"
+                        Style="{StaticResource CaptionButton}"
+                        ToolTip="Minimize">
+                        <materialDesign:PackIcon Width="14" Height="14" Kind="WindowMinimize" />
+                    </Button>
+                    <Button
+                        x:Name="MaximizeButton"
+                        AutomationProperties.Name="Maximize"
+                        Click="Maximize_Click"
+                        Style="{StaticResource CaptionButton}"
+                        ToolTip="Maximize">
+                        <materialDesign:PackIcon
+                            x:Name="MaximizeIcon"
+                            Width="14"
+                            Height="14"
+                            Kind="WindowMaximize" />
+                    </Button>
+                    <Button
+                        AutomationProperties.Name="Close"
+                        Click="Close_Click"
+                        Style="{StaticResource CaptionCloseButton}"
+                        ToolTip="Close">
+                        <materialDesign:PackIcon Width="14" Height="14" Kind="WindowClose" />
+                    </Button>
+                </StackPanel>
 
-                <!-- Split: left = controls, right = 2D viewer -->
-                <Grid Grid.Row="1">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="480" MinWidth="360"/>
-                        <ColumnDefinition Width="5"/>
-                        <ColumnDefinition Width="*" MinWidth="300"/>
-                    </Grid.ColumnDefinitions>
+                <StackPanel
+                    Margin="24,0,12,0"
+                    VerticalAlignment="Center"
+                    Orientation="Horizontal">
+                    <TextBlock
+                        x:Name="PageTitleText"
+                        VerticalAlignment="Center"
+                        Style="{StaticResource Type.Title}"
+                        Text="Model" />
+                    <TextBlock
+                        x:Name="PageSubtitleText"
+                        Margin="12,3,0,0"
+                        VerticalAlignment="Center"
+                        Style="{StaticResource Type.Secondary}"
+                        Text="Linked model, room boundary and walls"
+                        TextTrimming="CharacterEllipsis"
+                        TextWrapping="NoWrap" />
+                </StackPanel>
+            </DockPanel>
 
-                    <!-- ── Right panel: real-time 2D viewer ── -->
-                    <ui:AcousticViewerControl
-                        x:Name="AcousticViewer"
-                        Grid.Column="2"
-                        JobOutput="{Binding LastOutput}"
-                        WallGroupsSource="{Binding WallLineGroups}"
-                        SpeakerGroupsSource="{Binding SpeakerGroups}"
-                        Mode="{Binding SelectedVisualizationMode}"
-                        GridSpacing="{Binding GridSpacing}"/>
+            <!--  Body: the page on the left, the live plan on the right  -->
+            <Grid Grid.Row="1" Margin="24,0,24,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition x:Name="PageColumn" Width="520" MinWidth="360" />
+                    <ColumnDefinition Width="12" />
+                    <ColumnDefinition Width="*" MinWidth="320" />
+                </Grid.ColumnDefinitions>
 
-                    <!-- Drag handle between panels -->
-                    <GridSplitter Grid.Column="1"
-                                  Width="5"
-                                  HorizontalAlignment="Stretch"
-                                  VerticalAlignment="Stretch"
-                                  Background="#FF333333"
-                                  ResizeBehavior="PreviousAndNext"
-                                  ResizeDirection="Columns"
-                                  Cursor="SizeWE"/>
+                <!--  ================= MODEL =================  -->
+                <ScrollViewer
+                    x:Name="ModelPage"
+                    ui:Motion.Reveal="True"
+                    Style="{StaticResource PageScroll}">
+                    <StackPanel Margin="0,0,0,16">
+                        <TextBlock
+                            Margin="4,0,0,0"
+                            Style="{StaticResource Type.Secondary}"
+                            Text="Choose the model to read geometry from, then trace the room in Revit. The plan on the right follows every change." />
 
-                    <!-- ── Left panel: existing tab control ── -->
-                <TabControl Grid.Column="0" Margin="4,0,4,0"
-                            Background="Transparent"
-                            BorderThickness="0">
-
-            <!-- ============ MODEL TAB ============ -->
-            <TabItem Header="Model">
-                <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="12">
-                    <StackPanel>
-                        <TextBlock Style="{StaticResource SectionHeader}" Text="Linked Model"/>
-                        <TextBlock Style="{StaticResource LabelStyle}" Text="Select the architectural model to analyse geometry from:"/>
-
-                        <Button Content="Refresh Links" Style="{StaticResource BtnStyle}"
-                                Click="RefreshLinks_Click" HorizontalAlignment="Left" Margin="0,4"/>
-
-                        <ListBox x:Name="LinksListBox"
-                                 ItemsSource="{Binding AvailableLinks}"
-                                 SelectedItem="{Binding SelectedLink}"
-                                 Background="{DynamicResource SecondaryBackgroundBrush}" Foreground="{DynamicResource ForegroundBrush}"
-                                 BorderBrush="{DynamicResource BorderBrush}"
-                                 Height="120" Margin="0,4">
-                            <ListBox.ItemTemplate>
-                                <DataTemplate>
-                                    <StackPanel Orientation="Horizontal">
-                                        <TextBlock Text="{Binding LinkName}" Margin="4,2"/>
-                                        <TextBlock Text="{Binding FilePath}" Foreground="{DynamicResource IconForegroundBrush}" Margin="8,2,0,2" FontSize="11"/>
-                                    </StackPanel>
-                                </DataTemplate>
-                            </ListBox.ItemTemplate>
-                        </ListBox>
-
-                        <WrapPanel Orientation="Horizontal" Margin="0,4">
-                            <Button Content="Select Boundary" Style="{StaticResource BtnStyle}"
-                                    Click="SelectBoundary_Click"/>
-                            <Button Content="Auto-Detect Walls" Style="{StaticResource BtnStyle}"
-                                    Margin="8,0,0,0"
-                                    Click="AutoDetectWalls_Click"
-                                    ToolTip="Reads Revit wall elements from the host and linked model and estimates STC ratings automatically"/>
-                            <Button Content="Clear Walls" Style="{StaticResource DangerBtnStyle}"
-                                    Margin="8,0,0,0"
-                                    Click="ClearWalls_Click"
-                                    ToolTip="Remove the current wall selection so you can pick new ones"/>
-                        </WrapPanel>
-
-                        <TextBlock Style="{StaticResource SectionHeader}" Text="Selected Walls"
-                                   Margin="0,8,0,4"/>
-
-                        <DataGrid ItemsSource="{Binding WallLineGroups}"
-                                  AutoGenerateColumns="False"
-                                  CanUserAddRows="False"
-                                  CanUserDeleteRows="False"
-                                  IsReadOnly="False"
-                                  Background="{DynamicResource SecondaryBackgroundBrush}"
-                                  Foreground="{DynamicResource ForegroundBrush}"
-                                  BorderBrush="{DynamicResource BorderBrush}"
-                                  GridLinesVisibility="Horizontal"
-                                  HorizontalGridLinesBrush="{DynamicResource BorderBrush}"
-                                  RowBackground="{DynamicResource SecondaryBackgroundBrush}"
-                                  AlternatingRowBackground="{DynamicResource PrimaryBackgroundBrush}"
-                                  HeadersVisibility="Column"
-                                  Height="120" Margin="0,4"
-                                  SelectionMode="Single">
-                            <DataGrid.ColumnHeaderStyle>
-                                <Style TargetType="DataGridColumnHeader" BasedOn="{StaticResource DgHeaderStyle}"/>
-                            </DataGrid.ColumnHeaderStyle>
-                            <DataGrid.Columns>
-                                <DataGridTextColumn Header="Line Style" Binding="{Binding LineStyleName}" Width="160" IsReadOnly="True"/>
-                                <DataGridTextColumn Header="Segments" Binding="{Binding SegmentCount}" Width="70" IsReadOnly="True"/>
-                                <DataGridTextColumn Header="Length" Binding="{Binding TotalLength}" Width="70" IsReadOnly="True"/>
-                                <DataGridTextColumn Header="Height (m)" Binding="{Binding HeightM, UpdateSourceTrigger=LostFocus}" Width="75">
-                                    <DataGridTextColumn.HeaderStyle>
-                                        <Style TargetType="DataGridColumnHeader" BasedOn="{StaticResource DgHeaderStyle}">
-                                            <Setter Property="ToolTip" Value="Wall height; 0 = full height (floor to ceiling). Use for screens and low partitions."/>
-                                        </Style>
-                                    </DataGridTextColumn.HeaderStyle>
-                                </DataGridTextColumn>
-                                <DataGridTemplateColumn Header="Wall Type" Width="280">
-                                    <DataGridTemplateColumn.CellTemplate>
+                        <TextBlock Style="{StaticResource Type.GroupTitle}" Text="Linked model" />
+                        <Border Padding="0,6" Style="{StaticResource Card}">
+                            <StackPanel>
+                                <DockPanel Margin="14,0,8,4">
+                                    <Button
+                                        Height="28"
+                                        AutomationProperties.Name="Refresh linked models"
+                                        Click="RefreshLinks_Click"
+                                        DockPanel.Dock="Right"
+                                        Style="{StaticResource Button.Plain}"
+                                        ToolTip="Read the list of linked models again">
+                                        <StackPanel Orientation="Horizontal">
+                                            <materialDesign:PackIcon Kind="Refresh" Style="{StaticResource ButtonIconLabel}" />
+                                            <TextBlock Text="Refresh" />
+                                        </StackPanel>
+                                    </Button>
+                                    <TextBlock
+                                        VerticalAlignment="Center"
+                                        Style="{StaticResource Type.Secondary}"
+                                        Text="Models linked into this project" />
+                                </DockPanel>
+                                <ListBox
+                                    x:Name="LinksListBox"
+                                    MaxHeight="168"
+                                    Margin="2,0"
+                                    AutomationProperties.Name="Linked models"
+                                    ItemsSource="{Binding AvailableLinks}"
+                                    SelectedItem="{Binding SelectedLink}"
+                                    Style="{StaticResource MasterList}">
+                                    <ListBox.ItemTemplate>
                                         <DataTemplate>
-                                            <ComboBox Style="{StaticResource ComboStyle}"
-                                                      ItemsSource="{Binding AvailableWallTypes}"
-                                                      SelectedItem="{Binding WallType, UpdateSourceTrigger=PropertyChanged}"
-                                                      DisplayMemberPath="DisplayName"/>
+                                            <StackPanel>
+                                                <TextBlock Text="{Binding LinkName}" TextTrimming="CharacterEllipsis" />
+                                                <TextBlock
+                                                    Margin="0,1,0,0"
+                                                    Style="{StaticResource Type.Caption}"
+                                                    Text="{Binding FilePath}"
+                                                    TextTrimming="CharacterEllipsis"
+                                                    TextWrapping="NoWrap"
+                                                    ToolTip="{Binding FilePath}" />
+                                            </StackPanel>
                                         </DataTemplate>
-                                    </DataGridTemplateColumn.CellTemplate>
-                                </DataGridTemplateColumn>
-                            </DataGrid.Columns>
-                        </DataGrid>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                                <TextBlock
+                                    Margin="14,6,14,8"
+                                    Style="{StaticResource Type.Caption}"
+                                    Text="No linked models found. Link the architectural model in Revit, then press Refresh."
+                                    Visibility="{Binding AvailableLinks.Count, Converter={StaticResource CountToVis}, ConverterParameter=Invert}" />
+                            </StackPanel>
+                        </Border>
 
-                        <Border Style="{StaticResource Separator}"/>
+                        <TextBlock Style="{StaticResource Type.GroupTitle}" Text="Room boundary" />
+                        <Border Style="{StaticResource Card}">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource Type.Secondary}" Text="Select the detail lines that outline the room. Each line style becomes a wall type you can set below." />
+                                <DockPanel Margin="0,12,0,0">
+                                    <Button
+                                        Height="28"
+                                        AutomationProperties.Name="Clear walls"
+                                        Click="ClearWalls_Click"
+                                        DockPanel.Dock="Right"
+                                        Style="{StaticResource Button.Plain.Destructive}"
+                                        ToolTip="Remove the current wall selection so you can pick new lines">
+                                        Clear
+                                    </Button>
+                                    <WrapPanel>
+                                        <Button
+                                            Margin="0,0,8,0"
+                                            Click="SelectBoundary_Click"
+                                            Style="{StaticResource Button.Primary}"
+                                            ToolTip="Pick the boundary lines in the Revit view (this window hides while you pick)">
+                                            <StackPanel Orientation="Horizontal">
+                                                <materialDesign:PackIcon Kind="CursorDefaultClickOutline" Style="{StaticResource ButtonIconLabel}" />
+                                                <TextBlock Text="Select boundary" />
+                                            </StackPanel>
+                                        </Button>
+                                        <Button
+                                            Click="AutoDetectWalls_Click"
+                                            Style="{StaticResource Button.Secondary}"
+                                            ToolTip="Read the Revit walls of the host and linked model and estimate their ratings">
+                                            <StackPanel Orientation="Horizontal">
+                                                <materialDesign:PackIcon Kind="AutoFix" Style="{StaticResource ButtonIconLabel}" />
+                                                <TextBlock Text="Detect walls" />
+                                            </StackPanel>
+                                        </Button>
+                                    </WrapPanel>
+                                </DockPanel>
+                            </StackPanel>
+                        </Border>
 
-                        <TextBlock Style="{StaticResource SectionHeader}" Text="Speaker Category"/>
-                        <TextBlock Style="{StaticResource LabelStyle}" Text="Revit category to scan for speakers:"/>
-                        <ComboBox Style="{StaticResource ComboStyle}" Width="280" HorizontalAlignment="Left"
-                                  x:Name="CategoryCombo" SelectedItem="{Binding SpeakerCategoryName}">
-                            <sys:String xmlns:sys="clr-namespace:System;assembly=mscorlib">OST_DataDevices</sys:String>
-                            <sys:String xmlns:sys="clr-namespace:System;assembly=mscorlib">OST_MechanicalEquipment</sys:String>
-                            <sys:String xmlns:sys="clr-namespace:System;assembly=mscorlib">OST_ElectricalFixtures</sys:String>
-                            <sys:String xmlns:sys="clr-namespace:System;assembly=mscorlib">OST_ElectricalEquipment</sys:String>
-                            <sys:String xmlns:sys="clr-namespace:System;assembly=mscorlib">OST_CommunicationDevices</sys:String>
-                            <sys:String xmlns:sys="clr-namespace:System;assembly=mscorlib">OST_GenericModel</sys:String>
-                        </ComboBox>
+                        <TextBlock Style="{StaticResource Type.GroupTitle}" Text="Walls" />
+                        <Border
+                            Height="280"
+                            Padding="0,4"
+                            Style="{StaticResource Surface}">
+                            <Grid>
+                                <DataGrid
+                                    AutomationProperties.Name="Walls"
+                                    ItemsSource="{Binding WallLineGroups}"
+                                    Style="{StaticResource DataGrid.Edit}"
+                                    Visibility="{Binding WallLineGroups.Count, Converter={StaticResource CountToVis}}">
+                                    <DataGrid.Columns>
+                                        <DataGridTextColumn
+                                            Width="150"
+                                            Binding="{Binding LineStyleName}"
+                                            ElementStyle="{StaticResource Grid.EditableText}"
+                                            Header="Line style"
+                                            IsReadOnly="True" />
+                                        <DataGridTextColumn
+                                            Width="72"
+                                            Binding="{Binding SegmentCount}"
+                                            ElementStyle="{StaticResource Grid.ReadOnlyText}"
+                                            Header="Segments"
+                                            IsReadOnly="True" />
+                                        <DataGridTextColumn
+                                            Width="70"
+                                            Binding="{Binding TotalLength}"
+                                            ElementStyle="{StaticResource Grid.ReadOnlyText}"
+                                            Header="Length"
+                                            IsReadOnly="True" />
+                                        <DataGridTextColumn
+                                            Width="80"
+                                            Binding="{Binding HeightM, UpdateSourceTrigger=LostFocus}"
+                                            EditingElementStyle="{StaticResource Grid.EditBox}"
+                                            ElementStyle="{StaticResource Grid.EditableText}">
+                                            <DataGridTextColumn.Header>
+                                                <TextBlock Text="Height (m)" ToolTip="Wall height. 0 = full height (floor to ceiling). Use for screens and low partitions." />
+                                            </DataGridTextColumn.Header>
+                                        </DataGridTextColumn>
+                                        <DataGridTemplateColumn Width="260" Header="Wall type">
+                                            <DataGridTemplateColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <ComboBox
+                                                        AutomationProperties.Name="Wall type"
+                                                        DisplayMemberPath="DisplayName"
+                                                        ItemsSource="{Binding AvailableWallTypes}"
+                                                        SelectedItem="{Binding WallType, UpdateSourceTrigger=PropertyChanged}"
+                                                        Style="{StaticResource Input.Combo.Cell}" />
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellTemplate>
+                                        </DataGridTemplateColumn>
+                                    </DataGrid.Columns>
+                                </DataGrid>
+                                <!--  Empty state  -->
+                                <StackPanel
+                                    MaxWidth="300"
+                                    HorizontalAlignment="Center"
+                                    VerticalAlignment="Center"
+                                    Visibility="{Binding WallLineGroups.Count, Converter={StaticResource CountToVis}, ConverterParameter=Invert}">
+                                    <materialDesign:PackIcon Kind="VectorPolyline" Style="{StaticResource EmptyGlyph}" />
+                                    <TextBlock
+                                        HorizontalAlignment="Center"
+                                        Style="{StaticResource Type.Heading}"
+                                        Text="No walls yet" />
+                                    <TextBlock
+                                        Margin="0,4,0,0"
+                                        Style="{StaticResource Type.Secondary}"
+                                        Text="Select the room boundary, or detect the walls from the model."
+                                        TextAlignment="Center" />
+                                </StackPanel>
+                            </Grid>
+                        </Border>
                     </StackPanel>
                 </ScrollViewer>
-            </TabItem>
 
-            <!-- ============ SPEAKERS TAB ============ -->
-            <TabItem Header="Speakers">
-                <Grid Margin="12">
+                <!--  ================= SPEAKERS =================  -->
+                <Grid
+                    x:Name="SpeakersPage"
+                    ui:Motion.Reveal="True"
+                    Visibility="Collapsed">
                     <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
                     </Grid.RowDefinitions>
 
-                    <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,8">
-                        <Button Content="Pick Speakers" Style="{StaticResource BtnStyle}" Click="PickSpeaker_Click"/>
-                        <Button Content="Clear Speakers" Style="{StaticResource DangerBtnStyle}" Click="ClearPickedSpeakers_Click"/>
-                        <Button Content="Save Mappings" Style="{StaticResource SuccessBtnStyle}" Click="SaveSettings_Click"/>
-                        <TextBlock Style="{StaticResource LabelStyle}" Text="{Binding PickedSpeakerSummary}"
-                                   VerticalAlignment="Center" Margin="12,0,0,0"/>
-                    </StackPanel>
+                    <!--  Toolbar: the next step first, the destructive action apart  -->
+                    <DockPanel Margin="0,0,0,12">
+                        <Button
+                            Height="28"
+                            AutomationProperties.Name="Clear speakers"
+                            Click="ClearPickedSpeakers_Click"
+                            DockPanel.Dock="Right"
+                            Style="{StaticResource Button.Plain.Destructive}"
+                            ToolTip="Remove all picked speakers from the list">
+                            Clear
+                        </Button>
+                        <WrapPanel>
+                            <Button
+                                Margin="0,0,8,0"
+                                Click="PickSpeaker_Click"
+                                Style="{StaticResource Button.Primary}"
+                                ToolTip="Pick speaker families in the Revit view (this window hides while you pick)">
+                                <StackPanel Orientation="Horizontal">
+                                    <materialDesign:PackIcon Kind="CursorDefaultClickOutline" Style="{StaticResource ButtonIconLabel}" />
+                                    <TextBlock Text="Pick speakers" />
+                                </StackPanel>
+                            </Button>
+                            <Button
+                                Click="SaveSettings_Click"
+                                Style="{StaticResource Button.Secondary}"
+                                ToolTip="Save the speaker settings (profiles, levels, directivity) for next time">
+                                <StackPanel Orientation="Horizontal">
+                                    <materialDesign:PackIcon Kind="ContentSaveOutline" Style="{StaticResource ButtonIconLabel}" />
+                                    <TextBlock Text="Save" />
+                                </StackPanel>
+                            </Button>
+                        </WrapPanel>
+                    </DockPanel>
 
-                    <DataGrid Grid.Row="1"
-                              ItemsSource="{Binding SpeakerGroups}"
-                              AutoGenerateColumns="False"
-                              CanUserAddRows="False"
-                              CanUserDeleteRows="False"
-                              IsReadOnly="False"
-                              Background="{DynamicResource SecondaryBackgroundBrush}"
-                              Foreground="{DynamicResource ForegroundBrush}"
-                              BorderBrush="{DynamicResource BorderBrush}"
-                              GridLinesVisibility="Horizontal"
-                              HorizontalGridLinesBrush="{DynamicResource BorderBrush}"
-                              RowBackground="{DynamicResource SecondaryBackgroundBrush}"
-                              AlternatingRowBackground="{DynamicResource PrimaryBackgroundBrush}"
-                              HeadersVisibility="Column"
-                              SelectionMode="Single">
-                        <DataGrid.ColumnHeaderStyle>
-                            <Style TargetType="DataGridColumnHeader" BasedOn="{StaticResource DgHeaderStyle}"/>
-                        </DataGrid.ColumnHeaderStyle>
-                        <DataGrid.Columns>
-                            <DataGridTextColumn Header="Family" Binding="{Binding FamilyName}" Width="160" IsReadOnly="True"/>
-                            <DataGridTextColumn Header="Type" Binding="{Binding TypeName}" Width="130" IsReadOnly="True"/>
-                            <DataGridTextColumn Header="Count" Binding="{Binding Count}" Width="50" IsReadOnly="True"/>
-                            <DataGridTextColumn Header="Level" Binding="{Binding LevelName}" Width="90" IsReadOnly="True"/>
-                            <DataGridTemplateColumn Header="Profile" Width="130">
-                                <DataGridTemplateColumn.CellTemplate>
-                                    <DataTemplate>
-                                        <ComboBox Style="{StaticResource ComboStyle}"
-                                                  SelectedItem="{Binding ProfileSource, UpdateSourceTrigger=PropertyChanged}">
-                                            <domain:ProfileSourceType>SimpleOmni</domain:ProfileSourceType>
-                                            <domain:ProfileSourceType>SimpleConical</domain:ProfileSourceType>
-                                            <domain:ProfileSourceType>WallMounted</domain:ProfileSourceType>
-                                            <domain:ProfileSourceType>GllFile</domain:ProfileSourceType>
-                                        </ComboBox>
-                                    </DataTemplate>
-                                </DataGridTemplateColumn.CellTemplate>
-                            </DataGridTemplateColumn>
-                            <DataGridTextColumn Header="SPL (dB)" Binding="{Binding OnAxisSplDb}" Width="70"/>
-                            <DataGridTemplateColumn Header="Response" Width="190">
-                                <DataGridTemplateColumn.CellTemplate>
-                                    <DataTemplate>
-                                        <ComboBox Style="{StaticResource ComboStyle}"
-                                                  ItemsSource="{Binding AvailableResponsePresets}"
-                                                  SelectedItem="{Binding ResponsePreset, UpdateSourceTrigger=PropertyChanged}"
-                                                  ToolTip="Speaker frequency response. Generic presets; enter manufacturer data in the next column for accuracy."/>
-                                    </DataTemplate>
-                                </DataGridTemplateColumn.CellTemplate>
-                            </DataGridTemplateColumn>
-                            <DataGridTextColumn Header="Response dB (125…8k)" Binding="{Binding ResponseText, UpdateSourceTrigger=LostFocus}" Width="150"/>
-                            <DataGridTextColumn Header="Cone Angle" Binding="{Binding ConeHalfAngleDeg}" Width="80"/>
-                            <DataGridTextColumn Header="Coverage ° (125…8k)" Binding="{Binding CoverageText, UpdateSourceTrigger=LostFocus}" Width="150">
-                                <DataGridTextColumn.HeaderStyle>
-                                    <Style TargetType="DataGridColumnHeader" BasedOn="{StaticResource DgHeaderStyle}">
-                                        <Setter Property="ToolTip" Value="Datasheet -6 dB coverage angle (full) per octave band, e.g. '180 180 140 100 90 70 60'. 180 = omni. Empty = use Cone Angle."/>
-                                    </Style>
-                                </DataGridTextColumn.HeaderStyle>
-                            </DataGridTextColumn>
-                            <DataGridTextColumn Header="Directivity file (CSV)" Binding="{Binding DirectivityFilePath, UpdateSourceTrigger=LostFocus}" Width="200">
-                                <DataGridTextColumn.HeaderStyle>
-                                    <Style TargetType="DataGridColumnHeader" BasedOn="{StaticResource DgHeaderStyle}">
-                                        <Setter Property="ToolTip" Value="Polar table: header 'angle,125,250,500,1k,2k,4k,8k', rows 0..180 degrees with attenuation in dB. Replaces the cone model."/>
-                                    </Style>
-                                </DataGridTextColumn.HeaderStyle>
-                            </DataGridTextColumn>
-                            <DataGridTextColumn Header="GLL Path" Binding="{Binding GllFilePath}" Width="180"/>
-                        </DataGrid.Columns>
-                    </DataGrid>
-                </Grid>
-            </TabItem>
+                    <Border
+                        Grid.Row="1"
+                        Margin="0,0,0,12"
+                        Padding="0,2"
+                        Style="{StaticResource Card}">
+                        <DockPanel Style="{StaticResource SettingRow}">
+                            <ComboBox
+                                x:Name="CategoryCombo"
+                                Width="220"
+                                VerticalAlignment="Center"
+                                AutomationProperties.Name="Speaker category"
+                                DockPanel.Dock="Right"
+                                SelectedItem="{Binding SpeakerCategoryName}"
+                                Style="{StaticResource Input.Combo}">
+                                <sys:String>OST_DataDevices</sys:String>
+                                <sys:String>OST_MechanicalEquipment</sys:String>
+                                <sys:String>OST_ElectricalFixtures</sys:String>
+                                <sys:String>OST_ElectricalEquipment</sys:String>
+                                <sys:String>OST_CommunicationDevices</sys:String>
+                                <sys:String>OST_GenericModel</sys:String>
+                            </ComboBox>
+                            <StackPanel Style="{StaticResource SettingText}">
+                                <TextBlock Style="{StaticResource Type.RowLabel}" Text="Speaker category" />
+                                <TextBlock Style="{StaticResource Type.RowHint}" Text="{Binding PickedSpeakerSummary}" />
+                            </StackPanel>
+                        </DockPanel>
+                    </Border>
 
-            <!-- ============ GRID TAB ============ -->
-            <TabItem Header="Grid">
-                <StackPanel Margin="12">
-                    <TextBlock Style="{StaticResource SectionHeader}" Text="Receiver Grid Settings"/>
-
-                    <Grid Margin="0,8">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="180"/>
-                            <ColumnDefinition Width="120"/>
-                            <ColumnDefinition Width="*"/>
-                        </Grid.ColumnDefinitions>
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                        </Grid.RowDefinitions>
-
-                        <TextBlock Grid.Row="0" Grid.Column="0" Style="{StaticResource LabelStyle}" Text="Grid Spacing (m):"/>
-                        <TextBox Grid.Row="0" Grid.Column="1" Style="{StaticResource InputBoxStyle}"
-                                 Text="{Binding GridSpacing, UpdateSourceTrigger=PropertyChanged}"/>
-                        <TextBlock Grid.Row="0" Grid.Column="2" Style="{StaticResource LabelStyle}"
-                                   Text="Distance between receiver points" FontSize="11"/>
-
-                        <TextBlock Grid.Row="1" Grid.Column="0" Style="{StaticResource LabelStyle}" Text="Receiver Height (m):"/>
-                        <TextBox Grid.Row="1" Grid.Column="1" Style="{StaticResource InputBoxStyle}"
-                                 Text="{Binding ReceiverHeight, UpdateSourceTrigger=PropertyChanged}"/>
-                        <TextBlock Grid.Row="1" Grid.Column="2" Style="{StaticResource LabelStyle}"
-                                   Text="Height above floor (1.2m seated, 1.5m standing)" FontSize="11"/>
-
-                        <TextBlock Grid.Row="2" Grid.Column="0" Style="{StaticResource LabelStyle}" Text="Boundary Offset (m):"/>
-                        <TextBox Grid.Row="2" Grid.Column="1" Style="{StaticResource InputBoxStyle}"
-                                 Text="{Binding BoundaryOffset, UpdateSourceTrigger=PropertyChanged}"/>
-                        <TextBlock Grid.Row="2" Grid.Column="2" Style="{StaticResource LabelStyle}"
-                                   Text="Inset from room walls" FontSize="11"/>
-
-                        <TextBlock Grid.Row="3" Grid.Column="0" Style="{StaticResource LabelStyle}" Text="Humidity (%):"/>
-                        <TextBox Grid.Row="3" Grid.Column="1" Style="{StaticResource InputBoxStyle}"
-                                 Text="{Binding Humidity, UpdateSourceTrigger=PropertyChanged}"
-                                 ToolTip="Relative humidity (0–100 %). Affects high-frequency air absorption per ISO 9613-1."/>
-                        <TextBlock Grid.Row="3" Grid.Column="2" Style="{StaticResource LabelStyle}"
-                                   Text="Air humidity — affects 4–8 kHz absorption" FontSize="11"/>
-
-                        <CheckBox Grid.Row="4" Grid.Column="0" Content="Min SPL Threshold"
-                                  IsChecked="{Binding UseMinSplThreshold, UpdateSourceTrigger=PropertyChanged}"
-                                  VerticalAlignment="Center" Margin="0,6,0,0"/>
-                        <TextBox Grid.Row="4" Grid.Column="1" Style="{StaticResource InputBoxStyle}"
-                                 Text="{Binding MinSplThreshold, UpdateSourceTrigger=PropertyChanged}"
-                                 IsEnabled="{Binding UseMinSplThreshold}" Margin="0,6,0,0"/>
-                        <TextBlock Grid.Row="4" Grid.Column="2" Style="{StaticResource LabelStyle}"
-                                   Text="Hide areas below this dB level" FontSize="11" Margin="0,6,0,0"/>
-
-                        <TextBlock Grid.Row="5" Grid.Column="0" Grid.ColumnSpan="3"
-                                   Style="{StaticResource SectionHeader}" Text="Octave Band Settings (125 – 8k Hz)"
-                                   FontSize="12" Margin="0,10,0,4"/>
-
-                        <!-- RT60 per band -->
-                        <StackPanel Grid.Row="6" Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
-                            <TextBlock Style="{StaticResource LabelStyle}" Text="RT60 (s):" Margin="0,4,0,0"/>
-                            <Button Content="Estimate" Style="{StaticResource BtnStyle}"
-                                    Click="EstimateRT60_Click"
-                                    Margin="6,4,0,0" Height="20" FontSize="10"
-                                    ToolTip="Auto-compute RT60 from room geometry and wall materials using the Eyring-Norris formula"/>
-                            <CheckBox Content="Per room" IsChecked="{Binding AutoRt60PerRoom}"
-                                      VerticalAlignment="Center" Margin="6,4,0,0" FontSize="10"
-                                      Foreground="{DynamicResource ForegroundBrush}"
-                                      ToolTip="Estimate each room's RT60 from its own geometry and materials when the analysis runs (ignores the values on the right)"/>
-                        </StackPanel>
-                        <StackPanel Grid.Row="6" Grid.Column="1" Grid.ColumnSpan="2" Orientation="Horizontal" Margin="0,4,0,0">
-                            <TextBox Width="45" Style="{StaticResource InputBoxStyle}" Text="{Binding RT60_125, UpdateSourceTrigger=PropertyChanged}" ToolTip="125 Hz" Margin="0,0,3,0"/>
-                            <TextBox Width="45" Style="{StaticResource InputBoxStyle}" Text="{Binding RT60_250, UpdateSourceTrigger=PropertyChanged}" ToolTip="250 Hz" Margin="0,0,3,0"/>
-                            <TextBox Width="45" Style="{StaticResource InputBoxStyle}" Text="{Binding RT60_500, UpdateSourceTrigger=PropertyChanged}" ToolTip="500 Hz" Margin="0,0,3,0"/>
-                            <TextBox Width="45" Style="{StaticResource InputBoxStyle}" Text="{Binding RT60_1k, UpdateSourceTrigger=PropertyChanged}" ToolTip="1 kHz" Margin="0,0,3,0"/>
-                            <TextBox Width="45" Style="{StaticResource InputBoxStyle}" Text="{Binding RT60_2k, UpdateSourceTrigger=PropertyChanged}" ToolTip="2 kHz" Margin="0,0,3,0"/>
-                            <TextBox Width="45" Style="{StaticResource InputBoxStyle}" Text="{Binding RT60_4k, UpdateSourceTrigger=PropertyChanged}" ToolTip="4 kHz" Margin="0,0,3,0"/>
-                            <TextBox Width="45" Style="{StaticResource InputBoxStyle}" Text="{Binding RT60_8k, UpdateSourceTrigger=PropertyChanged}" ToolTip="8 kHz"/>
-                        </StackPanel>
-
-                        <!-- Background noise per band -->
-                        <TextBlock Grid.Row="7" Grid.Column="0" Style="{StaticResource LabelStyle}" Text="Noise (dB):" Margin="0,4,0,0"/>
-                        <StackPanel Grid.Row="7" Grid.Column="1" Grid.ColumnSpan="2" Orientation="Horizontal" Margin="0,4,0,0">
-                            <TextBox Width="45" Style="{StaticResource InputBoxStyle}" Text="{Binding Noise_125, UpdateSourceTrigger=PropertyChanged}" ToolTip="125 Hz" Margin="0,0,3,0"/>
-                            <TextBox Width="45" Style="{StaticResource InputBoxStyle}" Text="{Binding Noise_250, UpdateSourceTrigger=PropertyChanged}" ToolTip="250 Hz" Margin="0,0,3,0"/>
-                            <TextBox Width="45" Style="{StaticResource InputBoxStyle}" Text="{Binding Noise_500, UpdateSourceTrigger=PropertyChanged}" ToolTip="500 Hz" Margin="0,0,3,0"/>
-                            <TextBox Width="45" Style="{StaticResource InputBoxStyle}" Text="{Binding Noise_1k, UpdateSourceTrigger=PropertyChanged}" ToolTip="1 kHz" Margin="0,0,3,0"/>
-                            <TextBox Width="45" Style="{StaticResource InputBoxStyle}" Text="{Binding Noise_2k, UpdateSourceTrigger=PropertyChanged}" ToolTip="2 kHz" Margin="0,0,3,0"/>
-                            <TextBox Width="45" Style="{StaticResource InputBoxStyle}" Text="{Binding Noise_4k, UpdateSourceTrigger=PropertyChanged}" ToolTip="4 kHz" Margin="0,0,3,0"/>
-                            <TextBox Width="45" Style="{StaticResource InputBoxStyle}" Text="{Binding Noise_8k, UpdateSourceTrigger=PropertyChanged}" ToolTip="8 kHz"/>
-                        </StackPanel>
-
-                        <!-- A/B Line parameter -->
-                        <TextBlock Grid.Row="8" Grid.Column="0" Style="{StaticResource LabelStyle}" Text="A/B Line Parameter:" Margin="0,8,0,0"/>
-                        <TextBox Grid.Row="8" Grid.Column="1" Style="{StaticResource InputBoxStyle}"
-                                 Text="{Binding AbLineParameterName, UpdateSourceTrigger=PropertyChanged}"
-                                 Margin="0,8,0,0"
-                                 ToolTip="Name of the Revit instance parameter that holds the A/B line value (e.g. 'A' or 'B'). Leave empty to disable A/B filtering."/>
-                        <TextBlock Grid.Row="8" Grid.Column="2" Style="{StaticResource LabelStyle}"
-                                   Text="Revit parameter name storing the A/B line designation" FontSize="11" Margin="0,8,0,0"/>
-                    </Grid>
-
-                    <!-- Floor / ceiling finishes: used for floor & ceiling reflections and the RT60 estimate -->
-                    <TextBlock Style="{StaticResource SectionHeader}" Text="Room Surfaces" FontSize="12" Margin="0,6,0,4"/>
-                    <Grid>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="180"/>
-                            <ColumnDefinition Width="240"/>
-                            <ColumnDefinition Width="*"/>
-                        </Grid.ColumnDefinitions>
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                        </Grid.RowDefinitions>
-
-                        <TextBlock Grid.Row="0" Grid.Column="0" Style="{StaticResource LabelStyle}" Text="Floor:"/>
-                        <ComboBox Grid.Row="0" Grid.Column="1" Style="{StaticResource ComboStyle}"
-                                  ItemsSource="{Binding FloorSurfaceOptions}"
-                                  SelectedItem="{Binding FloorSurface, UpdateSourceTrigger=PropertyChanged}"
-                                  DisplayMemberPath="DisplayName"
-                                  ToolTip="Floor finish: sets how much sound the floor reflects and absorbs"/>
-
-                        <TextBlock Grid.Row="1" Grid.Column="0" Style="{StaticResource LabelStyle}" Text="Ceiling:" Margin="0,4,0,0"/>
-                        <ComboBox Grid.Row="1" Grid.Column="1" Style="{StaticResource ComboStyle}" Margin="0,4,0,0"
-                                  ItemsSource="{Binding CeilingSurfaceOptions}"
-                                  SelectedItem="{Binding CeilingSurface, UpdateSourceTrigger=PropertyChanged}"
-                                  DisplayMemberPath="DisplayName"
-                                  ToolTip="Ceiling finish: sets how much sound the ceiling reflects and absorbs"/>
-
-                        <TextBlock Grid.Row="2" Grid.Column="0" Style="{StaticResource LabelStyle}" Text="Occupancy (people):" Margin="0,4,0,0"/>
-                        <TextBox Grid.Row="2" Grid.Column="1" Style="{StaticResource InputBoxStyle}" Margin="0,4,0,0" Width="80"
-                                 HorizontalAlignment="Left"
-                                 Text="{Binding Occupants, UpdateSourceTrigger=PropertyChanged}"
-                                 ToolTip="Number of people in the room. People absorb sound and shorten the estimated RT60."/>
-
-                        <TextBlock Grid.Row="0" Grid.Column="2" Grid.RowSpan="3" Style="{StaticResource LabelStyle}"
-                                   Text="Used for floor/ceiling reflections and by Estimate RT60 — press Estimate again after changing"
-                                   FontSize="11" TextWrapping="Wrap" Margin="8,0,0,0"/>
-                    </Grid>
-
-                    <Button Content="Save Settings" Style="{StaticResource SuccessBtnStyle}"
-                            Click="SaveSettings_Click" HorizontalAlignment="Left" Margin="0,12"/>
-                </StackPanel>
-            </TabItem>
-
-            <!-- ============ RUN TAB ============ -->
-            <TabItem Header="Run">
-                <StackPanel Margin="12">
-                    <TextBlock Style="{StaticResource SectionHeader}" Text="Computation"/>
-
-                    <!-- A/B Line filter -->
-                    <StackPanel Orientation="Horizontal" Margin="0,8,0,4">
-                        <TextBlock Style="{StaticResource LabelStyle}" Text="Speaker Line:"
-                                   VerticalAlignment="Center" Margin="0,0,8,0"/>
-                        <RadioButton Content="Both"
-                                     IsChecked="{Binding FilterBoth, Mode=TwoWay}"
-                                     GroupName="SpeakerLine"
-                                     VerticalAlignment="Center"
-                                     Foreground="{DynamicResource ForegroundBrush}"
-                                     Margin="0,0,8,0"
-                                     ToolTip="Calculate using all speakers (A and B lines)"/>
-                        <RadioButton Content="A Line"
-                                     IsChecked="{Binding FilterALine, Mode=TwoWay}"
-                                     GroupName="SpeakerLine"
-                                     VerticalAlignment="Center"
-                                     Foreground="{DynamicResource ForegroundBrush}"
-                                     Margin="0,0,8,0"
-                                     ToolTip="Calculate using A line speakers only"/>
-                        <RadioButton Content="B Line"
-                                     IsChecked="{Binding FilterBLine, Mode=TwoWay}"
-                                     GroupName="SpeakerLine"
-                                     VerticalAlignment="Center"
-                                     Foreground="{DynamicResource ForegroundBrush}"
-                                     ToolTip="Calculate using B line speakers only"/>
-                    </StackPanel>
-
-                    <StackPanel Orientation="Horizontal" Margin="0,8">
-                        <Button Content="Quick Draft" Style="{StaticResource AccentBtnStyle}"
-                                Click="StartDraft_Click"
-                                IsEnabled="{Binding CanRun}"
-                                ToolTip="Fast preview — skips second-order and ceiling/floor reflections"/>
-                        <Button Content="Full Analysis" Style="{StaticResource SuccessBtnStyle}"
-                                Click="StartFull_Click"
-                                IsEnabled="{Binding CanRun}"
-                                Margin="8,0,0,0"/>
-                        <Button Content="Cancel" Style="{StaticResource DangerBtnStyle}"
-                                Click="CancelJob_Click"
-                                IsEnabled="{Binding IsRunning}"
-                                Margin="8,0,0,0"/>
-                    </StackPanel>
-
-                    <Border Style="{StaticResource Separator}"/>
-
-                    <!-- Progress -->
-                    <TextBlock Text="Progress:" Style="{StaticResource LabelStyle}" Margin="0,8,0,4"/>
-                    <Grid>
-                        <ProgressBar Height="24"
-                                     Value="{Binding Progress, Mode=OneWay}"
-                                     Minimum="0" Maximum="1"
-                                     Background="{DynamicResource SecondaryBackgroundBrush}"
-                                     Foreground="#FF0078D7"
-                                     BorderBrush="{DynamicResource BorderBrush}"/>
-                        <TextBlock Text="{Binding ProgressPercent}"
-                                   HorizontalAlignment="Center"
-                                   VerticalAlignment="Center"
-                                   Foreground="{DynamicResource ForegroundBrush}"
-                                   FontWeight="SemiBold"/>
-                    </Grid>
-
-                    <Border Style="{StaticResource Separator}"/>
-
-                    <!-- Last run summary -->
-                    <TextBlock Text="Last Run:" Style="{StaticResource LabelStyle}" Margin="0,8,0,4"/>
-                    <TextBlock Text="{Binding LastRunSummary}"
-                               Style="{StaticResource ValueLabelStyle}"
-                               TextWrapping="Wrap"/>
-                </StackPanel>
-            </TabItem>
-
-            <!-- ============ RESULTS TAB ============ -->
-            <TabItem Header="Results">
-                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                <StackPanel Margin="12">
-                    <TextBlock Style="{StaticResource SectionHeader}" Text="Visualization"/>
-
-                    <StackPanel Orientation="Horizontal" Margin="0,8">
-                        <TextBlock Style="{StaticResource LabelStyle}" Text="Mode:" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                        <ComboBox Style="{StaticResource ComboStyle}"
-                                  ItemsSource="{Binding AvailableVisualizationModes}"
-                                  SelectedItem="{Binding SelectedVisualizationMode}"
-                                  Width="170" Margin="0,0,12,0">
-                            <ComboBox.ItemTemplate>
-                                <DataTemplate>
-                                    <TextBlock Text="{Binding Converter={StaticResource VisModeDisplayName}}"
-                                               VerticalAlignment="Center"/>
-                                </DataTemplate>
-                            </ComboBox.ItemTemplate>
-                        </ComboBox>
-                        <Button Content="Visualize Heatmap" Style="{StaticResource SuccessBtnStyle}"
-                                Click="Visualize_Click"
-                                IsEnabled="{Binding HasResults}"/>
-                        <Button Content="Clear Visualization" Style="{StaticResource DangerBtnStyle}"
-                                Click="ClearVisualization_Click"/>
-                        <Button Content="Import Latest Results" Style="{StaticResource BtnStyle}"
-                                Click="ImportResults_Click"/>
-                    </StackPanel>
-
-                    <Border Style="{StaticResource Separator}"/>
-
-                    <TextBlock Text="Results Summary:" Style="{StaticResource LabelStyle}" Margin="0,8,0,4"/>
-                    <TextBlock Text="{Binding LastRunSummary}"
-                               Style="{StaticResource ValueLabelStyle}"
-                               TextWrapping="Wrap"/>
-
-                    <StackPanel Visibility="{Binding HasResults, Converter={StaticResource BoolToVis}}" Margin="0,12">
+                    <Border
+                        Grid.Row="2"
+                        Padding="0,4"
+                        Style="{StaticResource Surface}">
                         <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="140"/>
-                                <ColumnDefinition Width="*"/>
-                            </Grid.ColumnDefinitions>
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto"/>
-                                <RowDefinition Height="Auto"/>
-                                <RowDefinition Height="Auto"/>
-                                <RowDefinition Height="Auto"/>
-                                <RowDefinition Height="Auto"/>
-                                <RowDefinition Height="Auto"/>
-                                <RowDefinition Height="Auto"/>
-                                <RowDefinition Height="Auto"/>
-                                <RowDefinition Height="Auto"/>
-                                <RowDefinition Height="Auto"/>
-                                <RowDefinition Height="Auto"/>
-                            </Grid.RowDefinitions>
-
-                            <TextBlock Grid.Row="0" Grid.Column="0" Style="{StaticResource LabelStyle}" Text="Receiver Count:"/>
-                            <TextBlock Grid.Row="0" Grid.Column="1" Style="{StaticResource ValueLabelStyle}"
-                                       Text="{Binding LastOutput.ReceiverCount}"/>
-
-                            <TextBlock Grid.Row="1" Grid.Column="0" Style="{StaticResource LabelStyle}" Text="Min SPL (dB):"/>
-                            <TextBlock Grid.Row="1" Grid.Column="1" Style="{StaticResource ValueLabelStyle}"
-                                       Text="{Binding LastOutput.MinSplDb, StringFormat={}{0:F1}}"/>
-
-                            <TextBlock Grid.Row="2" Grid.Column="0" Style="{StaticResource LabelStyle}" Text="Max SPL (dB):"/>
-                            <TextBlock Grid.Row="2" Grid.Column="1" Style="{StaticResource ValueLabelStyle}"
-                                       Text="{Binding LastOutput.MaxSplDb, StringFormat={}{0:F1}}"/>
-
-                            <TextBlock Grid.Row="3" Grid.Column="0" Style="{StaticResource LabelStyle}"
-                                       Text="SPL Range (dBA):"
-                                       ToolTip="A-weighted SPL range. Used for noise regulation compliance (IEC 61672-1)."/>
-                            <TextBlock Grid.Row="3" Grid.Column="1" Style="{StaticResource ValueLabelStyle}"
-                                       Text="{Binding LastOutput.MinSplDbA, StringFormat={}{0:F1}}"/>
-
-                            <TextBlock Grid.Row="4" Grid.Column="0" Style="{StaticResource LabelStyle}" Text="Min STI:"/>
-                            <TextBlock Grid.Row="4" Grid.Column="1" Style="{StaticResource ValueLabelStyle}"
-                                       Text="{Binding LastOutput.MinSti, StringFormat={}{0:F2}}"/>
-
-                            <TextBlock Grid.Row="5" Grid.Column="0" Style="{StaticResource LabelStyle}" Text="Max STI:"/>
-                            <TextBlock Grid.Row="5" Grid.Column="1" Style="{StaticResource ValueLabelStyle}"
-                                       Text="{Binding LastOutput.MaxSti, StringFormat={}{0:F2}}"/>
-
-                            <TextBlock Grid.Row="6" Grid.Column="0" Style="{StaticResource LabelStyle}"
-                                       Text="Avg C80 (dB):"
-                                       ToolTip="Average Clarity C80: ratio of early to late energy. Target for speech: > 0 dB."/>
-                            <TextBlock Grid.Row="6" Grid.Column="1" Style="{StaticResource ValueLabelStyle}"
-                                       Text="{Binding LastOutput.AvgC80Db, StringFormat={}{0:F1}}"/>
-
-                            <TextBlock Grid.Row="7" Grid.Column="0" Style="{StaticResource LabelStyle}"
-                                       Text="Avg D50:"
-                                       ToolTip="Average Definition D50: fraction of early energy. Target: > 0.5 for speech."/>
-                            <TextBlock Grid.Row="7" Grid.Column="1" Style="{StaticResource ValueLabelStyle}"
-                                       Text="{Binding LastOutput.AvgD50, StringFormat={}{0:F2}}"/>
-
-                            <TextBlock Grid.Row="8" Grid.Column="0" Style="{StaticResource LabelStyle}" Text="Compute Time:"/>
-                            <TextBlock Grid.Row="8" Grid.Column="1" Style="{StaticResource ValueLabelStyle}"
-                                       Text="{Binding LastOutput.ComputeTimeSeconds, StringFormat={}{0:F2}s}"/>
+                            <DataGrid
+                                AutomationProperties.Name="Speakers"
+                                ItemsSource="{Binding SpeakerGroups}"
+                                Style="{StaticResource DataGrid.Edit}"
+                                Visibility="{Binding SpeakerGroups.Count, Converter={StaticResource CountToVis}}">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn
+                                        Width="160"
+                                        Binding="{Binding FamilyName}"
+                                        ElementStyle="{StaticResource Grid.EditableText}"
+                                        Header="Family"
+                                        IsReadOnly="True" />
+                                    <DataGridTextColumn
+                                        Width="130"
+                                        Binding="{Binding TypeName}"
+                                        ElementStyle="{StaticResource Grid.ReadOnlyText}"
+                                        Header="Type"
+                                        IsReadOnly="True" />
+                                    <DataGridTextColumn
+                                        Width="56"
+                                        Binding="{Binding Count}"
+                                        ElementStyle="{StaticResource Grid.ReadOnlyText}"
+                                        Header="Count"
+                                        IsReadOnly="True" />
+                                    <DataGridTextColumn
+                                        Width="90"
+                                        Binding="{Binding LevelName}"
+                                        ElementStyle="{StaticResource Grid.ReadOnlyText}"
+                                        Header="Level"
+                                        IsReadOnly="True" />
+                                    <DataGridTemplateColumn Width="140" Header="Profile">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <ComboBox
+                                                    AutomationProperties.Name="Profile"
+                                                    SelectedItem="{Binding ProfileSource, UpdateSourceTrigger=PropertyChanged}"
+                                                    Style="{StaticResource Input.Combo.Cell}">
+                                                    <domain:ProfileSourceType>SimpleOmni</domain:ProfileSourceType>
+                                                    <domain:ProfileSourceType>SimpleConical</domain:ProfileSourceType>
+                                                    <domain:ProfileSourceType>WallMounted</domain:ProfileSourceType>
+                                                    <domain:ProfileSourceType>GllFile</domain:ProfileSourceType>
+                                                </ComboBox>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                    <DataGridTextColumn
+                                        Width="76"
+                                        Binding="{Binding OnAxisSplDb}"
+                                        EditingElementStyle="{StaticResource Grid.EditBox}"
+                                        ElementStyle="{StaticResource Grid.EditableText}">
+                                        <DataGridTextColumn.Header>
+                                            <TextBlock Text="SPL (dB)" ToolTip="On-axis sound pressure level at 1 m" />
+                                        </DataGridTextColumn.Header>
+                                    </DataGridTextColumn>
+                                    <DataGridTemplateColumn Width="190" Header="Response">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <ComboBox
+                                                    AutomationProperties.Name="Frequency response"
+                                                    ItemsSource="{Binding AvailableResponsePresets}"
+                                                    SelectedItem="{Binding ResponsePreset, UpdateSourceTrigger=PropertyChanged}"
+                                                    Style="{StaticResource Input.Combo.Cell}"
+                                                    ToolTip="Speaker frequency response. Generic presets; enter manufacturer data in the next column for accuracy." />
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                    <DataGridTextColumn
+                                        Width="150"
+                                        Binding="{Binding ResponseText, UpdateSourceTrigger=LostFocus}"
+                                        EditingElementStyle="{StaticResource Grid.EditBox}"
+                                        ElementStyle="{StaticResource Grid.EditableText}">
+                                        <DataGridTextColumn.Header>
+                                            <TextBlock Text="Response dB (125…8k)" ToolTip="Manufacturer response per octave band, 125 Hz to 8 kHz, e.g. '-6 -2 0 0 0 -1 -4'" />
+                                        </DataGridTextColumn.Header>
+                                    </DataGridTextColumn>
+                                    <DataGridTextColumn
+                                        Width="90"
+                                        Binding="{Binding ConeHalfAngleDeg}"
+                                        EditingElementStyle="{StaticResource Grid.EditBox}"
+                                        ElementStyle="{StaticResource Grid.EditableText}">
+                                        <DataGridTextColumn.Header>
+                                            <TextBlock Text="Cone angle (°)" ToolTip="Half-angle of the coverage cone, used when no coverage data is entered" />
+                                        </DataGridTextColumn.Header>
+                                    </DataGridTextColumn>
+                                    <DataGridTextColumn
+                                        Width="150"
+                                        Binding="{Binding CoverageText, UpdateSourceTrigger=LostFocus}"
+                                        EditingElementStyle="{StaticResource Grid.EditBox}"
+                                        ElementStyle="{StaticResource Grid.EditableText}">
+                                        <DataGridTextColumn.Header>
+                                            <TextBlock Text="Coverage ° (125…8k)" ToolTip="Datasheet -6 dB coverage angle (full) per octave band, e.g. '180 180 140 100 90 70 60'. 180 = omni. Empty = use Cone angle." />
+                                        </DataGridTextColumn.Header>
+                                    </DataGridTextColumn>
+                                    <DataGridTextColumn
+                                        Width="200"
+                                        Binding="{Binding DirectivityFilePath, UpdateSourceTrigger=LostFocus}"
+                                        EditingElementStyle="{StaticResource Grid.EditBox}"
+                                        ElementStyle="{StaticResource Grid.EditableText}">
+                                        <DataGridTextColumn.Header>
+                                            <TextBlock Text="Directivity file (CSV)" ToolTip="Polar table: header 'angle,125,250,500,1k,2k,4k,8k', rows 0..180 degrees with attenuation in dB. Replaces the cone model." />
+                                        </DataGridTextColumn.Header>
+                                    </DataGridTextColumn>
+                                    <DataGridTextColumn
+                                        Width="180"
+                                        Binding="{Binding GllFilePath}"
+                                        EditingElementStyle="{StaticResource Grid.EditBox}"
+                                        ElementStyle="{StaticResource Grid.EditableText}"
+                                        Header="GLL file" />
+                                </DataGrid.Columns>
+                            </DataGrid>
+                            <!--  Empty state  -->
+                            <StackPanel
+                                MaxWidth="300"
+                                HorizontalAlignment="Center"
+                                VerticalAlignment="Center"
+                                Visibility="{Binding SpeakerGroups.Count, Converter={StaticResource CountToVis}, ConverterParameter=Invert}">
+                                <materialDesign:PackIcon Kind="SpeakerMultiple" Style="{StaticResource EmptyGlyph}" />
+                                <TextBlock
+                                    HorizontalAlignment="Center"
+                                    Style="{StaticResource Type.Heading}"
+                                    Text="No speakers yet" />
+                                <TextBlock
+                                    Margin="0,4,0,0"
+                                    Style="{StaticResource Type.Secondary}"
+                                    Text="Pick the speakers in the model. Speakers of the same family and type share one row."
+                                    TextAlignment="Center" />
+                            </StackPanel>
                         </Grid>
+                    </Border>
+                </Grid>
 
-                        <Border Style="{StaticResource Separator}"/>
+                <!--  ================= ROOM =================  -->
+                <ScrollViewer
+                    x:Name="RoomPage"
+                    ui:Motion.Reveal="True"
+                    Style="{StaticResource PageScroll}"
+                    Visibility="Collapsed">
+                    <StackPanel Margin="0,0,0,16">
+                        <TextBlock
+                            Margin="4,0,0,0"
+                            Style="{StaticResource Type.Secondary}"
+                            Text="Where the sound is measured, and how the room itself sounds." />
 
-                        <TextBlock Style="{StaticResource SectionHeader}" Text="Legend" Margin="0,4,0,8"/>
+                        <TextBlock Style="{StaticResource Type.GroupTitle}" Text="Receiver grid" />
+                        <Border Padding="0,2" Style="{StaticResource Card}">
+                            <StackPanel>
+                                <DockPanel Style="{StaticResource SettingRow}">
+                                    <StackPanel
+                                        VerticalAlignment="Center"
+                                        DockPanel.Dock="Right"
+                                        Orientation="Horizontal">
+                                        <TextBox
+                                            AutomationProperties.Name="Grid spacing in metres"
+                                            Style="{StaticResource Input.Number}"
+                                            Text="{Binding GridSpacing, UpdateSourceTrigger=PropertyChanged}" />
+                                        <TextBlock Style="{StaticResource Type.Unit}" Text="m" />
+                                    </StackPanel>
+                                    <StackPanel Style="{StaticResource SettingText}">
+                                        <TextBlock Style="{StaticResource Type.RowLabel}" Text="Spacing" />
+                                        <TextBlock Style="{StaticResource Type.RowHint}" Text="Distance between receiver points" />
+                                    </StackPanel>
+                                </DockPanel>
+                                <Rectangle Style="{StaticResource Hairline}" />
+                                <DockPanel Style="{StaticResource SettingRow}">
+                                    <StackPanel
+                                        VerticalAlignment="Center"
+                                        DockPanel.Dock="Right"
+                                        Orientation="Horizontal">
+                                        <TextBox
+                                            AutomationProperties.Name="Receiver height in metres"
+                                            Style="{StaticResource Input.Number}"
+                                            Text="{Binding ReceiverHeight, UpdateSourceTrigger=PropertyChanged}" />
+                                        <TextBlock Style="{StaticResource Type.Unit}" Text="m" />
+                                    </StackPanel>
+                                    <StackPanel Style="{StaticResource SettingText}">
+                                        <TextBlock Style="{StaticResource Type.RowLabel}" Text="Listener height" />
+                                        <TextBlock Style="{StaticResource Type.RowHint}" Text="Above the floor: 1.2 m seated, 1.5 m standing" />
+                                    </StackPanel>
+                                </DockPanel>
+                                <Rectangle Style="{StaticResource Hairline}" />
+                                <DockPanel Style="{StaticResource SettingRow}">
+                                    <StackPanel
+                                        VerticalAlignment="Center"
+                                        DockPanel.Dock="Right"
+                                        Orientation="Horizontal">
+                                        <TextBox
+                                            AutomationProperties.Name="Boundary offset in metres"
+                                            Style="{StaticResource Input.Number}"
+                                            Text="{Binding BoundaryOffset, UpdateSourceTrigger=PropertyChanged}" />
+                                        <TextBlock Style="{StaticResource Type.Unit}" Text="m" />
+                                    </StackPanel>
+                                    <StackPanel Style="{StaticResource SettingText}">
+                                        <TextBlock Style="{StaticResource Type.RowLabel}" Text="Boundary offset" />
+                                        <TextBlock Style="{StaticResource Type.RowHint}" Text="Inset from the room walls" />
+                                    </StackPanel>
+                                </DockPanel>
+                            </StackPanel>
+                        </Border>
 
-                        <!-- Legend + description side by side -->
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto"/>
-                                <ColumnDefinition Width="16"/>
-                                <ColumnDefinition Width="*"/>
-                            </Grid.ColumnDefinitions>
-
-                            <!-- Color band legend (left) -->
-                            <ItemsControl Grid.Column="0" ItemsSource="{Binding LegendItems}">
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate>
-                                        <StackPanel Orientation="Horizontal" Margin="0,2">
-                                            <Border Width="28" Height="16" CornerRadius="2" Margin="0,0,8,0">
-                                                <Border.Background>
-                                                    <SolidColorBrush Color="{Binding ColorValue}"/>
-                                                </Border.Background>
-                                            </Border>
-                                            <TextBlock Text="{Binding Label}" Style="{StaticResource ValueLabelStyle}"
-                                                       VerticalAlignment="Center" FontSize="12"/>
+                        <TextBlock Style="{StaticResource Type.GroupTitle}" Text="Room acoustics" />
+                        <Border Style="{StaticResource Card}">
+                            <StackPanel>
+                                <DockPanel>
+                                    <Button
+                                        VerticalAlignment="Top"
+                                        Click="EstimateRT60_Click"
+                                        DockPanel.Dock="Right"
+                                        Style="{StaticResource Button.Secondary}"
+                                        ToolTip="Compute RT60 from the room geometry, wall materials, surfaces and occupancy (Eyring-Norris)">
+                                        <StackPanel Orientation="Horizontal">
+                                            <materialDesign:PackIcon Kind="CalculatorVariantOutline" Style="{StaticResource ButtonIconLabel}" />
+                                            <TextBlock Text="Estimate" />
                                         </StackPanel>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
+                                    </Button>
+                                    <StackPanel Margin="0,0,16,0">
+                                        <TextBlock Style="{StaticResource Type.RowLabel}" Text="Reverberation and noise" />
+                                        <TextBlock Style="{StaticResource Type.RowHint}" Text="Per octave band. Estimate fills in RT60 from the room." />
+                                    </StackPanel>
+                                </DockPanel>
 
-                            <!-- Mode description card (right) -->
-                            <Border Grid.Column="2"
-                                    Background="{DynamicResource SecondaryBackgroundBrush}"
-                                    BorderBrush="{DynamicResource BorderBrush}"
-                                    BorderThickness="1"
-                                    CornerRadius="4"
-                                    Padding="10,8"
-                                    VerticalAlignment="Top">
+                                <!--  Octave-band table: one column per band, one row per quantity  -->
+                                <Grid Margin="0,14,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="84" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
+                                    <Grid.Resources>
+                                        <Style BasedOn="{StaticResource Type.Caption}" TargetType="{x:Type TextBlock}">
+                                            <Setter Property="Margin" Value="0,0,4,4" />
+                                            <Setter Property="TextAlignment" Value="Center" />
+                                        </Style>
+                                    </Grid.Resources>
+                                    <TextBlock Grid.Column="0" TextAlignment="Left" Text="Hz" />
+                                    <TextBlock Grid.Column="1" Text="125" />
+                                    <TextBlock Grid.Column="2" Text="250" />
+                                    <TextBlock Grid.Column="3" Text="500" />
+                                    <TextBlock Grid.Column="4" Text="1k" />
+                                    <TextBlock Grid.Column="5" Text="2k" />
+                                    <TextBlock Grid.Column="6" Text="4k" />
+                                    <TextBlock Grid.Column="7" Text="8k" />
+
+                                    <TextBlock
+                                        Grid.Row="1"
+                                        Margin="0,0,0,6"
+                                        VerticalAlignment="Center"
+                                        Style="{StaticResource Type.Label}"
+                                        Text="RT60 (s)" />
+                                    <TextBox Grid.Row="1" Grid.Column="1" Margin="0,0,4,6" AutomationProperties.Name="RT60 at 125 Hz" Style="{StaticResource Input.Band}" Text="{Binding RT60_125, UpdateSourceTrigger=PropertyChanged}" />
+                                    <TextBox Grid.Row="1" Grid.Column="2" Margin="0,0,4,6" AutomationProperties.Name="RT60 at 250 Hz" Style="{StaticResource Input.Band}" Text="{Binding RT60_250, UpdateSourceTrigger=PropertyChanged}" />
+                                    <TextBox Grid.Row="1" Grid.Column="3" Margin="0,0,4,6" AutomationProperties.Name="RT60 at 500 Hz" Style="{StaticResource Input.Band}" Text="{Binding RT60_500, UpdateSourceTrigger=PropertyChanged}" />
+                                    <TextBox Grid.Row="1" Grid.Column="4" Margin="0,0,4,6" AutomationProperties.Name="RT60 at 1 kHz" Style="{StaticResource Input.Band}" Text="{Binding RT60_1k, UpdateSourceTrigger=PropertyChanged}" />
+                                    <TextBox Grid.Row="1" Grid.Column="5" Margin="0,0,4,6" AutomationProperties.Name="RT60 at 2 kHz" Style="{StaticResource Input.Band}" Text="{Binding RT60_2k, UpdateSourceTrigger=PropertyChanged}" />
+                                    <TextBox Grid.Row="1" Grid.Column="6" Margin="0,0,4,6" AutomationProperties.Name="RT60 at 4 kHz" Style="{StaticResource Input.Band}" Text="{Binding RT60_4k, UpdateSourceTrigger=PropertyChanged}" />
+                                    <TextBox Grid.Row="1" Grid.Column="7" Margin="0,0,0,6" AutomationProperties.Name="RT60 at 8 kHz" Style="{StaticResource Input.Band}" Text="{Binding RT60_8k, UpdateSourceTrigger=PropertyChanged}" />
+
+                                    <TextBlock
+                                        Grid.Row="2"
+                                        VerticalAlignment="Center"
+                                        Style="{StaticResource Type.Label}"
+                                        Text="Noise (dB)" />
+                                    <TextBox Grid.Row="2" Grid.Column="1" AutomationProperties.Name="Background noise at 125 Hz" Style="{StaticResource Input.Band}" Text="{Binding Noise_125, UpdateSourceTrigger=PropertyChanged}" />
+                                    <TextBox Grid.Row="2" Grid.Column="2" AutomationProperties.Name="Background noise at 250 Hz" Style="{StaticResource Input.Band}" Text="{Binding Noise_250, UpdateSourceTrigger=PropertyChanged}" />
+                                    <TextBox Grid.Row="2" Grid.Column="3" AutomationProperties.Name="Background noise at 500 Hz" Style="{StaticResource Input.Band}" Text="{Binding Noise_500, UpdateSourceTrigger=PropertyChanged}" />
+                                    <TextBox Grid.Row="2" Grid.Column="4" AutomationProperties.Name="Background noise at 1 kHz" Style="{StaticResource Input.Band}" Text="{Binding Noise_1k, UpdateSourceTrigger=PropertyChanged}" />
+                                    <TextBox Grid.Row="2" Grid.Column="5" AutomationProperties.Name="Background noise at 2 kHz" Style="{StaticResource Input.Band}" Text="{Binding Noise_2k, UpdateSourceTrigger=PropertyChanged}" />
+                                    <TextBox Grid.Row="2" Grid.Column="6" AutomationProperties.Name="Background noise at 4 kHz" Style="{StaticResource Input.Band}" Text="{Binding Noise_4k, UpdateSourceTrigger=PropertyChanged}" />
+                                    <TextBox Grid.Row="2" Grid.Column="7" Margin="0" AutomationProperties.Name="Background noise at 8 kHz" Style="{StaticResource Input.Band}" Text="{Binding Noise_8k, UpdateSourceTrigger=PropertyChanged}" />
+                                </Grid>
+
+                                <CheckBox
+                                    Margin="0,14,0,0"
+                                    IsChecked="{Binding AutoRt60PerRoom}"
+                                    Style="{StaticResource Input.Check}"
+                                    ToolTip="Estimate each room's RT60 from its own geometry and materials when the analysis runs (the RT60 values above are then not used)">
+                                    <TextBlock Text="Estimate RT60 for each room when the analysis runs" TextWrapping="Wrap" />
+                                </CheckBox>
+                            </StackPanel>
+                        </Border>
+
+                        <TextBlock Style="{StaticResource Type.GroupTitle}" Text="Surfaces and people" />
+                        <Border Padding="0,2" Style="{StaticResource Card}">
+                            <StackPanel>
+                                <DockPanel Style="{StaticResource SettingRow}">
+                                    <ComboBox
+                                        Width="200"
+                                        VerticalAlignment="Center"
+                                        AutomationProperties.Name="Floor finish"
+                                        DisplayMemberPath="DisplayName"
+                                        DockPanel.Dock="Right"
+                                        ItemsSource="{Binding FloorSurfaceOptions}"
+                                        SelectedItem="{Binding FloorSurface, UpdateSourceTrigger=PropertyChanged}"
+                                        Style="{StaticResource Input.Combo}"
+                                        ToolTip="Floor finish: sets how much sound the floor reflects and absorbs" />
+                                    <StackPanel Style="{StaticResource SettingText}">
+                                        <TextBlock Style="{StaticResource Type.RowLabel}" Text="Floor" />
+                                    </StackPanel>
+                                </DockPanel>
+                                <Rectangle Style="{StaticResource Hairline}" />
+                                <DockPanel Style="{StaticResource SettingRow}">
+                                    <ComboBox
+                                        Width="200"
+                                        VerticalAlignment="Center"
+                                        AutomationProperties.Name="Ceiling finish"
+                                        DisplayMemberPath="DisplayName"
+                                        DockPanel.Dock="Right"
+                                        ItemsSource="{Binding CeilingSurfaceOptions}"
+                                        SelectedItem="{Binding CeilingSurface, UpdateSourceTrigger=PropertyChanged}"
+                                        Style="{StaticResource Input.Combo}"
+                                        ToolTip="Ceiling finish: sets how much sound the ceiling reflects and absorbs" />
+                                    <StackPanel Style="{StaticResource SettingText}">
+                                        <TextBlock Style="{StaticResource Type.RowLabel}" Text="Ceiling" />
+                                    </StackPanel>
+                                </DockPanel>
+                                <Rectangle Style="{StaticResource Hairline}" />
+                                <DockPanel Style="{StaticResource SettingRow}">
+                                    <StackPanel
+                                        VerticalAlignment="Center"
+                                        DockPanel.Dock="Right"
+                                        Orientation="Horizontal">
+                                        <TextBox
+                                            AutomationProperties.Name="Occupancy in people"
+                                            Style="{StaticResource Input.Number}"
+                                            Text="{Binding Occupants, UpdateSourceTrigger=PropertyChanged}"
+                                            ToolTip="People absorb sound and shorten the estimated RT60" />
+                                        <TextBlock Style="{StaticResource Type.Unit}" Text="ppl" />
+                                    </StackPanel>
+                                    <StackPanel Style="{StaticResource SettingText}">
+                                        <TextBlock Style="{StaticResource Type.RowLabel}" Text="Occupancy" />
+                                        <TextBlock Style="{StaticResource Type.RowHint}" Text="People in the room" />
+                                    </StackPanel>
+                                </DockPanel>
+                                <Rectangle Style="{StaticResource Hairline}" />
+                                <DockPanel Style="{StaticResource SettingRow}">
+                                    <StackPanel
+                                        VerticalAlignment="Center"
+                                        DockPanel.Dock="Right"
+                                        Orientation="Horizontal">
+                                        <TextBox
+                                            AutomationProperties.Name="Relative humidity in percent"
+                                            Style="{StaticResource Input.Number}"
+                                            Text="{Binding Humidity, UpdateSourceTrigger=PropertyChanged}"
+                                            ToolTip="Relative humidity (0–100 %). Affects high-frequency air absorption per ISO 9613-1." />
+                                        <TextBlock Style="{StaticResource Type.Unit}" Text="%" />
+                                    </StackPanel>
+                                    <StackPanel Style="{StaticResource SettingText}">
+                                        <TextBlock Style="{StaticResource Type.RowLabel}" Text="Humidity" />
+                                        <TextBlock Style="{StaticResource Type.RowHint}" Text="Affects air absorption at 4–8 kHz" />
+                                    </StackPanel>
+                                </DockPanel>
+                            </StackPanel>
+                        </Border>
+                        <TextBlock
+                            Margin="4,6,0,0"
+                            Style="{StaticResource Type.Caption}"
+                            Text="Floor, ceiling and occupancy are used for reflections and by Estimate. Press Estimate again after changing them." />
+
+                        <TextBlock Style="{StaticResource Type.GroupTitle}" Text="Display and speaker lines" />
+                        <Border Padding="0,2" Style="{StaticResource Card}">
+                            <StackPanel>
+                                <DockPanel Style="{StaticResource SettingRow}">
+                                    <StackPanel
+                                        VerticalAlignment="Center"
+                                        DockPanel.Dock="Right"
+                                        Orientation="Horizontal">
+                                        <TextBox
+                                            AutomationProperties.Name="Minimum level in dB"
+                                            IsEnabled="{Binding UseMinSplThreshold}"
+                                            Style="{StaticResource Input.Number}"
+                                            Text="{Binding MinSplThreshold, UpdateSourceTrigger=PropertyChanged}" />
+                                        <TextBlock Style="{StaticResource Type.Unit}" Text="dB" />
+                                    </StackPanel>
+                                    <StackPanel Style="{StaticResource SettingText}">
+                                        <CheckBox
+                                            Content="Hide quiet areas"
+                                            IsChecked="{Binding UseMinSplThreshold, UpdateSourceTrigger=PropertyChanged}"
+                                            Style="{StaticResource Input.Check}" />
+                                        <TextBlock
+                                            Margin="24,2,0,0"
+                                            Style="{StaticResource Type.RowHint}"
+                                            Text="Areas below this level are left out of the heatmap" />
+                                    </StackPanel>
+                                </DockPanel>
+                                <Rectangle Style="{StaticResource Hairline}" />
+                                <DockPanel Style="{StaticResource SettingRow}">
+                                    <TextBox
+                                        Width="148"
+                                        VerticalAlignment="Center"
+                                        AutomationProperties.Name="A/B line parameter"
+                                        DockPanel.Dock="Right"
+                                        Style="{StaticResource Input.Text}"
+                                        Tag="Parameter name"
+                                        Text="{Binding AbLineParameterName, UpdateSourceTrigger=PropertyChanged}"
+                                        ToolTip="Name of the Revit instance parameter that holds the A/B line value (e.g. 'A' or 'B'). Leave empty to disable A/B filtering." />
+                                    <StackPanel Style="{StaticResource SettingText}">
+                                        <TextBlock Style="{StaticResource Type.RowLabel}" Text="A/B line parameter" />
+                                        <TextBlock Style="{StaticResource Type.RowHint}" Text="Instance parameter with the speaker's line. Leave empty to turn off." />
+                                    </StackPanel>
+                                </DockPanel>
+                            </StackPanel>
+                        </Border>
+
+                        <DockPanel Margin="4,16,0,0">
+                            <Button
+                                Click="SaveSettings_Click"
+                                DockPanel.Dock="Right"
+                                Style="{StaticResource Button.Primary}"
+                                ToolTip="Save these settings for next time">
+                                Save settings
+                            </Button>
+                            <TextBlock
+                                VerticalAlignment="Center"
+                                Style="{StaticResource Type.Caption}"
+                                Text="Settings are saved on this computer." />
+                        </DockPanel>
+                    </StackPanel>
+                </ScrollViewer>
+
+                <!--  ================= RUN =================  -->
+                <ScrollViewer
+                    x:Name="RunPage"
+                    ui:Motion.Reveal="True"
+                    Style="{StaticResource PageScroll}"
+                    Visibility="Collapsed">
+                    <StackPanel Margin="0,0,0,16">
+                        <TextBlock
+                            Margin="4,0,0,0"
+                            Style="{StaticResource Type.Secondary}"
+                            Text="Calculate the sound field on the receiver grid. The plan updates as results arrive." />
+
+                        <TextBlock Style="{StaticResource Type.GroupTitle}" Text="Speakers to include" />
+                        <Border Padding="0,2" Style="{StaticResource Card}">
+                            <DockPanel Style="{StaticResource SettingRow}">
+                                <Border
+                                    VerticalAlignment="Center"
+                                    AutomationProperties.Name="Speaker line"
+                                    DockPanel.Dock="Right"
+                                    Style="{StaticResource Segmented}">
+                                    <StackPanel Orientation="Horizontal">
+                                        <RadioButton
+                                            Content="All"
+                                            GroupName="SpeakerLine"
+                                            IsChecked="{Binding FilterBoth, Mode=TwoWay}"
+                                            Style="{StaticResource Segment}"
+                                            ToolTip="Calculate with all speakers (A and B lines)" />
+                                        <RadioButton
+                                            Content="A line"
+                                            GroupName="SpeakerLine"
+                                            IsChecked="{Binding FilterALine, Mode=TwoWay}"
+                                            Style="{StaticResource Segment}"
+                                            ToolTip="Calculate with A line speakers only" />
+                                        <RadioButton
+                                            Content="B line"
+                                            GroupName="SpeakerLine"
+                                            IsChecked="{Binding FilterBLine, Mode=TwoWay}"
+                                            Style="{StaticResource Segment}"
+                                            ToolTip="Calculate with B line speakers only" />
+                                    </StackPanel>
+                                </Border>
+                                <StackPanel Style="{StaticResource SettingText}">
+                                    <TextBlock Style="{StaticResource Type.RowLabel}" Text="Speaker line" />
+                                    <TextBlock Style="{StaticResource Type.RowHint}" Text="Uses the A/B line parameter set on the Room page" />
+                                </StackPanel>
+                            </DockPanel>
+                        </Border>
+
+                        <TextBlock Style="{StaticResource Type.GroupTitle}" Text="Calculate" />
+                        <Border Style="{StaticResource Card}">
+                            <StackPanel>
+                                <WrapPanel>
+                                    <Button
+                                        Margin="0,0,8,0"
+                                        Click="StartFull_Click"
+                                        IsEnabled="{Binding CanRun}"
+                                        Style="{StaticResource Button.Primary}"
+                                        ToolTip="All reflections and the reverberant field">
+                                        <StackPanel Orientation="Horizontal">
+                                            <materialDesign:PackIcon Kind="PlayCircleOutline" Style="{StaticResource ButtonIconLabel}" />
+                                            <TextBlock Text="Run analysis" />
+                                        </StackPanel>
+                                    </Button>
+                                    <Button
+                                        Margin="0,0,8,0"
+                                        Click="StartDraft_Click"
+                                        IsEnabled="{Binding CanRun}"
+                                        Style="{StaticResource Button.Secondary}"
+                                        ToolTip="Fast preview: skips second-order and floor/ceiling reflections">
+                                        <StackPanel Orientation="Horizontal">
+                                            <materialDesign:PackIcon Kind="FlashOutline" Style="{StaticResource ButtonIconLabel}" />
+                                            <TextBlock Text="Quick draft" />
+                                        </StackPanel>
+                                    </Button>
+                                    <Button
+                                        Click="CancelJob_Click"
+                                        Style="{StaticResource Button.Destructive}"
+                                        ToolTip="Stop the running analysis"
+                                        Visibility="{Binding IsRunning, Converter={StaticResource BoolToVis}}">
+                                        <StackPanel Orientation="Horizontal">
+                                            <materialDesign:PackIcon Kind="StopCircleOutline" Style="{StaticResource ButtonIconLabel}" />
+                                            <TextBlock Text="Stop" />
+                                        </StackPanel>
+                                    </Button>
+                                </WrapPanel>
+                                <TextBlock
+                                    Margin="0,10,0,0"
+                                    Style="{StaticResource Type.Caption}"
+                                    Text="Quick draft skips second-order and floor/ceiling reflections for a fast preview." />
+
+                                <DockPanel Margin="0,16,0,0">
+                                    <TextBlock
+                                        Width="40"
+                                        Margin="12,0,0,0"
+                                        VerticalAlignment="Center"
+                                        DockPanel.Dock="Right"
+                                        Style="{StaticResource Type.Secondary}"
+                                        Text="{Binding ProgressPercent}"
+                                        TextAlignment="Right" />
+                                    <ProgressBar
+                                        VerticalAlignment="Center"
+                                        AutomationProperties.Name="Analysis progress"
+                                        Maximum="1"
+                                        Minimum="0"
+                                        Style="{StaticResource Progress.Bar}"
+                                        Value="{Binding Progress, Mode=OneWay}" />
+                                </DockPanel>
+                            </StackPanel>
+                        </Border>
+
+                        <TextBlock Style="{StaticResource Type.GroupTitle}" Text="Last run" />
+                        <Border Style="{StaticResource Card}">
+                            <Grid>
+                                <TextBlock
+                                    Style="{StaticResource Type.Body}"
+                                    Text="{Binding LastRunSummary}"
+                                    Visibility="{Binding LastRunSummary, Converter={StaticResource NotEmptyToVis}}" />
+                                <TextBlock
+                                    Style="{StaticResource Type.Secondary}"
+                                    Text="No analysis has run in this session yet."
+                                    Visibility="{Binding LastRunSummary, Converter={StaticResource NotEmptyToVis}, ConverterParameter=Invert}" />
+                            </Grid>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
+
+                <!--  ================= RESULTS =================  -->
+                <ScrollViewer
+                    x:Name="ResultsPage"
+                    ui:Motion.Reveal="True"
+                    Style="{StaticResource PageScroll}"
+                    Visibility="Collapsed">
+                    <StackPanel Margin="0,0,0,16">
+                        <!--  Empty state: say what to do  -->
+                        <Border
+                            Margin="0,0,0,4"
+                            Padding="24,28"
+                            Style="{StaticResource Card}"
+                            Visibility="{Binding HasResults, Converter={StaticResource BoolToVisInvertible}, ConverterParameter=Invert}">
+                            <StackPanel HorizontalAlignment="Center">
+                                <materialDesign:PackIcon Kind="ChartBoxOutline" Style="{StaticResource EmptyGlyph}" />
+                                <TextBlock
+                                    HorizontalAlignment="Center"
+                                    Style="{StaticResource Type.Heading}"
+                                    Text="No results yet" />
+                                <TextBlock
+                                    Margin="0,4,0,14"
+                                    Style="{StaticResource Type.Secondary}"
+                                    Text="Run an analysis, or import the latest saved results."
+                                    TextAlignment="Center" />
+                                <StackPanel HorizontalAlignment="Center" Orientation="Horizontal">
+                                    <Button
+                                        Margin="0,0,8,0"
+                                        Click="GoToRun_Click"
+                                        Style="{StaticResource Button.Primary}">
+                                        Go to Run
+                                    </Button>
+                                    <Button
+                                        Click="ImportResults_Click"
+                                        Style="{StaticResource Button.Secondary}"
+                                        ToolTip="Load the most recent results file">
+                                        <StackPanel Orientation="Horizontal">
+                                            <materialDesign:PackIcon Kind="TrayArrowDown" Style="{StaticResource ButtonIconLabel}" />
+                                            <TextBlock Text="Import latest" />
+                                        </StackPanel>
+                                    </Button>
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+
+                        <StackPanel Visibility="{Binding HasResults, Converter={StaticResource BoolToVis}}">
+                            <TextBlock
+                                Margin="4,0,0,0"
+                                Style="{StaticResource Type.Secondary}"
+                                Text="{Binding LastRunSummary}" />
+
+                            <TextBlock Style="{StaticResource Type.GroupTitle}" Text="Heatmap" />
+                            <Border Padding="0,2" Style="{StaticResource Card}">
                                 <StackPanel>
-                                    <TextBlock Text="{Binding VisualizationModeTitle}"
-                                               Foreground="{DynamicResource ForegroundBrush}"
-                                               FontWeight="SemiBold"
-                                               FontSize="12"
-                                               TextWrapping="Wrap"
-                                               Margin="0,0,0,6"/>
-                                    <TextBlock Text="{Binding VisualizationModeDescription}"
-                                               Foreground="{DynamicResource IconForegroundBrush}"
-                                               FontSize="11"
-                                               TextWrapping="Wrap"
-                                               LineHeight="16"/>
+                                    <DockPanel Style="{StaticResource SettingRow}">
+                                        <ComboBox
+                                            Width="220"
+                                            VerticalAlignment="Center"
+                                            AutomationProperties.Name="Heatmap quantity"
+                                            DockPanel.Dock="Right"
+                                            ItemsSource="{Binding AvailableVisualizationModes}"
+                                            SelectedItem="{Binding SelectedVisualizationMode}"
+                                            Style="{StaticResource Input.Combo}">
+                                            <ComboBox.ItemTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock VerticalAlignment="Center" Text="{Binding Converter={StaticResource VisModeDisplayName}}" />
+                                                </DataTemplate>
+                                            </ComboBox.ItemTemplate>
+                                        </ComboBox>
+                                        <StackPanel Style="{StaticResource SettingText}">
+                                            <TextBlock Style="{StaticResource Type.RowLabel}" Text="Show" />
+                                            <TextBlock Style="{StaticResource Type.RowHint}" Text="The plan and the Revit view use this quantity" />
+                                        </StackPanel>
+                                    </DockPanel>
+                                    <Rectangle Style="{StaticResource Hairline}" />
+                                    <DockPanel Margin="14,10,8,10">
+                                        <Button
+                                            Height="28"
+                                            Click="ClearVisualization_Click"
+                                            DockPanel.Dock="Right"
+                                            Style="{StaticResource Button.Plain.Destructive}"
+                                            ToolTip="Delete the heatmap regions from the active Revit view">
+                                            Remove from view
+                                        </Button>
+                                        <WrapPanel>
+                                            <Button
+                                                Margin="0,0,8,0"
+                                                Click="Visualize_Click"
+                                                IsEnabled="{Binding HasResults}"
+                                                Style="{StaticResource Button.Primary}"
+                                                ToolTip="Draw the heatmap as filled regions in the active Revit view">
+                                                Draw in Revit view
+                                            </Button>
+                                            <Button
+                                                Click="ImportResults_Click"
+                                                Style="{StaticResource Button.Plain}"
+                                                ToolTip="Load the most recent results file">
+                                                Import latest
+                                            </Button>
+                                        </WrapPanel>
+                                    </DockPanel>
                                 </StackPanel>
                             </Border>
-                        </Grid>
-                    </StackPanel>
-                </StackPanel>
-                </ScrollViewer>
-            </TabItem>
-                </TabControl>
-                </Grid><!-- end split panel -->
 
-                <!-- Status Strip -->
-                <Border Grid.Row="2"
-                        Background="{DynamicResource SecondaryBackgroundBrush}"
-                        BorderBrush="{DynamicResource BorderBrush}"
-                        BorderThickness="0,1,0,0">
-                    <Grid Margin="10,0">
-                        <TextBlock Text="{Binding StatusMessage}"
-                                   Foreground="{DynamicResource IconForegroundBrush}"
-                                   FontSize="11"
-                                   VerticalAlignment="Center"/>
-                    </Grid>
+                            <TextBlock Style="{StaticResource Type.GroupTitle}" Text="Summary" />
+                            <Border Padding="0,2" Style="{StaticResource Card}">
+                                <StackPanel>
+                                    <DockPanel Style="{StaticResource SettingRow}" MinHeight="40">
+                                        <TextBlock DockPanel.Dock="Right" Style="{StaticResource Type.Figure}" Text="{Binding LastOutput.ReceiverCount}" />
+                                        <TextBlock VerticalAlignment="Center" Style="{StaticResource Type.RowLabel}" Text="Receiver points" />
+                                    </DockPanel>
+                                    <Rectangle Style="{StaticResource Hairline}" />
+                                    <DockPanel Style="{StaticResource SettingRow}" MinHeight="40">
+                                        <TextBlock DockPanel.Dock="Right" Style="{StaticResource Type.Figure}">
+                                            <TextBlock.Text>
+                                                <MultiBinding StringFormat="{}{0:F1} – {1:F1} dB">
+                                                    <Binding Path="LastOutput.MinSplDb" />
+                                                    <Binding Path="LastOutput.MaxSplDb" />
+                                                </MultiBinding>
+                                            </TextBlock.Text>
+                                        </TextBlock>
+                                        <TextBlock VerticalAlignment="Center" Style="{StaticResource Type.RowLabel}" Text="Sound level" />
+                                    </DockPanel>
+                                    <Rectangle Style="{StaticResource Hairline}" />
+                                    <DockPanel
+                                        MinHeight="40"
+                                        Style="{StaticResource SettingRow}"
+                                        ToolTip="A-weighted level, used for noise regulation compliance (IEC 61672-1)">
+                                        <TextBlock DockPanel.Dock="Right" Style="{StaticResource Type.Figure}">
+                                            <TextBlock.Text>
+                                                <MultiBinding StringFormat="{}{0:F1} – {1:F1} dBA">
+                                                    <Binding Path="LastOutput.MinSplDbA" />
+                                                    <Binding Path="LastOutput.MaxSplDbA" />
+                                                </MultiBinding>
+                                            </TextBlock.Text>
+                                        </TextBlock>
+                                        <TextBlock VerticalAlignment="Center" Style="{StaticResource Type.RowLabel}" Text="A-weighted level" />
+                                    </DockPanel>
+                                    <Rectangle Style="{StaticResource Hairline}" />
+                                    <DockPanel
+                                        MinHeight="40"
+                                        Style="{StaticResource SettingRow}"
+                                        ToolTip="Speech Transmission Index, 0 (bad) to 1 (excellent)">
+                                        <TextBlock DockPanel.Dock="Right" Style="{StaticResource Type.Figure}">
+                                            <TextBlock.Text>
+                                                <MultiBinding StringFormat="{}{0:F2} – {1:F2}">
+                                                    <Binding Path="LastOutput.MinSti" />
+                                                    <Binding Path="LastOutput.MaxSti" />
+                                                </MultiBinding>
+                                            </TextBlock.Text>
+                                        </TextBlock>
+                                        <TextBlock VerticalAlignment="Center" Style="{StaticResource Type.RowLabel}" Text="Speech intelligibility (STI)" />
+                                    </DockPanel>
+                                    <Rectangle Style="{StaticResource Hairline}" />
+                                    <DockPanel
+                                        MinHeight="40"
+                                        Style="{StaticResource SettingRow}"
+                                        ToolTip="Average clarity C80: ratio of early to late energy. Target for speech: above 0 dB.">
+                                        <TextBlock DockPanel.Dock="Right" Style="{StaticResource Type.Figure}" Text="{Binding LastOutput.AvgC80Db, StringFormat={}{0:F1} dB}" />
+                                        <TextBlock VerticalAlignment="Center" Style="{StaticResource Type.RowLabel}" Text="Average clarity (C80)" />
+                                    </DockPanel>
+                                    <Rectangle Style="{StaticResource Hairline}" />
+                                    <DockPanel
+                                        MinHeight="40"
+                                        Style="{StaticResource SettingRow}"
+                                        ToolTip="Average definition D50: fraction of early energy. Target: above 0.5 for speech.">
+                                        <TextBlock DockPanel.Dock="Right" Style="{StaticResource Type.Figure}" Text="{Binding LastOutput.AvgD50, StringFormat={}{0:F2}}" />
+                                        <TextBlock VerticalAlignment="Center" Style="{StaticResource Type.RowLabel}" Text="Average definition (D50)" />
+                                    </DockPanel>
+                                    <Rectangle Style="{StaticResource Hairline}" />
+                                    <DockPanel Style="{StaticResource SettingRow}" MinHeight="40">
+                                        <TextBlock DockPanel.Dock="Right" Style="{StaticResource Type.Figure}" Text="{Binding LastOutput.ComputeTimeSeconds, StringFormat={}{0:F2} s}" />
+                                        <TextBlock VerticalAlignment="Center" Style="{StaticResource Type.RowLabel}" Text="Compute time" />
+                                    </DockPanel>
+                                </StackPanel>
+                            </Border>
+
+                            <TextBlock Style="{StaticResource Type.GroupTitle}" Text="Legend" />
+                            <Border Style="{StaticResource Card}">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="20" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <ItemsControl AutomationProperties.Name="Legend" ItemsSource="{Binding LegendItems}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <StackPanel Margin="0,2" Orientation="Horizontal">
+                                                    <Border
+                                                        Width="28"
+                                                        Height="16"
+                                                        Margin="0,0,10,0"
+                                                        BorderBrush="{DynamicResource Surface.Stroke}"
+                                                        BorderThickness="1"
+                                                        CornerRadius="{StaticResource Radius.Small}">
+                                                        <Border.Background>
+                                                            <SolidColorBrush Color="{Binding ColorValue}" />
+                                                        </Border.Background>
+                                                    </Border>
+                                                    <TextBlock
+                                                        VerticalAlignment="Center"
+                                                        FontSize="{StaticResource FontSize.Secondary}"
+                                                        Text="{Binding Label}" />
+                                                </StackPanel>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                    <StackPanel Grid.Column="2">
+                                        <TextBlock
+                                            Margin="0,0,0,6"
+                                            Style="{StaticResource Type.Heading}"
+                                            Text="{Binding VisualizationModeTitle}"
+                                            TextWrapping="Wrap" />
+                                        <TextBlock Style="{StaticResource Type.Secondary}" Text="{Binding VisualizationModeDescription}" />
+                                    </StackPanel>
+                                </Grid>
+                            </Border>
+                        </StackPanel>
+                    </StackPanel>
+                </ScrollViewer>
+
+                <!--  Drag handle between the page and the plan (accent line on hover)  -->
+                <GridSplitter
+                    Grid.Column="1"
+                    Width="12"
+                    HorizontalAlignment="Stretch"
+                    VerticalAlignment="Stretch"
+                    AutomationProperties.Name="Resize the page and the plan"
+                    Cursor="SizeWE"
+                    DragCompleted="Splitter_DragCompleted"
+                    ResizeBehavior="PreviousAndNext"
+                    ResizeDirection="Columns" />
+
+                <!--  Live plan: opaque surface with rounded corners  -->
+                <Border
+                    x:Name="ViewerFrame"
+                    Grid.Column="2"
+                    Style="{StaticResource Surface}">
+                    <ui:AcousticViewerControl
+                        x:Name="AcousticViewer"
+                        GridSpacing="{Binding GridSpacing}"
+                        JobOutput="{Binding LastOutput}"
+                        Mode="{Binding SelectedVisualizationMode}"
+                        SpeakerGroupsSource="{Binding SpeakerGroups}"
+                        WallGroupsSource="{Binding WallLineGroups}">
+                        <ui:AcousticViewerControl.Clip>
+                            <RectangleGeometry RadiusX="9" RadiusY="9">
+                                <RectangleGeometry.Rect>
+                                    <MultiBinding Converter="{x:Static conv:SizeToRectConverter.Instance}">
+                                        <Binding ElementName="AcousticViewer" Path="ActualWidth" />
+                                        <Binding ElementName="AcousticViewer" Path="ActualHeight" />
+                                    </MultiBinding>
+                                </RectangleGeometry.Rect>
+                            </RectangleGeometry>
+                        </ui:AcousticViewerControl.Clip>
+                    </ui:AcousticViewerControl>
                 </Border>
             </Grid>
-        </Border>
 
-        <!-- Resize grips -->
-        <Border Width="4" HorizontalAlignment="Left" Margin="6,20,0,14" Background="Transparent"
-                Cursor="SizeWE" MouseDown="ResizeLeft_MouseDown"/>
-        <Border Width="4" HorizontalAlignment="Right" Margin="0,20,6,14" Background="Transparent"
-                Cursor="SizeWE" MouseDown="ResizeRight_MouseDown"/>
-        <Border Height="4" VerticalAlignment="Bottom" Margin="14,0,14,6" Background="Transparent"
-                Cursor="SizeNS" MouseDown="ResizeBottom_MouseDown"/>
-        <Border Width="14" Height="14" HorizontalAlignment="Left" VerticalAlignment="Bottom"
-                Margin="6,0,0,6" Background="Transparent" Cursor="SizeNESW"
-                MouseDown="ResizeBottomLeft_MouseDown"/>
-        <Border Width="14" Height="14" HorizontalAlignment="Right" VerticalAlignment="Bottom"
-                Margin="0,0,6,6" Background="Transparent" Cursor="SizeNWSE"
-                MouseDown="ResizeBottomRight_MouseDown"/>
+            <!--  Status line: result of the last action, directly under the content (glyph + text)  -->
+            <DockPanel
+                Grid.Row="2"
+                MinHeight="34"
+                Margin="24,6,24,6"
+                AutomationProperties.LiveSetting="Polite"
+                AutomationProperties.Name="Status">
+                <StackPanel
+                    Margin="0,0,14,0"
+                    VerticalAlignment="Center"
+                    DockPanel.Dock="Left"
+                    Orientation="Horizontal"
+                    Visibility="{Binding IsRunning, Converter={StaticResource BoolToVis}}">
+                    <ProgressBar
+                        Width="80"
+                        Height="4"
+                        Margin="0,0,8,0"
+                        VerticalAlignment="Center"
+                        Maximum="1"
+                        Minimum="0"
+                        Style="{StaticResource Progress.Bar}"
+                        Value="{Binding Progress, Mode=OneWay}" />
+                    <TextBlock
+                        VerticalAlignment="Center"
+                        Foreground="{DynamicResource Text.Secondary}"
+                        Text="{Binding ProgressPercent}" />
+                </StackPanel>
+                <StackPanel VerticalAlignment="Center" Orientation="Horizontal">
+                    <materialDesign:PackIcon
+                        Width="15"
+                        Height="15"
+                        Margin="0,0,8,0"
+                        VerticalAlignment="Center"
+                        Foreground="{DynamicResource Text.Secondary}"
+                        Kind="InformationOutline"
+                        Visibility="{Binding StatusMessage, Converter={StaticResource NotEmptyToVis}}" />
+                    <TextBlock
+                        VerticalAlignment="Center"
+                        Foreground="{DynamicResource Text.Secondary}"
+                        Text="{Binding StatusMessage}"
+                        TextTrimming="CharacterEllipsis"
+                        ToolTip="{Binding StatusMessage}" />
+                </StackPanel>
+            </DockPanel>
+        </Grid>
     </Grid>
 </Window>

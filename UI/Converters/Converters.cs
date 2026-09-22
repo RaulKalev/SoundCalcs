@@ -102,4 +102,35 @@ namespace SoundCalcs.UI.Converters
             throw new NotSupportedException();
         }
     }
+
+    /// <summary>Non-null, non-blank string → Visible. ConverterParameter "Invert" flips it.</summary>
+    public class NotEmptyToVisibilityConverter : IValueConverter
+    {
+        public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+        {
+            bool visible = value != null && !(value is string s && string.IsNullOrWhiteSpace(s));
+            if (parameter is string p && p == "Invert") visible = !visible;
+            return visible ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
+            => throw new NotSupportedException();
+    }
+
+    /// <summary>
+    /// Item count above zero → Visible (bind to a collection's Count). ConverterParameter "Invert" shows the
+    /// element when the count is zero, for empty states.
+    /// </summary>
+    public class CountToVisibilityConverter : IValueConverter
+    {
+        public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+        {
+            bool visible = value is int n && n > 0;
+            if (parameter is string p && p == "Invert") visible = !visible;
+            return visible ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
+            => throw new NotSupportedException();
+    }
 }

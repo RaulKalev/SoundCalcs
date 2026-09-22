@@ -1,11 +1,14 @@
 <UserControl x:Class="SoundCalcs.UI.AcousticViewerControl"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes"
              xmlns:skia="clr-namespace:SkiaSharp.Views.WPF;assembly=SkiaSharp.Views.WPF">
-    <Grid Background="#FF1F1F1F">
+    <!--  Styles and palette come from the window (SoundCalcsStyles + the active theme).  -->
+    <Grid Background="{DynamicResource Viewer.CanvasBrush}">
 
         <!-- GPU-composited Skia surface: heatmap + walls + speakers -->
         <skia:SKElement x:Name="SkCanvas"
+                        AutomationProperties.Name="Plan viewer"
                         PaintSurface="OnPaintSurface"
                         MouseWheel="Canvas_MouseWheel"
                         MouseDown="Canvas_MouseDown"
@@ -14,41 +17,40 @@
                         Cursor="Hand"
                         Focusable="True"/>
 
-        <!-- Top-right: viewer controls -->
-        <StackPanel HorizontalAlignment="Right" VerticalAlignment="Top"
-                    Orientation="Horizontal" Margin="0,6,8,0">
-
-            <Button x:Name="ClearPinsBtn"
-                    Content="Clear"
-                    Width="38" Height="22"
-                    Margin="0,0,4,0"
-                    Visibility="Collapsed"
-                    Click="ClearPinsBtn_Click"
-                    FontSize="10"
-                    Background="#33FFFFFF" Foreground="#CCCCCC"
-                    BorderBrush="#44FFFFFF" BorderThickness="1"
-                    Cursor="Arrow"/>
-
-            <Button x:Name="ProbeBtn"
-                    Content="Probe"
-                    Width="44" Height="22"
-                    Margin="0,0,4,0"
-                    Click="ProbeBtn_Click"
-                    FontSize="10"
-                    Background="#33FFFFFF" Foreground="#CCCCCC"
-                    BorderBrush="#44FFFFFF" BorderThickness="1"
-                    Cursor="Arrow"/>
-
-            <Button x:Name="FitBtn"
-                    Content="Fit"
-                    Width="36" Height="22"
-                    Click="FitBtn_Click"
-                    FontSize="10"
-                    Background="#33FFFFFF" Foreground="#CCCCCC"
-                    BorderBrush="#44FFFFFF" BorderThickness="1"
-                    Cursor="Arrow"/>
-
-        </StackPanel>
+        <!--  Viewer tools: one floating bar, top left (the legend is drawn top right)  -->
+        <Border Margin="10"
+                Padding="3"
+                HorizontalAlignment="Left"
+                VerticalAlignment="Top"
+                Style="{DynamicResource Floating}">
+            <StackPanel Orientation="Horizontal">
+                <Button x:Name="FitBtn"
+                        AutomationProperties.Name="Fit to view"
+                        Click="FitBtn_Click"
+                        Cursor="Arrow"
+                        Style="{DynamicResource ViewerTool}"
+                        ToolTip="Fit the plan to the view">
+                    <materialDesign:PackIcon Width="16" Height="16" Kind="FitToScreenOutline" />
+                </Button>
+                <Button x:Name="ProbeBtn"
+                        AutomationProperties.Name="Probe"
+                        Click="ProbeBtn_Click"
+                        Cursor="Arrow"
+                        Style="{DynamicResource ViewerTool}"
+                        ToolTip="Probe: click the plan to pin a reading">
+                    <materialDesign:PackIcon Width="16" Height="16" Kind="CrosshairsGps" />
+                </Button>
+                <Button x:Name="ClearPinsBtn"
+                        AutomationProperties.Name="Clear probe pins"
+                        Click="ClearPinsBtn_Click"
+                        Cursor="Arrow"
+                        Style="{DynamicResource ViewerTool}"
+                        ToolTip="Remove all probe pins"
+                        Visibility="Collapsed">
+                    <materialDesign:PackIcon Width="16" Height="16" Kind="PinOffOutline" />
+                </Button>
+            </StackPanel>
+        </Border>
 
     </Grid>
 </UserControl>

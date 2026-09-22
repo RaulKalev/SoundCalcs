@@ -38,14 +38,17 @@ namespace SoundCalcs.UI
             .Select(c => new SKColor(c.R, c.G, c.B))
             .ToArray();
 
-        static readonly SKColor BgColor       = new SKColor(0x1F, 0x1F, 0x1F);
-        static readonly SKColor WallColor      = new SKColor(0xAA, 0xBB, 0xCC);
         static readonly SKColor SpeakerFill    = new SKColor(0x40, 0x90, 0xFF);
         static readonly SKColor SpeakerRing    = new SKColor(0x80, 0xB8, 0xFF);
         static readonly SKColor DirColor       = new SKColor(0xFF, 0xFF, 0x60, 200);
-        static readonly SKColor LegendBg       = new SKColor(0x18, 0x18, 0x18, 0xCC);
-        static readonly SKColor TextBright     = new SKColor(0xEE, 0xEE, 0xEE);
-        static readonly SKColor TextDim        = new SKColor(0x66, 0x66, 0x66);
+
+        // ── Canvas colours: follow the window's appearance (Viewer.* keys in the palettes) ──
+        SKColor BgColor      = new SKColor(0x1A, 0x1A, 0x1C);
+        SKColor WallColor    = new SKColor(0xAE, 0xB9, 0xC6);
+        SKColor LegendBg     = new SKColor(0x24, 0x24, 0x27, 0xE0);
+        SKColor TextBright   = new SKColor(0xF2, 0xF2, 0xF5);
+        SKColor TextMid      = new SKColor(0xA8, 0xA8, 0xB0);
+        SKColor TextDim      = new SKColor(0x6A, 0x6A, 0x72);
 
         // ── View transform ─────────────────────────────────────────────────
         float _panX, _panY;
@@ -188,6 +191,31 @@ namespace SoundCalcs.UI
         public AcousticViewerControl()
         {
             InitializeComponent();
+            Loaded += (s, e) => ApplyAppearance();
+        }
+
+        /// <summary>
+        /// Re-reads the canvas colours from the active palette (dark, light or high contrast) and redraws.
+        /// Call after the window's theme changes; the WPF parts follow on their own through DynamicResource.
+        /// </summary>
+        public void ApplyAppearance()
+        {
+            BgColor    = ResourceColor("Viewer.Canvas", BgColor);
+            WallColor  = ResourceColor("Viewer.Wall", WallColor);
+            LegendBg   = ResourceColor("Viewer.Panel", LegendBg);
+            TextBright = ResourceColor("Viewer.Text", TextBright);
+            TextMid    = ResourceColor("Viewer.TextSecondary", TextMid);
+            TextDim    = ResourceColor("Viewer.TextTertiary", TextDim);
+            UpdateProbeBtn();
+            Refresh();
+        }
+
+        SKColor ResourceColor(string key, SKColor fallback)
+        {
+            object res = TryFindResource(key);
+            if (res is Color c) return new SKColor(c.R, c.G, c.B, c.A);
+            if (res is SolidColorBrush b) return new SKColor(b.Color.R, b.Color.G, b.Color.B, b.Color.A);
+            return fallback;
         }
         // ── Collection change handler ──────────────────────────────────
         void OnSourceCollectionChanged(object sender, NotifyCollectionChangedEventArgs e)
@@ -522,7 +550,7 @@ namespace SoundCalcs.UI
             };
             using var header = tf.Clone();
             header.TextSize = 10f;
-            header.Color    = new SKColor(0xAA, 0xAA, 0xAA);
+            header.Color    = TextMid;
 
             string modeLabel = isSti ? "STI"
                 : isSplA   ? "dBA"
@@ -585,14 +613,14 @@ namespace SoundCalcs.UI
 
             using var linePaint = new SKPaint
             {
-                Color = new SKColor(0xAA, 0xAA, 0xAA),
+                Color = TextMid,
                 StrokeWidth = 1.5f,
                 Style = SKPaintStyle.Stroke,
                 IsAntialias = true,
             };
             using var textPaint = new SKPaint
             {
-                Color      = new SKColor(0xAA, 0xAA, 0xAA),
+                Color      = TextMid,
                 TextSize   = 9f,
                 IsAntialias = true,
                 Typeface   = SKTypeface.FromFamilyName("Segoe UI") ?? SKTypeface.Default,
@@ -612,7 +640,7 @@ namespace SoundCalcs.UI
         {
             using var primary = new SKPaint
             {
-                Color      = TextDim,
+                Color      = TextMid,
                 TextSize   = 13f,
                 IsAntialias = true,
                 Typeface   = SKTypeface.FromFamilyName("Segoe UI") ?? SKTypeface.Default,
@@ -620,7 +648,7 @@ namespace SoundCalcs.UI
             };
             using var hint = primary.Clone();
             hint.TextSize = 10f;
-            hint.Color    = new SKColor(0x44, 0x44, 0x44);
+            hint.Color    = TextDim;
 
             canvas.DrawText("Select boundary lines or pick speakers",     cw * 0.5f, ch * 0.5f - 12f, primary);
             canvas.DrawText("to see the 2D scene, then run analysis.",    cw * 0.5f, ch * 0.5f + 6f,  primary);
@@ -746,13 +774,18 @@ namespace SoundCalcs.UI
         void ProbeBtn_Click(object sender, RoutedEventArgs e)
         {
             _probeMode = !_probeMode;
-            ProbeBtn.Background = _probeMode
-                ? new SolidColorBrush(Color.FromArgb(0xAA, 0x40, 0xA0, 0xFF))
-                : new SolidColorBrush(Color.FromArgb(0x33, 0xFF, 0xFF, 0xFF));
-            ProbeBtn.Foreground = _probeMode
-                ? Brushes.White
-                : new SolidColorBrush(Color.FromArgb(0xFF, 0xCC, 0xCC, 0xCC));
+            UpdateProbeBtn();
             SkCanvas.Cursor = _probeMode ? Cursors.Cross : Cursors.Hand;
+        }
+
+        // The active tool gets the accent fill, like a selected toolbar item.
+        void UpdateProbeBtn()
+        {
+            if (TryFindResource(_probeMode ? "ViewerTool.Active" : "ViewerTool") is Style style)
+                ProbeBtn.Style = style;
+            ProbeBtn.ToolTip = _probeMode
+                ? "Probe is on: click the plan to pin a reading. Click here to turn it off."
+                : "Probe: click the plan to pin a reading";
         }
 
         void ClearPinsBtn_Click(object sender, RoutedEventArgs e)
