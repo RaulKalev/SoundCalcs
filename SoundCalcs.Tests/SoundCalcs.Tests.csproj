@@ -42,6 +42,7 @@
     <Compile Include="../Compute/STICalculator.cs" />
     <Compile Include="../Compute/RoomAcoustics.cs" />
     <Compile Include="../Compute/PolarTableProvider.cs" />
+    <Compile Include="../Compute/ShoeboxLattice.cs" />
 
     <!-- Heatmap colour mapping / grid geometry shared by the viewer and Revit renderer -->
     <Compile Include="../Visualization/HeatmapMath.cs" />

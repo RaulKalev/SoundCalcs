@@ -203,8 +203,12 @@ namespace SoundCalcs.Compute
 
                     hasReverb = true;
                     double q = Math.Max(providers[s].DirectivityFactor, 1.0);
+                    // A flush-mounted speaker radiates only into the room below the ceiling
+                    bool flush = room.FloorElevationM + ceilingH - input.Sources[s].Position.Z <= FlushMountToleranceM;
                     for (int k = 0; k < numBands; k++)
                     {
+                        if (flush)
+                            q = LowerHemisphereQ(providers[s], input.Sources[s].FacingDirection.Normalized(), k);
                         double sabineA = Math.Max(0.161 * vol / sourceT60[s][k], 1.0);
                         reverbBySource[s][k] = sourceBand[s][k] * 16.0 * Math.PI / (q * sabineA) * room.EnclosureRatio;
                     }
@@ -332,6 +336,26 @@ namespace SoundCalcs.Compute
             }
             var horizImageArray = horizImages.ToArray();
 
+            // --- Shoebox lattice for (near-)rectangular rooms (Full quality) ---
+            // Replaces the explicit reflections and the diffuse tail for sources and receivers in
+            // the same box-shaped room; other rooms keep Barron's diffuse-field model.
+            var lattice = new ShoeboxLattice[numRooms];
+            if (!isDraft && input.Environment.UseRoomShapeModel)
+            {
+                for (int r = 0; r < numRooms; r++)
+                {
+                    double[] roomRt = input.Rooms[r].RT60ByBand;
+                    double[] rt = roomRt != null && roomRt.Length == numBands ? roomRt : t60;
+                    lattice[r] = ShoeboxLattice.TryCreate(input.Rooms[r], walls, floorAbsorption, ceilingAbsorption,
+                        rt, airAbsorption, DefaultCeilingHeightM);
+                }
+                FileLogger.Log($"[SPLCalc] Shoebox lattice rooms: {lattice.Count(l => l != null)}/{numRooms}");
+            }
+            int latticeBins = (int)Math.Ceiling(ShoeboxLattice.CutoffTimeS / ShoeboxLattice.BinWidthS);
+            // Power each source radiates into its box (for the lattice's diffuse part), computed on first
+            // use; threads racing here compute the same array, so the race is harmless
+            var latticePower = new double[numSources][];
+
             // Free wall ends (not joined to another wall): sound diffracts around them
             bool[] startFree = new bool[walls.Count], endFree = new bool[walls.Count];
             for (int w = 0; w < walls.Count; w++)
@@ -367,6 +391,14 @@ namespace SoundCalcs.Compute
 
                     double[] totalByBand = new double[numBands];
                     var arrivals = new List<(double Time, double[] Power, int Source)>(numSources * 4);
+
+                    // Sources whose reflections come from the shoebox lattice at this receiver
+                    bool[] useLattice = new bool[numSources];
+                    for (int s = 0; s < numSources; s++)
+                    {
+                        int sr = sourceRoomIndex[s];
+                        useLattice[s] = sr >= 0 && sr == receiver.RoomIndex && lattice.Length > sr && lattice[sr] != null;
+                    }
 
                     double[] directTime = new double[numSources];
                     double[] directDist = new double[numSources];
@@ -485,6 +517,7 @@ namespace SoundCalcs.Compute
                     for (int r = 0; r < imageSourceArray.Length; r++)
                     {
                         ImageSource img = imageSourceArray[r];
+                        if (useLattice[img.SourceIndex]) continue;
                         ComputeSource source = input.Sources[img.SourceIndex];
                         Vec2 srcXY = new Vec2(source.Position.X, source.Position.Y);
 
@@ -557,6 +590,7 @@ namespace SoundCalcs.Compute
                     for (int h = 0; h < horizImageArray.Length; h++)
                     {
                         HorizontalImageSource himg = horizImageArray[h];
+                        if (useLattice[himg.SourceIndex]) continue;
                         ComputeSource source = input.Sources[himg.SourceIndex];
                         Vec3 srcPos = source.Position;
 
@@ -592,21 +626,62 @@ namespace SoundCalcs.Compute
                     // level decayed over the direct-sound travel time: R·e^(−13.82·r/(c·T)).
                     // The explicit reflections above are part of that energy, so only the
                     // remainder is added, as an exponential tail starting at the direct arrival.
-                    // Only for sources in the receiver's room with an unobstructed direct path.
+                    // Only for sources in the receiver's room (the reverberant field fills the room,
+                    // also behind screens and partitions inside it).
+                    // In box-shaped rooms the shoebox lattice gives the reflections instead, binned
+                    // in time, with an exponential tail after its cutoff.
                     double[][] tail = new double[numSources][];
-                    if (hasReverb)
+                    double[] tailStart = (double[])directTime.Clone();
+                    int recvRoom = receiver.RoomIndex;
+                    for (int s = 0; s < numSources; s++)
                     {
-                        int recvRoom = receiver.RoomIndex;
-                        for (int s = 0; s < numSources; s++)
+                        if (recvRoom < 0 || sourceRoomIndex[s] != recvRoom) continue;
+
+                        if (useLattice[s])
                         {
-                            if (wallStcSums[s] > 0 || recvRoom < 0 || sourceRoomIndex[s] != recvRoom) continue;
+                            ComputeSource source = input.Sources[s];
+                            Vec3 facing = source.FacingDirection.Normalized();
+                            var provider = providers[s];
+                            var bins = new double[numBands][];
+                            for (int k = 0; k < numBands; k++) bins[k] = new double[latticeBins];
+                            var tailEnergy = new double[numBands];
+                            ShoeboxLattice box = lattice[recvRoom];
+                            Func<Vec3, int, double> gainSquared =
+                                (dir, k) => { double g = provider.GetDirectivityGainForBand(facing, dir, k); return g * g; };
+                            if (latticePower[s] == null)
+                                latticePower[s] = box.RadiatedPower(source.Position, gainSquared);
+                            box.Accumulate(source.Position, recvPos, sourceBand[s], gainSquared,
+                                airAbsorption, speedOfSound, bins, tailEnergy, latticePower[s]);
+
+                            for (int b = 0; b < latticeBins; b++)
+                            {
+                                double[] pb = new double[numBands];
+                                bool any = false;
+                                for (int k = 0; k < numBands; k++)
+                                {
+                                    pb[k] = bins[k][b];
+                                    if (pb[k] > 0) { any = true; totalByBand[k] += pb[k]; }
+                                }
+                                if (any) arrivals.Add(((b + 0.5) * ShoeboxLattice.BinWidthS, pb, s));
+                            }
+
                             tail[s] = new double[numBands];
+                            tailStart[s] = ShoeboxLattice.CutoffTimeS;
                             for (int k = 0; k < numBands; k++)
                             {
-                                double barron = reverbBySource[s][k] * Math.Exp(-13.82 * directTime[s] / sourceT60[s][k]);
-                                tail[s][k] = Math.Max(0, barron - imageEnergy[s][k]);
+                                tail[s][k] = tailEnergy[k];
                                 totalByBand[k] += tail[s][k];
                             }
+                            continue;
+                        }
+
+                        if (!hasReverb) continue;
+                        tail[s] = new double[numBands];
+                        for (int k = 0; k < numBands; k++)
+                        {
+                            double barron = reverbBySource[s][k] * Math.Exp(-13.82 * directTime[s] / sourceT60[s][k]);
+                            tail[s][k] = Math.Max(0, barron - imageEnergy[s][k]);
+                            totalByBand[k] += tail[s][k];
                         }
                     }
 
@@ -629,7 +704,7 @@ namespace SoundCalcs.Compute
                         SplDbByBand = splDbByBand
                     });
 
-                    bandDataBag.Add(BuildBandData(receiver.Index, arrivals, tail, directTime, sourceT60, modFreqs, speechFactor));
+                    bandDataBag.Add(BuildBandData(receiver.Index, arrivals, tail, tailStart, sourceT60, modFreqs, speechFactor));
 
                     int done = Interlocked.Increment(ref completed);
                     if (done % Math.Max(1, totalReceivers / 100) == 0)
@@ -656,7 +731,7 @@ namespace SoundCalcs.Compute
             int receiverIndex,
             List<(double Time, double[] Power, int Source)> arrivals,
             double[][] tail,
-            double[] directTime,
+            double[] tailStart,
             double[][] sourceT60,
             double[] modFreqs,
             double[][] speechFactor)
@@ -710,7 +785,7 @@ namespace SoundCalcs.Compute
             for (int s = 0; s < tail.Length; s++)
             {
                 if (tail[s] == null) continue;
-                double dt0 = directTime[s] - tFirst;
+                double dt0 = tailStart[s] - tFirst;
                 for (int k = 0; k < nb; k++)
                 {
                     double r = tail[s][k] * speechFactor[s][k];
@@ -840,6 +915,29 @@ namespace SoundCalcs.Compute
                 if (PointSegmentDistance(end, walls[i].Start, walls[i].End) < 0.2) return false;
             }
             return true;
+        }
+
+        /// <summary>
+        /// Directivity factor of a speaker that radiates only downwards (flush in the ceiling):
+        /// Q = 4π / ∫ g² dΩ over the lower hemisphere. An omni gives 2.
+        /// </summary>
+        internal static double LowerHemisphereQ(ISpeakerDirectivityProvider provider, Vec3 facing, int band)
+        {
+            const int nTheta = 24, nPhi = 48;
+            double sum = 0;
+            for (int i = 0; i < nTheta; i++)
+            {
+                double theta = (i + 0.5) * (Math.PI / 2) / nTheta; // from straight down
+                double dOmega = Math.Sin(theta) * (Math.PI / 2 / nTheta) * (2 * Math.PI / nPhi);
+                for (int j = 0; j < nPhi; j++)
+                {
+                    double phi = (j + 0.5) * 2 * Math.PI / nPhi;
+                    var dir = new Vec3(Math.Sin(theta) * Math.Cos(phi), Math.Sin(theta) * Math.Sin(phi), -Math.Cos(theta));
+                    double g = provider.GetDirectivityGainForBand(facing, dir, band);
+                    sum += g * g * dOmega;
+                }
+            }
+            return sum > 1e-9 ? 4 * Math.PI / sum : 1.0;
         }
 
         /// <summary>
