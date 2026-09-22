@@ -153,6 +153,48 @@ namespace SoundCalcs.Tests
             Assert.InRange(res[0].SplDbByBand[3] - res[0].SplDbByBand[0], -0.05, 0.05);
         }
 
+        private static double[] A(WallAbsorptionPreset p) => OctaveBands.AbsorptionPresets[p];
+
+        [Fact]
+        public void Rt60FromGeometry_ClosedBox_MatchesHandCalculation()
+        {
+            // 10 × 8 × 3 m, concrete walls fully on the perimeter, concrete floor, plasterboard ceiling.
+            var walls = new[] { (36.0, A(WallAbsorptionPreset.Concrete)) };
+            double[] rt = RoomAcoustics.EstimateRt60FromGeometry(80, 36, 3, walls, 36,
+                A(WallAbsorptionPreset.Concrete), A(WallAbsorptionPreset.Drywall), 0, 20, 50);
+
+            // Hand calculation at 500 Hz (k = 2): S = 2·80 + 36·3 = 268 m², V = 240 m³
+            double alpha = (80 * 0.02 + 80 * 0.05 + 108 * 0.02) / 268.0;
+            double m = OctaveBands.ComputeAirAbsorption(20, 50)[2] / 4.3429;
+            double expected = 0.161 * 240 / (-268 * Math.Log(1 - alpha) + 4 * m * 240);
+            Assert.Equal(Math.Round(expected, 2), rt[2], 2);
+            Assert.InRange(rt[2], 4.0, 5.0);
+        }
+
+        [Fact]
+        public void Rt60FromGeometry_OpenBoundaryOccupantsAndPartitionsShortenIt()
+        {
+            var concrete = A(WallAbsorptionPreset.Concrete);
+            double Rt(double lineLength, double covered, int people) => RoomAcoustics.EstimateRt60FromGeometry(
+                80, 36, 3, new[] { (lineLength, concrete) }, covered, concrete, concrete, people, 20, 50)[3];
+
+            double closed = Rt(36, 36, 0);
+            Assert.True(Rt(18, 18, 0) < closed * 0.5, "half the perimeter open: sound leaves the room");
+            Assert.True(Rt(36, 36, 40) < closed * 0.6, "40 people absorb ≈18 m² at 1 kHz");
+            // 10 m internal partition: both faces add (hard) surface → slightly shorter, never longer
+            Assert.True(Rt(46, 36, 0) < closed);
+        }
+
+        [Fact]
+        public void Rt60FromGeometry_AirAbsorptionShortensHighBandsInLargeHalls()
+        {
+            // 40 × 30 × 12 m hall, hard surfaces: at 8 kHz air absorption dominates.
+            var concrete = A(WallAbsorptionPreset.Concrete);
+            double[] rt = RoomAcoustics.EstimateRt60FromGeometry(1200, 140, 12, new[] { (140.0, concrete) }, 140,
+                concrete, concrete, 0, 20, 50);
+            Assert.True(rt[6] < rt[3] * 0.5, $"8 kHz {rt[6]} s vs 1 kHz {rt[3]} s");
+        }
+
         [Fact]
         public void C80_UsesEightyMillisecondSplit()
         {

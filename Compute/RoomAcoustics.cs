@@ -102,6 +102,61 @@ namespace SoundCalcs.Compute
         }
 
         /// <summary>
+        /// Sabine absorption area of one occupant (m²) per octave band, 125 Hz – 8 kHz.
+        /// Typical adult, seated or standing, lightly clothed.
+        /// </summary>
+        public static readonly double[] PersonAbsorptionM2 = { 0.15, 0.25, 0.40, 0.45, 0.50, 0.50, 0.50 };
+
+        /// <summary>
+        /// Eyring-Norris RT60 per band from the actual room geometry:
+        ///   V = floor area × ceiling height
+        ///   surfaces: floor, ceiling, wall lines on the perimeter (one face), internal wall
+        ///   lines (both faces), and the open part of the perimeter (α = 1: sound leaves)
+        ///   T = 0.161·V / (−S·ln(1 − ᾱ) + N·A_person + 4·m·V)
+        /// where m is the ISO 9613-1 air attenuation (Np/m, energy) for the given climate.
+        /// </summary>
+        /// <param name="wallLines">Every wall line group: total length and surface absorption.</param>
+        /// <param name="perimeterCoveredM">Length of the perimeter backed by wall lines (enclosure).</param>
+        public static double[] EstimateRt60FromGeometry(
+            double floorAreaM2, double perimeterM, double ceilingHeightM,
+            IEnumerable<(double LengthM, double[] Absorption)> wallLines, double perimeterCoveredM,
+            double[] floorAbsorption, double[] ceilingAbsorption,
+            int occupants, double temperatureC, double relativeHumidityPct)
+        {
+            if (floorAreaM2 <= 0 || ceilingHeightM <= 0)
+                return (double[])OctaveBands.DefaultRT60.Clone();
+
+            var lines = wallLines.Where(w => w.LengthM > 0 && w.Absorption != null).ToList();
+            double totalLineLength = lines.Sum(w => w.LengthM);
+            double onPerimeter = Math.Min(Math.Max(perimeterCoveredM, 0), Math.Min(totalLineLength, perimeterM));
+            double internalLength = totalLineLength - onPerimeter;
+            double openPerimeter = Math.Max(0, perimeterM - onPerimeter);
+
+            double h = ceilingHeightM;
+            double volume = floorAreaM2 * h;
+            double lineArea = (onPerimeter + 2 * internalLength) * h;
+            double openArea = openPerimeter * h;
+            double surface = 2 * floorAreaM2 + lineArea + openArea;
+
+            double[] airDbPerM = OctaveBands.ComputeAirAbsorption(temperatureC, relativeHumidityPct);
+            var result = new double[OctaveBands.Count];
+            for (int k = 0; k < OctaveBands.Count; k++)
+            {
+                double lineAlpha = totalLineLength > 0 ? lines.Sum(w => w.LengthM * w.Absorption[k]) / totalLineLength : 0;
+                double alpha = (floorAreaM2 * floorAbsorption[k] + floorAreaM2 * ceilingAbsorption[k]
+                              + lineArea * lineAlpha + openArea * 1.0) / surface;
+                alpha = Math.Max(0.001, Math.Min(0.999, alpha));
+
+                double airM = airDbPerM[k] / (10 * Math.Log10(Math.E));   // dB/m → Np/m (energy)
+                double denom = -surface * Math.Log(1 - alpha)
+                             + Math.Max(0, occupants) * PersonAbsorptionM2[k]
+                             + 4 * airM * volume;
+                result[k] = Math.Round(Math.Max(0.05, Math.Min(30.0, 0.161 * volume / denom)), 2);
+            }
+            return result;
+        }
+
+        /// <summary>
         /// Estimate total room surface area from a floor area and ceiling height.
         /// Assumes a box-shaped room: floor + ceiling + 4 walls.
         /// Perimeter is estimated as 4 × sqrt(floor area) (square room approximation).

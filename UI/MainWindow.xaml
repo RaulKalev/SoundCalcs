@@ -680,6 +680,7 @@
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
                         </Grid.RowDefinitions>
 
                         <TextBlock Grid.Row="0" Grid.Column="0" Style="{StaticResource LabelStyle}" Text="Floor:"/>
@@ -696,7 +697,13 @@
                                   DisplayMemberPath="DisplayName"
                                   ToolTip="Ceiling finish: sets how much sound the ceiling reflects and absorbs"/>
 
-                        <TextBlock Grid.Row="0" Grid.Column="2" Grid.RowSpan="2" Style="{StaticResource LabelStyle}"
+                        <TextBlock Grid.Row="2" Grid.Column="0" Style="{StaticResource LabelStyle}" Text="Occupancy (people):" Margin="0,4,0,0"/>
+                        <TextBox Grid.Row="2" Grid.Column="1" Style="{StaticResource InputBoxStyle}" Margin="0,4,0,0" Width="80"
+                                 HorizontalAlignment="Left"
+                                 Text="{Binding Occupants, UpdateSourceTrigger=PropertyChanged}"
+                                 ToolTip="Number of people in the room. People absorb sound and shorten the estimated RT60."/>
+
+                        <TextBlock Grid.Row="0" Grid.Column="2" Grid.RowSpan="3" Style="{StaticResource LabelStyle}"
                                    Text="Used for floor/ceiling reflections and by Estimate RT60 — press Estimate again after changing"
                                    FontSize="11" TextWrapping="Wrap" Margin="8,0,0,0"/>
                     </Grid>

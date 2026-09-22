@@ -93,6 +93,9 @@ namespace SoundCalcs.Domain
         /// <summary>Relative air humidity in % (ISO 9613-1 air absorption).</summary>
         public double RelativeHumidityPct { get; set; } = 50.0;
 
+        /// <summary>Number of people in the room, for the RT60 estimate.</summary>
+        public int Occupants { get; set; }
+
         /// <summary>Floor finish (reflections and RT60 estimate).</summary>
         public WallAbsorptionPreset FloorSurface { get; set; } = SurfaceMaterialCatalog.DefaultFloor;
 

@@ -31,6 +31,10 @@ Options:
   --job <input.json>      Replay a job input saved by the plugin
                           (%AppData%\RK Tools\SoundCalcs\jobs\<id>_input.json)
   --modes <list>          Viewer image modes for --spec/--job runs (default: SPL,STI)
+  --measured <file>       Compare --spec/--job runs with measurements (CSV or JSON; x,y in
+                          model metres; columns spl, spla, sti, c80, spl125 … spl8k)
+  --tol-spl <dB>          Tolerance for SPL comparisons (default 3)
+  --tol-sti <value>       Tolerance for STI comparisons (default 0.05)
   --no-images             Skip PNG rendering
   --list                  List built-in scenarios and exit
   --example-spec <file>   Write an example ScenarioSpec JSON and exit
@@ -56,6 +60,8 @@ Exit code: 0 = all checks passed (warnings allowed), 1 = a check failed, 2 = usa
             var jobFiles = new List<string>();
             var modes = new[] { VisualizationMode.SPL, VisualizationMode.STI };
             bool images = true;
+            List<MeasuredPoint> measured = null;
+            var tolerances = new MeasurementTolerances();
 
             try
             {
@@ -72,6 +78,9 @@ Exit code: 0 = all checks passed (warnings allowed), 1 = a check failed, 2 = usa
                                 .Select(m => (VisualizationMode)Enum.Parse(typeof(VisualizationMode), m.Trim(), true)).ToArray();
                             break;
                         case "--no-images": images = false; break;
+                        case "--measured": measured = Measurements.Load(args[++i]); break;
+                        case "--tol-spl": tolerances.SplDb = double.Parse(args[++i], CultureInfo.InvariantCulture); break;
+                        case "--tol-sti": tolerances.Sti = double.Parse(args[++i], CultureInfo.InvariantCulture); break;
                         case "--list":
                             foreach (var s in BuiltInScenarios.All())
                                 Console.WriteLine($"{s.Spec.Name,-20} {s.Spec.Description}");
@@ -89,7 +98,9 @@ Exit code: 0 = all checks passed (warnings allowed), 1 = a check failed, 2 = usa
                     }
                 }
             }
-            catch (Exception ex) when (ex is IndexOutOfRangeException || ex is ArgumentException)
+            catch (Exception ex) when (ex is IndexOutOfRangeException || ex is ArgumentException ||
+                                       ex is IOException || ex is FormatException || ex is JsonException ||
+                                       ex is InvalidOperationException)
             {
                 Console.Error.WriteLine($"Bad arguments: {ex.Message}\n\n{Usage}");
                 return 2;
@@ -115,14 +126,19 @@ Exit code: 0 = all checks passed (warnings allowed), 1 = a check failed, 2 = usa
             foreach (string f in specFiles)
                 scenarios.AddRange(LoadSpecs(f).Select(s => new Scenario
                 {
-                    Spec = s, ViewerModes = modes, RevitModes = modes, Checks = ProbeChecks
+                    Spec = s, ViewerModes = modes, RevitModes = modes,
+                    Checks = (run, ctx) =>
+                    {
+                        ProbeChecks(run, ctx);
+                        if (measured != null) Measurements.Compare(run, measured, tolerances, ctx, outDir);
+                    }
                 }));
 
             var reports = new List<ScenarioReport>();
             foreach (var sc in scenarios)
                 reports.Add(RunScenario(sc, null, outDir, images));
             foreach (string f in jobFiles)
-                reports.Add(RunJobFile(f, modes, outDir, images));
+                reports.Add(RunJobFile(f, modes, outDir, images, measured, tolerances));
 
             WriteReports(reports, outDir);
 
@@ -178,23 +194,28 @@ Exit code: 0 = all checks passed (warnings allowed), 1 = a check failed, 2 = usa
                 }
                 sc.Checks?.Invoke(run, ctx);
 
-                if (images && run != null && run.Output.Results.Count > 0)
+                if (run != null && run.Output.Results.Count > 0)
                 {
                     string dir = Path.Combine(outDir, sc.Spec.Name);
-                    foreach (var mode in sc.ViewerModes)
-                    {
-                        string file = Path.Combine(dir, $"viewer_{mode}.png");
-                        ViewerImage.Render(run.Input, run.Output, mode, HeatmapMath.ViewerGridSpacing(run.Output.Results), sc.Spec.Name, file);
-                        report.Images.Add(Rel(outDir, file));
-                    }
-                    foreach (var mode in sc.RevitModes)
-                    {
-                        string file = Path.Combine(dir, $"revit_{mode}.png");
-                        RevitImage.Render(run.Input, run.Output, mode, null, sc.Spec.Name, file);
-                        report.Images.Add(Rel(outDir, file));
-                    }
+                    Directory.CreateDirectory(dir);
                     File.WriteAllText(Path.Combine(dir, "input.json"), JsonConvert.SerializeObject(run.Input, Json));
                     File.WriteAllText(Path.Combine(dir, "output.json"), JsonConvert.SerializeObject(run.Output, Json));
+
+                    if (images)
+                    {
+                        foreach (var mode in sc.ViewerModes)
+                        {
+                            string file = Path.Combine(dir, $"viewer_{mode}.png");
+                            ViewerImage.Render(run.Input, run.Output, mode, HeatmapMath.ViewerGridSpacing(run.Output.Results), sc.Spec.Name, file);
+                            report.Images.Add(Rel(outDir, file));
+                        }
+                        foreach (var mode in sc.RevitModes)
+                        {
+                            string file = Path.Combine(dir, $"revit_{mode}.png");
+                            RevitImage.Render(run.Input, run.Output, mode, null, sc.Spec.Name, file);
+                            report.Images.Add(Rel(outDir, file));
+                        }
+                    }
                 }
             }
             catch (Exception ex)
@@ -209,7 +230,8 @@ Exit code: 0 = all checks passed (warnings allowed), 1 = a check failed, 2 = usa
             return report;
         }
 
-        static ScenarioReport RunJobFile(string path, VisualizationMode[] modes, string outDir, bool images)
+        static ScenarioReport RunJobFile(string path, VisualizationMode[] modes, string outDir, bool images,
+            List<MeasuredPoint> measured, MeasurementTolerances tolerances)
         {
             var input = JsonConvert.DeserializeObject<AcousticJobInput>(File.ReadAllText(path));
             var output = SoundCalcs.Compute.JobRunner.Compute(input, System.Threading.CancellationToken.None, null);
@@ -223,7 +245,12 @@ Exit code: 0 = all checks passed (warnings allowed), 1 = a check failed, 2 = usa
                 Quality = input.Quality
             };
             var run = new ScenarioRun { Spec = spec, Input = input, Output = output };
-            return RunScenario(new Scenario { Spec = spec, ViewerModes = modes, RevitModes = modes }, run, outDir, images);
+            return RunScenario(new Scenario
+            {
+                Spec = spec, ViewerModes = modes, RevitModes = modes,
+                Checks = measured == null ? null : (Action<ScenarioRun, CheckContext>)((r, ctx) =>
+                    Measurements.Compare(r, measured, tolerances, ctx, outDir))
+            }, run, outDir, images);
         }
 
         static void ProbeChecks(ScenarioRun run, CheckContext ctx)

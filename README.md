@@ -12,6 +12,9 @@ A Revit plugin for room acoustics analysis. Calculates per-receiver SPL and Spee
 - **Reflections** — image-source method: first-order wall reflections (plus second-order and floor/ceiling in Full quality), 3D path lengths, transmission loss on every leg
 - **Reverberant field** — Barron's revised theory per octave band (RT60 configurable): the Sabine diffuse level decaying with distance, minus the energy the explicit reflections already carry; included in SPL and as the reverberant tail for STI, C80 and D50
 - **Clarity** — C80 (80 ms split) and D50 (50 ms split) over the 500 Hz / 1 kHz bands
+- **Speaker frequency response** — per-type preset (flat, typical ceiling / column / horn) or custom per-band values; normalised so the SPL column stays the broadband level
+- **STI test signal** — IEC 60268-16 standard male/female speech spectrum played through each speaker's response
+- **RT60 estimate** — Eyring from the actual boundary perimeter, wall lines (internal partitions count both faces, open boundary absorbs fully), floor/ceiling/wall materials, occupancy and air absorption
 - **Air absorption** — frequency-dependent attenuation per IEC
 - **Speaker directivity** — configurable cone angle or omnidirectional; GLL stub support
 - **Linked IFC support** — wall boundaries are drawn as detail lines (not Revit wall elements), which works reliably with linked IFC models

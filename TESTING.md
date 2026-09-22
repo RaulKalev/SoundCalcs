@@ -46,6 +46,7 @@ Built-in physics scenarios (`--list`):
 | `speaker_rotation` | Rotating a wall-mounted speaker moves its coverage lobe; rotating a ceiling cone changes nothing; only ceiling speakers set the ceiling height |
 | `wall_materials` | The line style → wall type mapping carries the surface material: concrete reflects more than curtains, "Open (No Wall)" lines neither block, reflect nor enclose, and carpet / acoustic tiles weaken floor / ceiling reflections, and the RT60 estimate follows wall, floor and ceiling materials |
 | `reverberant_room` | Full ≥ Draft; longer RT60 raises SPL and lowers STI; noise lowers STI; C80 uses 80 ms (≥ C50); SPL never below the Barron reverberant level; STI between the pure-diffuse-field and burst+tail IEC bounds |
+| `measurement_comparison` | The `--measured` tool: zero error for exact data, correct bias and tolerance handling for offset data, CSV parsing, off-grid (wrong unit) detection |
 | `sti_reference` | STICalculator end points (SNR ±15, 0 dB), exact agreement (±0.01) with an independent IEC 60268-16:2011 implementation (`IecReference.cs`) for noise, reverberation and both, and the reception threshold for quiet speech |
 
 **Fail** means a broken invariant or a clear bug. **Warn** is available for deviations from a reference model that need an engineering decision rather than an automatic fix; all built-in checks currently pass without warnings.
@@ -64,6 +65,26 @@ dotnet run --project SoundCalcs.Harness -- --job "%AppData%\RK Tools\SoundCalcs\
 ```
 
 A spec describes what you set up in the plugin UI. Walls are detail lines with an STC value, and if you leave out `Boundary` it is the convex hull of the wall endpoints, as *Select Boundary* does. Speakers have a position, a height above the level, an aim and a profile. You also set grid spacing, receiver height, boundary offset, quality and the environment. `Probes` assert SPL/STI ranges at points.
+
+### Comparing with measurements
+
+Measure SPL, STI, C80 or octave bands at a few points in a finished room. Then replay the plugin's job for that room against your measurements:
+
+```bash
+dotnet run --project SoundCalcs.Harness -- --job "<id>_input.json" --measured measured.csv [--tol-spl 3 --tol-sti 0.05]
+```
+
+The file is a CSV with a header row:
+
+```
+name,x,y,spl,spla,sti,c80,spl125,spl250,spl500,spl1k,spl2k,spl4k,spl8k
+```
+
+Any subset of the metric columns works, and empty cells are skipped. A JSON array of `{Name, X, Y, Spl, SplA, Sti, C80, Bands[7]}` is also accepted. `x`/`y` are **metres in the model's coordinates** (the same as the job input). Points that land off the receiver grid are flagged, which usually means feet or a shifted origin.
+
+The report gives, per metric: bias, RMS error, worst point, and how many points fall outside the tolerance. Error means predicted − measured. `<scenario>/measured_vs_predicted.csv` lists every point for a spreadsheet. A consistent bias usually points to a wrong input (speaker level, RT60, noise). A scatter usually points to geometry or directivity.
+
+The `measurement_comparison` built-in scenario tests this tool itself.
 
 ### Adding a built-in scenario
 

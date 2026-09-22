@@ -521,6 +521,14 @@ namespace SoundCalcs.UI.ViewModels
             set { _floorSurface = value ?? FloorSurfaceOptions[0]; OnPropertyChanged(nameof(FloorSurface)); }
         }
 
+        private int _occupants;
+        /// <summary>People in the room: their absorption shortens the estimated RT60.</summary>
+        public int Occupants
+        {
+            get => _occupants;
+            set { _occupants = Math.Max(0, value); OnPropertyChanged(nameof(Occupants)); }
+        }
+
         private SurfaceMaterialInfo _ceilingSurface =
             SurfaceMaterialCatalog.Find(SurfaceMaterialCatalog.CeilingOptions, SurfaceMaterialCatalog.DefaultCeiling);
         public SurfaceMaterialInfo CeilingSurface
@@ -576,47 +584,42 @@ namespace SoundCalcs.UI.ViewModels
                 return;
             }
 
-            // Aggregate floor area and ceiling height across all rooms
-            double totalFloorArea = 0;
-            double avgCeilingH = 0;
-            int roomCount = 0;
-            foreach (var room in DetectedRooms)
-            {
-                totalFloorArea += room.Area;
-                if (room.CeilingHeightM > 0.5)
-                {
-                    avgCeilingH += room.CeilingHeightM;
-                    roomCount++;
-                }
-            }
-            // Default ceiling height if not available from speaker elevations
-            if (roomCount == 0 || avgCeilingH <= 0)
-                avgCeilingH = 3.0;
-            else
-                avgCeilingH /= roomCount;
-
-            double volumeM3 = totalFloorArea * avgCeilingH;
-            double surfaceAreaM2 = Compute.RoomAcoustics.EstimateSurfaceArea(totalFloorArea, avgCeilingH);
-
-            // Area-weighted absorption: walls use the surface material of their assigned wall
-            // type (weighted by detail-line length), floor and ceiling the chosen finishes.
-            var wallMix = WallLineGroups
-                .Select(w => w.GetGroup())
-                .Where(g => g.TotalLengthM > 0 && g.WallType != null)
-                .Select(g => (g.TotalLengthM, g.WallType.AbsorptionByBand))
+            // Same geometry steps as a run: ceiling height from ceiling speakers, and how much of
+            // the boundary is backed by (non-opening) wall lines.
+            var rooms = DetectedRooms.ToList();
+            JobInputBuilder.ApplyCeilingHeights(rooms,
+                SpeakerGroups
+                    .Where(g => g.GetMapping().ProfileSource != ProfileSourceType.WallMounted)
+                    .SelectMany(g => g.GetGroup().Instances));
+            var enclosingSegs = WallLineGroups
+                .Where(w => !JobInputBuilder.IsOpening(w.GetGroup().WallType))
+                .SelectMany(w => w.GetGroup().Segments)
                 .ToList();
-            double[] absorption = Compute.RoomAcoustics.AverageAbsorption(
-                totalFloorArea, surfaceAreaM2, wallMix,
-                FloorSurface.AbsorptionByBand, CeilingSurface.AbsorptionByBand,
-                OctaveBands.AbsorptionPresets[WallAbsorptionPreset.Drywall]);
+            RoomDetector.ComputeEnclosureRatios(rooms, enclosingSegs);
 
-            double[] rt60 = Compute.RoomAcoustics.EstimateEyringRt60(volumeM3, surfaceAreaM2, absorption);
+            double floorArea = rooms.Sum(r => r.Area);
+            double perimeter = rooms.Sum(r => r.Perimeter);
+            double covered = rooms.Sum(r => r.WallCoverageM);
+            double ceilingH = rooms.Where(r => r.CeilingHeightM > 0.5).Select(r => r.CeilingHeightM).DefaultIfEmpty(3.0).Average();
+
+            // Every wall line counts with its type's surface material ("Open" absorbs fully)
+            var wallLines = WallLineGroups
+                .Select(w => w.GetGroup())
+                .Where(g => g.TotalLengthM > 0)
+                .Select(g => (g.TotalLengthM, (g.WallType ?? WallTypeCatalog.Default).AbsorptionByBand))
+                .ToList();
+
+            double[] rt60 = Compute.RoomAcoustics.EstimateRt60FromGeometry(
+                floorArea, perimeter, ceilingH, wallLines, covered,
+                FloorSurface.AbsorptionByBand, CeilingSurface.AbsorptionByBand,
+                Occupants, 20.0, Humidity);
 
             RT60_125 = rt60[0]; RT60_250 = rt60[1]; RT60_500 = rt60[2]; RT60_1k = rt60[3];
             RT60_2k  = rt60[4]; RT60_4k  = rt60[5]; RT60_8k  = rt60[6];
 
-            StatusMessage = $"RT60 estimated (Eyring): room {totalFloorArea:F0} m² × {avgCeilingH:F1} m = {volumeM3:F0} m³. " +
-                $"500 Hz RT60 = {rt60[2]:F2} s";
+            double open = Math.Max(0, perimeter - covered);
+            StatusMessage = $"RT60 estimated (Eyring): {floorArea:F0} m² × {ceilingH:F1} m = {floorArea * ceilingH:F0} m³, " +
+                $"{open:F0} m of open boundary, {Occupants} people. 500 Hz RT60 = {rt60[2]:F2} s";
         }
 
         private void LoadOctaveBandSettings(AnalysisSettings s)
@@ -628,6 +631,7 @@ namespace SoundCalcs.UI.ViewModels
                 RT60_2k = rt[4]; RT60_4k = rt[5]; RT60_8k = rt[6];
             }
             Humidity = s.RelativeHumidityPct;
+            Occupants = s.Occupants;
             FloorSurface = SurfaceMaterialCatalog.Find(SurfaceMaterialCatalog.FloorOptions, s.FloorSurface);
             CeilingSurface = SurfaceMaterialCatalog.Find(SurfaceMaterialCatalog.CeilingOptions, s.CeilingSurface);
 
@@ -951,6 +955,7 @@ namespace SoundCalcs.UI.ViewModels
                     BackgroundNoiseByBand = GetNoiseArray(),
                     AbLineParameterName = AbLineParameterName,
                     RelativeHumidityPct = Humidity,
+                    Occupants = Occupants,
                     FloorSurface = FloorSurface.Preset,
                     CeilingSurface = CeilingSurface.Preset
                 },

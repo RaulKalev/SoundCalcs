@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using SoundCalcs.Compute;
 using SoundCalcs.Domain;
@@ -88,6 +89,7 @@ namespace SoundCalcs.Harness
                 WallMaterials(),
                 ReverberantRoom(),
                 StiReference(),
+                MeasurementComparison(),
             };
         }
 
@@ -695,6 +697,86 @@ namespace SoundCalcs.Harness
                     ctx.Assert("SPL never below the Barron reverberant level", worstDeficit <= 0.05,
                         $"worst receiver {worstR?.Position}: SPL {CheckContext.F(worstR?.SplDb ?? 0)} dB vs reverberant " +
                         $"level {CheckContext.F(worstRev)} dB");
+                }
+            };
+        }
+
+        // -----------------------------------------------------------------
+        // 6b. The measured-vs-predicted comparison tool itself
+        // -----------------------------------------------------------------
+        static Scenario MeasurementComparison()
+        {
+            var spec = new ScenarioSpec
+            {
+                Name = "measurement_comparison",
+                Description = "Checks the --measured comparison: synthetic measurements taken from the " +
+                              "prediction must give zero error; a +2 dB / −0.1 STI offset must be reported " +
+                              "as that bias and flagged against the tolerance; CSV input parses.",
+                Walls = ScenarioSpec.RectangleWalls(0, 0, 8, 6, 50),
+                Quality = CalculationQuality.Draft,
+                Speakers = { new SpeakerSpec { X = 4, Y = 3, HeightM = 2.8, Profile = ScenarioSpec.Cone(90, 60, -12) } }
+            };
+
+            return new Scenario
+            {
+                Spec = spec,
+                ViewerModes = new VisualizationMode[0],
+                RevitModes = new VisualizationMode[0],
+                Checks = (run, ctx) =>
+                {
+                    string tmp = Path.Combine(Path.GetTempPath(), "soundcalcs_harness_" + Guid.NewGuid().ToString("N"));
+                    Directory.CreateDirectory(tmp);
+                    try
+                    {
+                        var picks = new[] { run.Nearest(1, 1), run.Nearest(4, 3), run.Nearest(7, 5), run.Nearest(2, 4.5) };
+
+                        // Exact: measurements equal the prediction
+                        var exact = picks.Select((r, i) => new MeasuredPoint
+                        {
+                            Name = $"P{i}", X = r.Position.X, Y = r.Position.Y,
+                            Spl = r.SplDb, Sti = r.Sti, Bands = r.SplDbByBand.Select(v => (double?)v).ToArray()
+                        }).ToList();
+                        var c1 = new CheckContext();
+                        Measurements.Compare(run, exact, new MeasurementTolerances(), c1, tmp);
+                        ctx.Assert("measurements equal to the prediction pass every comparison",
+                            c1.Results.Count >= 9 && c1.Results.All(r => r.Passed),
+                            string.Join("; ", c1.Results.Where(r => !r.Passed).Select(r => r.Name + ": " + r.Detail)));
+
+                        // Offset: measured 2 dB louder and 0.1 STI better than predicted
+                        var offset = exact.Select(m => new MeasuredPoint
+                        {
+                            Name = m.Name, X = m.X + 0.1, Y = m.Y - 0.1, Spl = m.Spl + 2, Sti = m.Sti + 0.1
+                        }).ToList();
+                        var c2 = new CheckContext();
+                        Measurements.Compare(run, offset, new MeasurementTolerances { SplDb = 3, Sti = 0.05 }, c2, tmp);
+                        var spl = c2.Results.First(r => r.Name.StartsWith("SPL:"));
+                        var sti = c2.Results.First(r => r.Name.StartsWith("STI:"));
+                        ctx.Assert("a +2 dB offset is reported as bias −2 dB and passes a ±3 dB tolerance",
+                            spl.Passed && spl.Detail.Contains("bias -2 dB"), spl.Detail);
+                        ctx.Assert("a +0.1 STI offset fails a ±0.05 tolerance", !sti.Passed && sti.Detail.Contains("bias -0.1"), sti.Detail);
+
+                        // CSV round trip (semicolon-free, blank cells allowed)
+                        string csvPath = Path.Combine(tmp, "m.csv");
+                        File.WriteAllText(csvPath, "name,x,y,spl,sti,spl1k\n" +
+                            string.Join("\n", exact.Select(m => FormattableString.Invariant(
+                                $"{m.Name},{m.X},{m.Y},{m.Spl},,{m.Bands[3]}"))));
+                        var loaded = Measurements.Load(csvPath);
+                        ctx.Assert("measurement CSV parses (names, coordinates, blank cells, band columns)",
+                            loaded.Count == exact.Count && loaded[0].Name == "P0" && loaded.All(l => l.Sti == null) &&
+                            Math.Abs(loaded[2].Spl.Value - exact[2].Spl.Value) < 1e-9 &&
+                            Math.Abs(loaded[1].Bands[3].Value - exact[1].Bands[3].Value) < 1e-9, "");
+
+                        // Coordinates in the wrong units are flagged
+                        var c3 = new CheckContext();
+                        Measurements.Compare(run, exact.Select(m => new MeasuredPoint { Name = m.Name, X = m.X * 3.28, Y = m.Y * 3.28, Spl = m.Spl }).ToList(),
+                            new MeasurementTolerances(), c3, tmp);
+                        ctx.Assert("points off the grid (e.g. feet instead of metres) are flagged",
+                            !c3.Results.First(r => r.Name.Contains("receiver grid")).Passed, "");
+                    }
+                    finally
+                    {
+                        Directory.Delete(tmp, true);
+                    }
                 }
             };
         }
