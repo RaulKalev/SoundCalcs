@@ -108,6 +108,12 @@ namespace SoundCalcs.Domain
         /// <summary>Total length of segments in meters.</summary>
         public double TotalLengthM { get; set; }
 
+        /// <summary>
+        /// Wall height in metres; 0 = full height (floor to ceiling). Use for screens and
+        /// low partitions: sound passes and diffracts over them.
+        /// </summary>
+        public double HeightM { get; set; }
+
         /// <summary>Assigned acoustic wall type.</summary>
         public WallTypeInfo WallType { get; set; } = WallTypeCatalog.Default;
 

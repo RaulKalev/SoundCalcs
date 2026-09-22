@@ -21,6 +21,9 @@ namespace SoundCalcs.Harness
         /// </summary>
         public string WallType { get; set; }
 
+        /// <summary>Wall height in metres; 0 = full height (as the Height column in the plugin).</summary>
+        public double HeightM { get; set; }
+
         public WallTypeInfo CatalogType() => WallType == null ? null : WallTypeCatalog.FindByKey(WallType);
 
         /// <summary>SelectBoundary assigns 0.1 m to every picked detail line.</summary>
@@ -164,7 +167,7 @@ namespace SoundCalcs.Harness
 
             // --- Receivers, enclosure, ceiling height (MainViewModel.RunAnalysis) ---
             RoomDetector.ComputeEnclosureRatios(rooms,
-                segments.Where((seg, i) => !JobInputBuilder.IsOpening(Walls[i].CatalogType())).ToList());
+                segments.Where((seg, i) => JobInputBuilder.IsEnclosing(Walls[i].CatalogType(), Walls[i].HeightM)).ToList());
 
             var settings = new AnalysisSettings
             {
@@ -186,9 +189,13 @@ namespace SoundCalcs.Harness
 
             var walls = new List<ComputeWall>();
             for (int i = 0; i < segments.Count; i++)
-                walls.Add(Walls[i].WallType != null
-                    ? JobInputBuilder.ToComputeWall(segments[i], Walls[i].CatalogType())
-                    : JobInputBuilder.ToComputeWall(segments[i], Walls[i].Stc));
+            {
+                ComputeWall cw = Walls[i].WallType != null
+                    ? JobInputBuilder.ToComputeWall(segments[i], Walls[i].CatalogType(), Walls[i].HeightM)
+                    : JobInputBuilder.ToComputeWall(segments[i], Walls[i].Stc);
+                cw.HeightM = Walls[i].HeightM;
+                walls.Add(cw);
+            }
             if (AnechoicWalls)
                 foreach (var w in walls)
                     w.AbsorptionByBand = Enumerable.Repeat(1.0, OctaveBands.Count).ToArray();

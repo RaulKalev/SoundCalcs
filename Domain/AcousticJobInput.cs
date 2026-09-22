@@ -32,6 +32,16 @@ namespace SoundCalcs.Domain
         public double HalfThicknessM { get; set; } = 0.10;
 
         /// <summary>
+        /// Height of the wall above <see cref="BaseElevationM"/> in metres. 0 = full height
+        /// (floor to ceiling). Partial-height walls (screens, low partitions) only block paths
+        /// that pass below their top edge; sound diffracts over the top.
+        /// </summary>
+        public double HeightM { get; set; }
+
+        /// <summary>Elevation of the wall's base (its floor level) in metres.</summary>
+        public double BaseElevationM { get; set; }
+
+        /// <summary>
         /// Per-octave-band absorption coefficients for reflection calculations.
         /// Null = use global default (backward compatible).
         /// </summary>

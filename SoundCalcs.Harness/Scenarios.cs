@@ -87,6 +87,7 @@ namespace SoundCalcs.Harness
                 WallMountedAim(),
                 SpeakerRotation(),
                 WallMaterials(),
+                ScreenDiffraction(),
                 ReverberantRoom(),
                 StiReference(),
                 MeasurementComparison(),
@@ -593,6 +594,99 @@ namespace SoundCalcs.Harness
                         tileLouder == 0 && tileDrop > 0.3, $"mean drop {CheckContext.F(tileDrop)} dB, {tileLouder} receivers louder");
                 }
             };
+        }
+
+        // -----------------------------------------------------------------
+        // 5d. Free-standing wall and low screens: diffraction, smooth shadows
+        // -----------------------------------------------------------------
+        static Scenario ScreenDiffraction()
+        {
+            var spec = new ScenarioSpec
+            {
+                Name = "screen_diffraction",
+                Description = "Open 16×12 m area (no enclosing walls) with a free-standing 6 m STC-45 wall at " +
+                              "x = 0 and an omni talker at (−4, 0), 1.2 m high, Draft, surfaces non-reflecting. " +
+                              "The shadow behind the wall must follow thin-screen diffraction (more loss at high " +
+                              "frequencies, no hard edges); a 1.5 m screen must shield a talker at ear height " +
+                              "but hardly a ceiling speaker.",
+                Boundary = ScenarioSpec.Rectangle(-8.3, -6.3, 8.3, 6.3),
+                Walls = { new WallSpec { X1 = 0, Y1 = -3, X2 = 0, Y2 = 3, Stc = 45 } },
+                AnechoicWalls = true,
+                Quality = CalculationQuality.Draft,
+                Speakers = { new SpeakerSpec { X = -4, Y = 0, HeightM = 1.2, Profile = ScenarioSpec.Omni(90) } }
+            };
+
+            return new Scenario
+            {
+                Spec = spec,
+                ViewerModes = new[] { VisualizationMode.SPL, VisualizationMode.SPL_4k },
+                RevitModes = new[] { VisualizationMode.SPL },
+                Checks = (run, ctx) =>
+                {
+                    var air = Air(run.Spec);
+                    var src = run.Input.Sources[0].Position;
+                    double FreeBand(ReceiverResult r, int k)
+                    {
+                        double d = Dist(r.Position, src);
+                        return 90 - 10 * Math.Log10(7) - 20 * Math.Log10(d) - air[k] * d;
+                    }
+
+                    // Behind the middle of the wall: insertion loss rises with frequency
+                    var behind = run.Nearest(2, 0);
+                    double il250 = FreeBand(behind, 1) - behind.SplDbByBand[1];
+                    double il4k = FreeBand(behind, 5) - behind.SplDbByBand[5];
+                    ctx.InRange("insertion loss behind the wall at 250 Hz (diffraction around the ends)", il250, 8, 20, " dB");
+                    ctx.Assert("insertion loss larger at 4 kHz than at 250 Hz", il4k > il250 + 5,
+                        $"250 Hz {CheckContext.F(il250)} dB, 4 kHz {CheckContext.F(il4k)} dB");
+                    ctx.Assert("sound reaches behind the wall by diffraction, not only through it (IL < STC contour)",
+                        il250 < 45 - 8 - 5, $"250 Hz IL {CheckContext.F(il250)} dB vs 32 dB transmission-only");
+
+                    // Smooth map: no jump between neighbouring receivers beyond what spreading gives
+                    var byPos = run.Output.Results.ToDictionary(r => (Math.Round(r.Position.X, 2), Math.Round(r.Position.Y, 2)));
+                    double worst = 0; ReceiverResult worstR = null;
+                    foreach (var r in run.Output.Results)
+                    {
+                        if (Dist(r.Position, src) < 2) continue;
+                        foreach (var (dx, dy) in new[] { (0.5, 0.0), (0.0, 0.5) })
+                        {
+                            if (!byPos.TryGetValue((Math.Round(r.Position.X + dx, 2), Math.Round(r.Position.Y + dy, 2)), out var n)) continue;
+                            if (Math.Abs(r.Position.X) < 0.3 || Math.Abs(n.Position.X) < 0.3) continue; // straddles the wall itself
+                            // within a metre of a wall end the diffracted field legitimately changes fast
+                            bool nearEdge = new[] { r, n }.Any(q => new[] { -3.0, 3.0 }.Any(ey =>
+                                Math.Sqrt(q.Position.X * q.Position.X + Math.Pow(q.Position.Y - ey, 2)) < 1.0));
+                            if (nearEdge) continue;
+                            double jump = Math.Abs(r.SplDb - n.SplDb);
+                            if (jump > worst) { worst = jump; worstR = r; }
+                        }
+                    }
+                    ctx.Assert("no hard shadow edges: neighbouring receivers (> 1 m from the wall ends) differ by < 4 dB", worst < 4,
+                        $"largest step {CheckContext.F(worst)} dB at {worstR?.Position}");
+
+                    // Low screen: shields a talker at ear height, hardly a ceiling speaker
+                    var screenSpec = run.Spec.Clone("_screen");
+                    screenSpec.Walls = new List<WallSpec> { new WallSpec { X1 = 0, Y1 = -6, X2 = 0, Y2 = 6, Stc = 30 } };
+                    var screenTalker = screenSpec.Clone("_talker");
+                    var noScreen = screenSpec.Clone("_none"); noScreen.Walls.Clear();
+                    double ilTalker = IlWithHeight(screenTalker, noScreen, 1.2, 1.5);
+                    double ilCeiling = IlWithHeight(screenTalker, noScreen, 3.0, 1.5);
+                    ctx.InRange("1.5 m screen shields a talker at 1.2 m (receiver 2 m behind)", ilTalker, 6, 25, " dB");
+                    // The ceiling speaker's path clears the screen top by 0.3 m: inside the low-frequency
+                    // Fresnel zone, so a little bright-zone loss remains (Maekawa), far less than for the talker.
+                    ctx.Assert("1.5 m screen affects a ceiling speaker at 3 m far less than a talker",
+                        ilCeiling >= 0 && ilCeiling < 3 && ilCeiling < ilTalker / 3,
+                        $"ceiling {CheckContext.F(ilCeiling)} dB, talker {CheckContext.F(ilTalker)} dB");
+                }
+            };
+        }
+
+        /// <summary>Insertion loss at (2, 0) of screen walls of the given height, for a speaker at the given height.</summary>
+        static double IlWithHeight(ScenarioSpec withScreen, ScenarioSpec without, double speakerHeight, double screenHeight)
+        {
+            var a = withScreen.Clone(""); var b = without.Clone("");
+            a.Speakers[0].HeightM = speakerHeight; b.Speakers[0].HeightM = speakerHeight;
+            foreach (var w in a.Walls) w.HeightM = screenHeight;
+            var ra = ScenarioRun.Execute(a); var rb = ScenarioRun.Execute(b);
+            return rb.Nearest(2, 0).SplDb - ra.Nearest(2, 0).SplDb;
         }
 
         // -----------------------------------------------------------------

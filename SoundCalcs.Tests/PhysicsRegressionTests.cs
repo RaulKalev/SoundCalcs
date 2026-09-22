@@ -71,14 +71,63 @@ namespace SoundCalcs.Tests
         }
 
         [Fact]
-        public void PathGrazingPastWallEnd_WithinHalfThickness_StillBlocks()
+        public void PathGrazingPastWallEnd_AtACornerGap_StillBlocks()
         {
-            // Wall x = 0 from y = −5 to y = 1.00; path from (−2, 1.03) to (2, 1.03) passes 3 cm
-            // above its end (half-thickness 5 cm) → bridged gap, counts as blocked.
-            var walls = new List<ComputeWall> { Wall(0, -5, 0, 1.0, 40, Anechoic) };
+            // Wall x = 0 from y = −5 to y = 1.00 whose end meets a second wall (y = 1.1): a
+            // detail-line gap at a corner. The path from (−2, 1.03) to (2, 1.03) passes 3 cm
+            // above the end (half-thickness 5 cm) → bridged gap, counts as blocked.
+            var walls = new List<ComputeWall>
+            {
+                Wall(0, -5, 0, 1.0, 40, Anechoic),
+                Wall(0, 1.1, -5, 1.1, 40, Anechoic),
+            };
             var (res, _) = Run(new List<ComputeSource> { Omni(-2, 1.03, 1.2) },
                 new List<Vec3> { new Vec3(2, 1.03, 1.2) }, walls);
             Assert.True(res[0].SplDb < 90 - 20 * Math.Log10(4) - 15, $"got {res[0].SplDb}");
+        }
+
+        [Fact]
+        public void PathGrazingPastAFreeWallEnd_LosesAboutFiveDb()
+        {
+            // Same path past a free-standing wall's end: at the shadow boundary diffraction
+            // around the edge gives ≈ 5 dB (Kurze–Anderson / Maekawa, N → 0), not the wall's TL.
+            var walls = new List<ComputeWall> { Wall(0, -5, 0, 1.0, 40, Anechoic) };
+            var (res, _) = Run(new List<ComputeSource> { Omni(-2, 1.03, 1.2) },
+                new List<Vec3> { new Vec3(2, 1.03, 1.2) }, walls);
+            double freeField = 90 - 20 * Math.Log10(4);
+            Assert.InRange(freeField - res[0].SplDb, 4.0, 7.0);
+        }
+
+        [Theory]
+        [InlineData(0.0, 5.0)]
+        [InlineData(1.0, 13.1)]      // 5 + 20·log10(√(2π)/tanh√(2π)) = 13.10
+        [InlineData(-0.1, 2.9)]      // bright zone: 5 + 20·log10(√(0.2π)/tan√(0.2π))
+        [InlineData(-0.2, 0.0)]      // bright zone ends
+        [InlineData(100.0, 25.0)]    // capped
+        public void DiffractionAttenuation_FollowsKurzeAnderson(double n, double expectedDb)
+        {
+            Assert.Equal(expectedDb, SPLCalculator.DiffractionAttenuationDb(n == 0 ? 1e-12 : n), 1);
+        }
+
+        [Fact]
+        public void LowScreen_BlocksBelowItsTop_AndSoundGoesOverIt()
+        {
+            // 1.19 m screen between a 1.2 m-high source and receiver 4 m apart: the path clears
+            // its top by 1 cm → bright-zone diffraction ≈ 5 dB, not the screen's STC. A 3 m high
+            // speaker's path to the receiver passes well over the screen → no loss.
+            var screen = new ComputeWall
+            {
+                Start = new Vec2(0, -20), End = new Vec2(0, 20), StcRating = 30,
+                HalfThicknessM = 0.05, HeightM = 1.19, AbsorptionByBand = Anechoic
+            };
+            var recv = new List<Vec3> { new Vec3(2, 0, 1.2) };
+            double freeField = 90 - 20 * Math.Log10(4);
+            var low = Run(new List<ComputeSource> { Omni(-2, 0, 1.2) }, recv, new List<ComputeWall> { screen }).R[0];
+            Assert.InRange(freeField - low.SplDb, 4.0, 7.0);
+
+            var high = Run(new List<ComputeSource> { Omni(-2, 0, 3.0) }, recv, new List<ComputeWall> { screen }).R[0];
+            double d = Math.Sqrt(16 + 1.8 * 1.8);
+            Assert.InRange(high.SplDb, 90 - 20 * Math.Log10(d) - 0.1, 90 - 20 * Math.Log10(d) + 0.01);
         }
 
         [Fact]

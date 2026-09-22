@@ -467,6 +467,13 @@
                                 <DataGridTextColumn Header="Line Style" Binding="{Binding LineStyleName}" Width="160" IsReadOnly="True"/>
                                 <DataGridTextColumn Header="Segments" Binding="{Binding SegmentCount}" Width="70" IsReadOnly="True"/>
                                 <DataGridTextColumn Header="Length" Binding="{Binding TotalLength}" Width="70" IsReadOnly="True"/>
+                                <DataGridTextColumn Header="Height (m)" Binding="{Binding HeightM, UpdateSourceTrigger=LostFocus}" Width="75">
+                                    <DataGridTextColumn.HeaderStyle>
+                                        <Style TargetType="DataGridColumnHeader" BasedOn="{StaticResource DgHeaderStyle}">
+                                            <Setter Property="ToolTip" Value="Wall height; 0 = full height (floor to ceiling). Use for screens and low partitions."/>
+                                        </Style>
+                                    </DataGridTextColumn.HeaderStyle>
+                                </DataGridTextColumn>
                                 <DataGridTemplateColumn Header="Wall Type" Width="280">
                                     <DataGridTemplateColumn.CellTemplate>
                                         <DataTemplate>

@@ -267,6 +267,7 @@ namespace SoundCalcs.Tests
             //
             // In this geometry the image source coincides with the receiver, so no
             // first-order reflection is valid → the only change is direct-path TL.
+            // The wall is 2 km long so diffraction around its ends is negligible.
             //
             //   No-wall TL: 0 dB for all bands (wallStcSum=0 → no field penalty applied)
             //
@@ -276,7 +277,7 @@ namespace SoundCalcs.Tests
             Vec3 recvPos = new Vec3(5, 0, 0);
             var wall = new ComputeWall
             {
-                Start = new Vec2(2.5, -5), End = new Vec2(2.5, 5),
+                Start = new Vec2(2.5, -1000), End = new Vec2(2.5, 1000),
                 StcRating = 40, HalfThicknessM = 0.1
             };
 

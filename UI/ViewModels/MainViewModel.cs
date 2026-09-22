@@ -592,7 +592,7 @@ namespace SoundCalcs.UI.ViewModels
                     .Where(g => g.GetMapping().ProfileSource != ProfileSourceType.WallMounted)
                     .SelectMany(g => g.GetGroup().Instances));
             var enclosingSegs = WallLineGroups
-                .Where(w => !JobInputBuilder.IsOpening(w.GetGroup().WallType))
+                .Where(w => JobInputBuilder.IsEnclosing(w.GetGroup().WallType, w.GetGroup().HeightM))
                 .SelectMany(w => w.GetGroup().Segments)
                 .ToList();
             RoomDetector.ComputeEnclosureRatios(rooms, enclosingSegs);
@@ -1067,10 +1067,10 @@ namespace SoundCalcs.UI.ViewModels
 
                 // Compute enclosure ratio for each room polygon using original wall segments.
                 // This determines how much reverberant energy is applied per room.
-                // Openings ("Open (No Wall)") don't enclose anything.
+                // Openings ("Open (No Wall)") and low screens don't enclose the room.
                 var allWallSegs = new List<WallSegment2D>();
                 foreach (var wvm in WallLineGroups)
-                    if (!JobInputBuilder.IsOpening(wvm.GetGroup().WallType))
+                    if (JobInputBuilder.IsEnclosing(wvm.GetGroup().WallType, wvm.GetGroup().HeightM))
                         allWallSegs.AddRange(wvm.GetGroup().Segments);
                 RoomDetector.ComputeEnclosureRatios(analysisRooms, allWallSegs);
 
@@ -1121,7 +1121,7 @@ namespace SoundCalcs.UI.ViewModels
                     // Each segment is extended 0.10 m at both ends to bridge
                     // small gaps at corners and T-junctions.
                     foreach (WallSegment2D seg in grp.Segments)
-                        computeWalls.Add(JobInputBuilder.ToComputeWall(seg, grp.WallType));
+                        computeWalls.Add(JobInputBuilder.ToComputeWall(seg, grp.WallType, grp.HeightM));
                 }
                 FileLogger.Log($"Wall segments for calc: {computeWalls.Count} " +
                     $"(groups: {WallLineGroups.Count})");
@@ -1443,6 +1443,21 @@ namespace SoundCalcs.UI.ViewModels
                 {
                     _group.WallType = value;
                     PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(WallType)));
+                }
+            }
+        }
+
+        /// <summary>Wall height in metres, 0 = full height (floor to ceiling).</summary>
+        public double HeightM
+        {
+            get => _group.HeightM;
+            set
+            {
+                double v = Math.Max(0, value);
+                if (Math.Abs(_group.HeightM - v) > 1e-9)
+                {
+                    _group.HeightM = v;
+                    PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(HeightM)));
                 }
             }
         }

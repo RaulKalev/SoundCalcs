@@ -321,6 +321,14 @@ namespace SoundCalcs.Compute
             }
             var horizImageArray = horizImages.ToArray();
 
+            // Free wall ends (not joined to another wall): sound diffracts around them
+            bool[] startFree = new bool[walls.Count], endFree = new bool[walls.Count];
+            for (int w = 0; w < walls.Count; w++)
+            {
+                startFree[w] = IsFreeEnd(walls[w].Start, w, walls);
+                endFree[w] = IsFreeEnd(walls[w].End, w, walls);
+            }
+
             FileLogger.Log($"[SPLCalc] ImageSources={imageSourceArray.Length}, HorizImages={horizImageArray.Length}, " +
                 $"Reverb={hasReverb}");
 
@@ -368,19 +376,98 @@ namespace SoundCalcs.Compute
                         Vec3 toReceiver = delta / distance;
                         Vec3 facing = source.FacingDirection.Normalized();
 
-                        double stc = SumWallStc(new Vec2(source.Position.X, source.Position.Y), recvXY, walls, -1, -1);
+                        Vec2 srcXY0 = new Vec2(source.Position.X, source.Position.Y);
+                        var hits = new List<int>(2);
+                        double stc = SumWallStc(srcXY0, recvXY, source.Position.Z, recvPos.Z, walls, -1, -1, hits);
                         wallStcSums[s] = stc;
                         if (stc > 0) Interlocked.Increment(ref wallHitReceivers);
+
+                        // Unobstructed paths passing just clear of an edge (a free wall end or the top
+                        // of a low wall) already lose some energy: the bright-zone part of the
+                        // diffraction curve, 5 dB at the shadow boundary falling to 0 at N = −0.2.
+                        double brightDetour = stc > 0 ? double.MaxValue
+                            : SmallestEdgeDetour(source.Position, recvPos, distance, walls, startFree, endFree);
 
                         double[] p = new double[numBands];
                         for (int k = 0; k < numBands; k++)
                         {
                             double gain = providers[s].GetDirectivityGainForBand(facing, toReceiver, k);
+                            double brightDb = brightDetour < double.MaxValue
+                                ? DiffractionAttenuationDb(-2 * brightDetour * OctaveBands.CenterFrequencies[k] / speedOfSound)
+                                : 0;
                             p[k] = sourceBand[s][k] * Spread(distance) * gain * gain
-                                 * LossFactor(stc, k, airAbsorption[k] * distance);
+                                 * LossFactor(stc, k, airAbsorption[k] * distance)
+                                 * Math.Pow(10.0, -brightDb / 10.0);
                             totalByBand[k] += p[k];
                         }
                         arrivals.Add((directTime[s], p, s));
+
+                        // --- Diffraction around a single obstructing wall ---
+                        // Around its free vertical ends and, for partial-height walls, over the top.
+                        // Maekawa / Kurze–Anderson thin-screen attenuation per band.
+                        if (hits.Count == 1)
+                        {
+                            int wi = hits[0];
+                            ComputeWall bw = walls[wi];
+                            var edges = new List<Vec3>(3);
+                            if (startFree[wi]) edges.Add(new Vec3(bw.Start.X, bw.Start.Y, double.NaN));
+                            if (endFree[wi]) edges.Add(new Vec3(bw.End.X, bw.End.Y, double.NaN));
+                            if (bw.HeightM > 0)
+                            {
+                                double tc = BlockParam(srcXY0, recvXY - srcXY0, bw);
+                                if (tc > 0)
+                                {
+                                    Vec2 c = srcXY0 + (recvXY - srcXY0) * tc;
+                                    edges.Add(new Vec3(c.X, c.Y, bw.BaseElevationM + bw.HeightM));
+                                }
+                            }
+
+                            foreach (Vec3 edge in edges)
+                            {
+                                Vec2 e2 = new Vec2(edge.X, edge.Y);
+                                double legA = Vec2.Distance(srcXY0, e2), legB = Vec2.Distance(e2, recvXY);
+                                double pathLen;
+                                Vec3 toEdge;
+                                if (double.IsNaN(edge.Z))
+                                {
+                                    // Vertical edge: plan path S→E→R, height interpolated along it
+                                    double dzv = recvPos.Z - source.Position.Z;
+                                    double planLen = legA + legB;
+                                    if (planLen < 1e-9) continue;
+                                    pathLen = Math.Sqrt(planLen * planLen + dzv * dzv);
+                                    double zEdge = source.Position.Z + dzv * legA / planLen;
+                                    // The legs must not be blocked by other walls
+                                    if (SumWallStc(srcXY0, e2, source.Position.Z, zEdge, walls, wi, -1, null) > 0 ||
+                                        SumWallStc(e2, recvXY, zEdge, recvPos.Z, walls, wi, -1, null) > 0)
+                                        continue;
+                                    toEdge = new Vec3(e2.X - srcXY0.X, e2.Y - srcXY0.Y, zEdge - source.Position.Z);
+                                }
+                                else
+                                {
+                                    // Top edge: straight up to the top of the wall and down again
+                                    Vec3 top = edge;
+                                    pathLen = (top - source.Position).Length + (recvPos - top).Length;
+                                    toEdge = top - source.Position;
+                                }
+
+                                double detour = pathLen - distance;
+                                if (detour <= 0) continue;
+                                double toEdgeLen = toEdge.Length;
+                                Vec3 edgeDir = toEdgeLen > 1e-9 ? toEdge / toEdgeLen : toReceiver;
+
+                                double[] pd = new double[numBands];
+                                for (int k = 0; k < numBands; k++)
+                                {
+                                    double lambda = speedOfSound / OctaveBands.CenterFrequencies[k];
+                                    double atten = DiffractionAttenuationDb(2 * detour / lambda);
+                                    double gain = providers[s].GetDirectivityGainForBand(facing, edgeDir, k);
+                                    pd[k] = sourceBand[s][k] * Spread(pathLen) * gain * gain
+                                          * Math.Pow(10.0, -Math.Min(atten + airAbsorption[k] * pathLen, MaxTotalLossDb) / 10.0);
+                                    totalByBand[k] += pd[k];
+                                }
+                                arrivals.Add((pathLen / speedOfSound, pd, s));
+                            }
+                        }
                     }
 
                     // --- Wall reflections (image sources) ---
@@ -399,9 +486,16 @@ namespace SoundCalcs.Compute
                         if (tLast <= 0.0 || tLast >= 1.0) continue;
                         Vec2 lastPt = img.ImagePos + imgToRecv * tLast;
 
+                        // Heights along the unfolded path: linear in plan distance from the source
+                        double dz = recvPos.Z - source.Position.Z;
+                        double zSrc = source.Position.Z;
+                        double ZAt(double planDist) => zSrc + dz * planDist / len2D;
+
                         // Path legs in plan: source → [first bounce →] last bounce → receiver
                         Vec2 firstPt = lastPt;
                         double otherStc;
+                        double zLast = ZAt(len2D - Vec2.Distance(lastPt, recvXY));
+                        if (!BelowTop(walls[img.WallIndex], zLast)) continue; // passes over a low wall
                         if (img.FirstWallIndex >= 0)
                         {
                             // First bounce: first-order image → last bounce point must cross the first wall
@@ -410,19 +504,20 @@ namespace SoundCalcs.Compute
                                 walls[img.FirstWallIndex].Start, walls[img.FirstWallIndex].End);
                             if (tFirst <= 0.0 || tFirst >= 1.0) continue;
                             firstPt = img.FirstImagePos + d1 * tFirst;
+                            double zFirst = ZAt(Vec2.Distance(srcXY, firstPt));
+                            if (!BelowTop(walls[img.FirstWallIndex], zFirst)) continue;
 
-                            otherStc = SumWallStc(srcXY, firstPt, walls, img.FirstWallIndex, img.WallIndex)
-                                     + SumWallStc(firstPt, lastPt, walls, img.FirstWallIndex, img.WallIndex)
-                                     + SumWallStc(lastPt, recvXY, walls, img.FirstWallIndex, img.WallIndex);
+                            otherStc = SumWallStc(srcXY, firstPt, zSrc, zFirst, walls, img.FirstWallIndex, img.WallIndex, null)
+                                     + SumWallStc(firstPt, lastPt, zFirst, zLast, walls, img.FirstWallIndex, img.WallIndex, null)
+                                     + SumWallStc(lastPt, recvXY, zLast, recvPos.Z, walls, img.FirstWallIndex, img.WallIndex, null);
                         }
                         else
                         {
-                            otherStc = SumWallStc(srcXY, lastPt, walls, img.WallIndex, -1)
-                                     + SumWallStc(lastPt, recvXY, walls, img.WallIndex, -1);
+                            otherStc = SumWallStc(srcXY, lastPt, zSrc, zLast, walls, img.WallIndex, -1, null)
+                                     + SumWallStc(lastPt, recvXY, zLast, recvPos.Z, walls, img.WallIndex, -1, null);
                         }
 
                         // Unfolded path length in 3D: plan length plus the height difference
-                        double dz = recvPos.Z - source.Position.Z;
                         double pathLen = Math.Max(Math.Sqrt(len2D * len2D + dz * dz), MinDistanceM);
 
                         // Leave the source toward the first bounce point (height interpolated along the path)
@@ -662,10 +757,12 @@ namespace SoundCalcs.Compute
         // --- Wall transmission loss helpers ---
 
         /// <summary>
-        /// Sums the STC ratings of all walls crossed by the path p→q, skipping up to two
-        /// walls by index (the reflecting walls of a reflected path; pass -1 for none).
+        /// Sums the STC ratings of all walls blocking the path p→q (heights zp→zq), skipping up
+        /// to two walls by index (the reflecting walls of a reflected path; pass -1 for none).
+        /// Indices of blocking walls are added to <paramref name="hits"/> when given.
         /// </summary>
-        private static double SumWallStc(Vec2 p, Vec2 q, List<ComputeWall> walls, int exclude1, int exclude2)
+        private static double SumWallStc(Vec2 p, Vec2 q, double zp, double zq, List<ComputeWall> walls,
+            int exclude1, int exclude2, List<int> hits)
         {
             if (walls.Count == 0) return 0;
 
@@ -678,30 +775,122 @@ namespace SoundCalcs.Compute
                 if (i == exclude1 || i == exclude2) continue;
                 ComputeWall w = walls[i];
                 if (w.StcRating <= 0) continue;
-                if (RayBlockedByWall(p, d, w))
-                    total += w.StcRating;
+                double t = BlockParam(p, d, w);
+                if (t < 0) continue;
+                if (!BelowTop(w, zp + (zq - zp) * t)) continue; // passes over a low wall
+                total += w.StcRating;
+                hits?.Add(i);
             }
             return total;
         }
 
+        /// <summary>True when height z is below the top of the wall (always for full-height walls).</summary>
+        private static bool BelowTop(ComputeWall w, double z) =>
+            w.HeightM <= 0 || z <= w.BaseElevationM + w.HeightM;
+
         /// <summary>
-        /// A wall blocks the path p→p+d if its centreline crosses the path, or passes within
-        /// the wall's half-thickness of it (bridges small gaps at corners and T-junctions
-        /// between detail lines). Only the middle part of the path (TMin..TMax) counts, so a
+        /// Where the wall blocks the path p→p+d in plan: the path parameter t of the crossing
+        /// (or closest approach), or -1 when it doesn't block. A wall blocks if its centreline
+        /// crosses the path, or passes within its half-thickness of it (bridges small gaps at
+        /// corners and T-junctions). Only the middle part of the path (TMin..TMax) counts, so a
         /// wall right next to the speaker or the receiver — but not between them — never blocks.
         /// </summary>
-        internal static bool RayBlockedByWall(Vec2 p, Vec2 d, ComputeWall w)
+        internal static double BlockParam(Vec2 p, Vec2 d, ComputeWall w)
         {
             double t = SegmentIntersectT(p, d, w.Start, w.End);
             if (t > TMin && t < TMax)
-                return true;
+                return t;
 
             double halfThick = w.HalfThicknessM;
-            if (halfThick <= 0) return false;
+            if (halfThick <= 0) return -1;
 
             Vec2 a = p + d * TMin;
             Vec2 b = p + d * TMax;
-            return SegmentDistance(a, b, w.Start, w.End) <= halfThick;
+            if (SegmentDistance(a, b, w.Start, w.End) > halfThick) return -1;
+
+            // Closest approach: the wall end nearest the path, projected onto it
+            double len2 = d.LengthSquared;
+            double ts = Vec2.Dot(w.Start - p, d) / len2, te = Vec2.Dot(w.End - p, d) / len2;
+            double ds = PointSegmentDistance(w.Start, a, b), de = PointSegmentDistance(w.End, a, b);
+            return Math.Max(TMin, Math.Min(TMax, ds <= de ? ts : te));
+        }
+
+        /// <summary>Plan-view blocking test (kept for callers that only need yes/no).</summary>
+        internal static bool RayBlockedByWall(Vec2 p, Vec2 d, ComputeWall w) => BlockParam(p, d, w) >= 0;
+
+        /// <summary>A wall end is free (a diffracting edge) unless another wall passes within 0.2 m of it.</summary>
+        private static bool IsFreeEnd(Vec2 end, int wallIndex, List<ComputeWall> walls)
+        {
+            for (int i = 0; i < walls.Count; i++)
+            {
+                if (i == wallIndex || walls[i].StcRating <= 0) continue;
+                if (PointSegmentDistance(end, walls[i].Start, walls[i].End) < 0.2) return false;
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// Thin-screen diffraction attenuation in dB for Fresnel number N (Kurze–Anderson fit to
+        /// Maekawa's data). Shadow zone, N = 2δ/λ &gt; 0: 5 + 20·log10(√(2πN) / tanh √(2πN)),
+        /// capped at 25 dB. Bright zone (path clears the edge by a detour δ, N = −2δ/λ):
+        /// 5 + 20·log10(√(2π|N|) / tan √(2π|N|)) for −0.2 &lt; N &lt; 0, else 0.
+        /// Continuous: 5 dB at the shadow boundary N = 0.
+        /// </summary>
+        internal static double DiffractionAttenuationDb(double fresnelN)
+        {
+            if (fresnelN > 0)
+            {
+                double x = Math.Sqrt(2 * Math.PI * fresnelN);
+                return Math.Min(25.0, 5.0 + 20.0 * Math.Log10(x / Math.Tanh(x)));
+            }
+            if (fresnelN <= -0.2) return 0;
+            if (fresnelN > -1e-9) return 5.0;
+            double y = Math.Sqrt(2 * Math.PI * -fresnelN);
+            return Math.Max(0, 5.0 + 20.0 * Math.Log10(y / Math.Tan(y)));
+        }
+
+        /// <summary>
+        /// For an unobstructed path S→R: the smallest detour δ (m) of a path via a nearby edge —
+        /// a free wall end, or the top of a low wall the path passes over. MaxValue if none.
+        /// </summary>
+        private static double SmallestEdgeDetour(Vec3 s, Vec3 r, double direct, List<ComputeWall> walls,
+            bool[] startFree, bool[] endFree)
+        {
+            double best = double.MaxValue;
+            Vec2 s2 = new Vec2(s.X, s.Y), r2 = new Vec2(r.X, r.Y);
+            Vec2 d = r2 - s2;
+            double planLen = d.Length;
+            for (int i = 0; i < walls.Count; i++)
+            {
+                ComputeWall w = walls[i];
+                if (w.StcRating <= 0) continue;
+
+                // Free vertical ends
+                for (int e = 0; e < 2; e++)
+                {
+                    if (!(e == 0 ? startFree[i] : endFree[i])) continue;
+                    Vec2 end = e == 0 ? w.Start : w.End;
+                    double a = Vec2.Distance(s2, end), b = Vec2.Distance(end, r2);
+                    double viaPlan = a + b;
+                    double dz = r.Z - s.Z;
+                    double detour = Math.Sqrt(viaPlan * viaPlan + dz * dz) - direct;
+                    if (detour < best) best = detour;
+                }
+
+                // Top of a low wall that the path passes over
+                if (w.HeightM > 0 && planLen > 1e-9)
+                {
+                    double t = SegmentIntersectT(s2, d, w.Start, w.End);
+                    if (t > 0 && t < 1)
+                    {
+                        Vec2 c = s2 + d * t;
+                        Vec3 top = new Vec3(c.X, c.Y, w.BaseElevationM + w.HeightM);
+                        double detour = (top - s).Length + (r - top).Length - direct;
+                        if (detour < best) best = detour;
+                    }
+                }
+            }
+            return best;
         }
 
         /// <summary>Shortest distance between segments AB and CD.</summary>

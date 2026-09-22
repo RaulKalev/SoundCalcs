@@ -54,13 +54,24 @@ namespace SoundCalcs.Domain
         /// Convert a detail-line wall segment into a compute wall with the STC and surface
         /// material of its assigned wall type (null = no type: STC 0, default surface).
         /// </summary>
-        public static ComputeWall ToComputeWall(WallSegment2D seg, WallTypeInfo wallType)
+        public static ComputeWall ToComputeWall(WallSegment2D seg, WallTypeInfo wallType, double heightM = 0)
         {
             ComputeWall w = ToComputeWall(seg, wallType?.StcRating ?? 0);
             if (wallType != null)
                 w.AbsorptionByBand = (double[])wallType.AbsorptionByBand.Clone();
+            w.HeightM = Math.Max(0, heightM);
             return w;
         }
+
+        /// <summary>Partial walls at least this tall count as enclosing the room.</summary>
+        public const double EnclosingHeightM = 2.4;
+
+        /// <summary>
+        /// Whether a wall line group closes off the room (for the enclosure ratio / reverberant
+        /// field): not an opening, and full height or at least <see cref="EnclosingHeightM"/>.
+        /// </summary>
+        public static bool IsEnclosing(WallTypeInfo wallType, double heightM) =>
+            !IsOpening(wallType) && (heightM <= 0 || heightM >= EnclosingHeightM);
 
         /// <summary>
         /// Convert a detail-line wall segment into a compute wall with the given STC,
@@ -79,7 +90,8 @@ namespace SoundCalcs.Domain
                 Start = extStart,
                 End = extEnd,
                 StcRating = stc,
-                HalfThicknessM = Math.Max(seg.ThicknessM * 0.5, 0.05)
+                HalfThicknessM = Math.Max(seg.ThicknessM * 0.5, 0.05),
+                BaseElevationM = seg.BaseElevationM
             };
         }
 
