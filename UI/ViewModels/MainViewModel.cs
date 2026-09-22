@@ -521,6 +521,17 @@ namespace SoundCalcs.UI.ViewModels
             set { _floorSurface = value ?? FloorSurfaceOptions[0]; OnPropertyChanged(nameof(FloorSurface)); }
         }
 
+        private bool _autoRt60PerRoom;
+        /// <summary>
+        /// When on, each room detected in the boundary gets its own RT60 estimated from its
+        /// geometry and materials at run time, instead of the RT60 values entered above.
+        /// </summary>
+        public bool AutoRt60PerRoom
+        {
+            get => _autoRt60PerRoom;
+            set { _autoRt60PerRoom = value; OnPropertyChanged(nameof(AutoRt60PerRoom)); }
+        }
+
         private int _occupants;
         /// <summary>People in the room: their absorption shortens the estimated RT60.</summary>
         public int Occupants
@@ -632,6 +643,7 @@ namespace SoundCalcs.UI.ViewModels
             }
             Humidity = s.RelativeHumidityPct;
             Occupants = s.Occupants;
+            AutoRt60PerRoom = s.AutoRt60PerRoom;
             FloorSurface = SurfaceMaterialCatalog.Find(SurfaceMaterialCatalog.FloorOptions, s.FloorSurface);
             CeilingSurface = SurfaceMaterialCatalog.Find(SurfaceMaterialCatalog.CeilingOptions, s.CeilingSurface);
 
@@ -956,6 +968,7 @@ namespace SoundCalcs.UI.ViewModels
                     AbLineParameterName = AbLineParameterName,
                     RelativeHumidityPct = Humidity,
                     Occupants = Occupants,
+                    AutoRt60PerRoom = AutoRt60PerRoom,
                     FloorSurface = FloorSurface.Preset,
                     CeilingSurface = CeilingSurface.Preset
                 },
@@ -1063,39 +1076,47 @@ namespace SoundCalcs.UI.ViewModels
                     return;
                 }
 
-                analysisRooms = DetectedRooms.ToList();
-
-                // Compute enclosure ratio for each room polygon using original wall segments.
-                // This determines how much reverberant energy is applied per room.
-                // Openings ("Open (No Wall)") and low screens don't enclose the room.
+                // Openings ("Open (No Wall)") and low screens don't enclose a room.
                 var allWallSegs = new List<WallSegment2D>();
                 foreach (var wvm in WallLineGroups)
                     if (JobInputBuilder.IsEnclosing(wvm.GetGroup().WallType, wvm.GetGroup().HeightM))
                         allWallSegs.AddRange(wvm.GetGroup().Segments);
+
+                // Split the boundary into the rooms its walls form (plus the open remainder),
+                // each with its own volume and reverberant field; receivers cover the boundary.
+                StatusMessage = $"Generating grid in boundary with {sources.Count} speakers...";
+                var built = JobInputBuilder.BuildRoomsAndReceivers(DetectedRooms.ToList(), allWallSegs, analysisSettings);
+                analysisRooms = built.Rooms;
+                receivers = built.Receivers;
+                globalIndex = receivers.Count;
+
+                // Enclosure ratio: how much of each room's perimeter is backed by walls.
                 RoomDetector.ComputeEnclosureRatios(analysisRooms, allWallSegs);
 
-                StatusMessage = $"Generating grid in boundary with {sources.Count} speakers...";
-                for (int roomIdx = 0; roomIdx < analysisRooms.Count; roomIdx++)
-                {
-                    RoomPolygon boundary = analysisRooms[roomIdx];
-                    List<ReceiverPoint> pts = ReceiverGrid.GenerateForPolygon(
-                        boundary, analysisSettings, globalIndex, roomIdx);
-                    globalIndex += pts.Count;
-                    receivers.AddRange(pts);
-                    double recvZ = boundary.FloorElevationM + analysisSettings.ReceiverHeightM;
-                    FileLogger.Log($"'{boundary.Name}': {pts.Count} grid pts, " +
-                        $"floorElev={boundary.FloorElevationM:F3}m, receiverZ={recvZ:F3}m (area={boundary.Area:F1}m²)");
-                }
-
-                FileLogger.Log($"Analysis: {analysisRooms.Count} boundary region(s), " +
-                    $"{sources.Count} speakers, {receivers.Count} receiver points");
-
-                // Derive ceiling height per room from the tallest speaker in each room.
-                // Speakers are typically ceiling-mounted, so their elevation ≈ ceiling.
+                // Derive ceiling height per room from the tallest ceiling speaker in each room.
                 JobInputBuilder.ApplyCeilingHeights(analysisRooms,
                     SpeakerGroups
                         .Where(g => g.GetMapping().ProfileSource != ProfileSourceType.WallMounted)
                         .SelectMany(g => g.GetGroup().Instances));
+
+                if (AutoRt60PerRoom)
+                {
+                    JobInputBuilder.EstimateRoomRt60s(analysisRooms,
+                        WallLineGroups.Select(w => w.GetGroup()).Select(g => new JobInputBuilder.WallLines
+                        {
+                            Segments = g.Segments,
+                            Absorption = (g.WallType ?? WallTypeCatalog.Default).AbsorptionByBand,
+                            Enclosing = JobInputBuilder.IsEnclosing(g.WallType, g.HeightM)
+                        }).ToList(),
+                        FloorSurface.AbsorptionByBand, CeilingSurface.AbsorptionByBand, Occupants, 20.0, Humidity);
+                }
+
+                foreach (RoomPolygon room in analysisRooms)
+                    FileLogger.Log($"'{room.Name}': {receivers.Count(r => analysisRooms.IndexOf(room) == r.RoomIndex)} grid pts, " +
+                        $"area={room.EffectiveAreaM2:F1}m², ceiling={room.CeilingHeightM:F2}m, enclosure={room.EnclosureRatio:F2}" +
+                        (room.RT60ByBand != null ? $", RT60(500Hz)={room.RT60ByBand[2]:F2}s" : ""));
+                FileLogger.Log($"Analysis: {analysisRooms.Count} room(s), " +
+                    $"{sources.Count} speakers, {receivers.Count} receiver points");
 
                 if (SelectedLink.IsValid)
                     surfaces = collector.ExtractSurfacesFromLink(SelectedLink.LinkInstanceId);

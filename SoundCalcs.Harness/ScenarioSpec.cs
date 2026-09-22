@@ -93,6 +93,12 @@ namespace SoundCalcs.Harness
         /// </summary>
         public bool AnechoicWalls { get; set; }
 
+        /// <summary>As the plugin's "Per room" RT60 checkbox.</summary>
+        public bool AutoRt60PerRoom { get; set; }
+
+        /// <summary>Occupancy (people), used by the per-room RT60 estimate.</summary>
+        public int Occupants { get; set; }
+
         public ScenarioSpec Clone(string nameSuffix = "")
         {
             string json = Newtonsoft.Json.JsonConvert.SerializeObject(this);
@@ -165,27 +171,36 @@ namespace SoundCalcs.Harness
                 }
             };
 
-            // --- Receivers, enclosure, ceiling height (MainViewModel.RunAnalysis) ---
-            RoomDetector.ComputeEnclosureRatios(rooms,
-                segments.Where((seg, i) => JobInputBuilder.IsEnclosing(Walls[i].CatalogType(), Walls[i].HeightM)).ToList());
-
+            // --- Rooms, receivers, enclosure, ceiling height (MainViewModel.StartJob) ---
+            var enclosingSegs = segments.Where((seg, i) =>
+                JobInputBuilder.IsEnclosing(Walls[i].CatalogType(), Walls[i].HeightM)).ToList();
             var settings = new AnalysisSettings
             {
                 GridSpacingM = GridSpacingM,
                 ReceiverHeightM = ReceiverHeightM,
                 BoundaryOffsetM = BoundaryOffsetM
             };
-            var receivers = new List<ReceiverPoint>();
-            int globalIndex = 0;
-            for (int roomIdx = 0; roomIdx < rooms.Count; roomIdx++)
-            {
-                var pts = ReceiverGrid.GenerateForPolygon(rooms[roomIdx], settings, globalIndex, roomIdx);
-                globalIndex += pts.Count;
-                receivers.AddRange(pts);
-            }
+            var built = JobInputBuilder.BuildRoomsAndReceivers(rooms, enclosingSegs, settings);
+            rooms = built.Rooms;
+            var receivers = built.Receivers;
+            RoomDetector.ComputeEnclosureRatios(rooms, enclosingSegs);
 
             JobInputBuilder.ApplyCeilingHeights(rooms, instances.Where((inst, i) =>
                 !JobInputBuilder.IsAimAdjustable(Speakers[i].Profile.ProfileSource)));
+
+            if (AutoRt60PerRoom)
+            {
+                JobInputBuilder.EstimateRoomRt60s(rooms,
+                    Walls.Select((w, i) => new JobInputBuilder.WallLines
+                    {
+                        Segments = new List<WallSegment2D> { segments[i] },
+                        Absorption = (w.CatalogType() ?? WallTypeCatalog.Default).AbsorptionByBand,
+                        Enclosing = JobInputBuilder.IsEnclosing(w.CatalogType(), w.HeightM)
+                    }).ToList(),
+                    OctaveBands.AbsorptionPresets[Environment.FloorSurface],
+                    OctaveBands.AbsorptionPresets[Environment.CeilingSurface],
+                    Occupants, Environment.TemperatureC, Environment.RelativeHumidityPct);
+            }
 
             var walls = new List<ComputeWall>();
             for (int i = 0; i < segments.Count; i++)

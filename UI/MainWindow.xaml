@@ -643,6 +643,10 @@
                                     Click="EstimateRT60_Click"
                                     Margin="6,4,0,0" Height="20" FontSize="10"
                                     ToolTip="Auto-compute RT60 from room geometry and wall materials using the Eyring-Norris formula"/>
+                            <CheckBox Content="Per room" IsChecked="{Binding AutoRt60PerRoom}"
+                                      VerticalAlignment="Center" Margin="6,4,0,0" FontSize="10"
+                                      Foreground="{DynamicResource ForegroundBrush}"
+                                      ToolTip="Estimate each room's RT60 from its own geometry and materials when the analysis runs (ignores the values on the right)"/>
                         </StackPanel>
                         <StackPanel Grid.Row="6" Grid.Column="1" Grid.ColumnSpan="2" Orientation="Horizontal" Margin="0,4,0,0">
                             <TextBox Width="45" Style="{StaticResource InputBoxStyle}" Text="{Binding RT60_125, UpdateSourceTrigger=PropertyChanged}" ToolTip="125 Hz" Margin="0,0,3,0"/>

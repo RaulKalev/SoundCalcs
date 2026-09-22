@@ -54,6 +54,26 @@ namespace SoundCalcs.Harness
             ctx.Assert("compute: dBA = A-weighted energy sum of bands", worstA <= 0.05,
                 $"worst mismatch {CheckContext.F(worstA)} dB");
 
+            // ---- No isolated hot spots (leaks through walls show up as single loud cells) --
+            double spacing = HeatmapMath.EstimateGridSpacing(results);
+            var byCell = new Dictionary<(long, long), ReceiverResult>();
+            foreach (var r in results)
+                byCell[((long)Math.Round(r.Position.X / spacing), (long)Math.Round(r.Position.Y / spacing))] = r;
+            var spikes = new List<string>();
+            foreach (var kv in byCell)
+            {
+                var r = kv.Value;
+                if (input.Sources.Any(src => Math.Sqrt(Math.Pow(src.Position.X - r.Position.X, 2) +
+                                                       Math.Pow(src.Position.Y - r.Position.Y, 2)) < 2.0)) continue;
+                var (cx, cy) = kv.Key;
+                var neighbours = new[] { (cx + 1, cy), (cx - 1, cy), (cx, cy + 1), (cx, cy - 1) }
+                    .Where(byCell.ContainsKey).Select(k => byCell[k].SplDb).ToList();
+                if (neighbours.Count == 4 && neighbours.All(n => r.SplDb > n + 3.0))
+                    spikes.Add($"{r.Position} {CheckContext.F(r.SplDb - neighbours.Max())} dB above all neighbours");
+            }
+            ctx.Assert("compute: no isolated hot spots away from speakers (> 3 dB above all 4 neighbours)",
+                spikes.Count == 0, $"{spikes.Count}: " + string.Join("; ", spikes.Take(4)));
+
             // ---- Per-mode heatmap checks ---------------------------------------------
             var viewerFailures = new List<string>();
             var revitFailures = new List<string>();

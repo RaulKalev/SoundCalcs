@@ -76,6 +76,20 @@ namespace SoundCalcs.Domain
         /// <summary>Absolute area in square meters.</summary>
         public double Area => Math.Abs(SignedArea);
 
+        /// <summary>
+        /// Floor area to use for the room's volume when it differs from the polygon's area —
+        /// the "open area" remainder of a boundary after the enclosed rooms are taken out.
+        /// </summary>
+        public double? AreaOverrideM2 { get; set; }
+
+        /// <summary>Floor area used for volume and reverberation.</summary>
+        public double EffectiveAreaM2 => AreaOverrideM2 ?? Area;
+
+        /// <summary>
+        /// Per-band RT60 for this room (7 values). Null = use the job's global RT60.
+        /// </summary>
+        public double[] RT60ByBand { get; set; }
+
         /// <summary>Total perimeter length in meters.</summary>
         public double Perimeter
         {

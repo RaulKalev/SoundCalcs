@@ -329,6 +329,56 @@ namespace SoundCalcs.Tests
             Assert.False(SpeakerResponsePresets.TryParse("0 0 0 0 0 0 99", out _)); // out of range
         }
 
+        private static WallSegment2D Seg(double x1, double y1, double x2, double y2) =>
+            new WallSegment2D { Start = new Vec2(x1, y1), End = new Vec2(x2, y2), ThicknessM = 0.1 };
+
+        private static RoomPolygon Box(double x0, double y0, double x1, double y1) => new RoomPolygon
+        {
+            Vertices = { new Vec2(x0, y0), new Vec2(x1, y0), new Vec2(x1, y1), new Vec2(x0, y1) },
+            Name = "Boundary"
+        };
+
+        [Fact]
+        public void BuildRoomsAndReceivers_SplitsWalledRooms_AndAssignsReceivers()
+        {
+            var segs = new List<WallSegment2D>
+            {
+                Seg(0, 0, 16, 0), Seg(16, 0, 16, 8), Seg(16, 8, 0, 8), Seg(0, 8, 0, 0), Seg(10, 0, 10, 8)
+            };
+            var settings = new AnalysisSettings { GridSpacingM = 1.0, BoundaryOffsetM = 0.3 };
+            var (rooms, receivers) = JobInputBuilder.BuildRoomsAndReceivers(new[] { Box(0, 0, 16, 8) }, segs, settings);
+
+            Assert.Equal(2, rooms.Count);
+            Assert.Contains(rooms, r => Math.Abs(r.EffectiveAreaM2 - 80) < 0.5);
+            Assert.Contains(rooms, r => Math.Abs(r.EffectiveAreaM2 - 48) < 0.5);
+            Assert.All(receivers, rc => Assert.True(
+                rooms[rc.RoomIndex].ContainsPoint(new Vec2(rc.Position.X, rc.Position.Y))));
+            Assert.Equal(Enumerable.Range(0, receivers.Count), receivers.Select(r => r.Index));
+        }
+
+        [Fact]
+        public void BuildRoomsAndReceivers_OpenRemainderAndSingleRoom()
+        {
+            // One enclosed 4×4 m room inside a 16×8 m boundary: room + "Open area" of 112 m²
+            var segs = new List<WallSegment2D> { Seg(0, 0, 4, 0), Seg(4, 0, 4, 4), Seg(4, 4, 0, 4), Seg(0, 4, 0, 0) };
+            var settings = new AnalysisSettings { GridSpacingM = 1.0 };
+            var (rooms, receivers) = JobInputBuilder.BuildRoomsAndReceivers(new[] { Box(0, 0, 16, 8) }, segs, settings);
+            Assert.Equal(2, rooms.Count);
+            Assert.Equal(16, rooms[0].EffectiveAreaM2, 1);
+            Assert.Equal(112, rooms[1].EffectiveAreaM2, 1);
+            Assert.EndsWith("Open area", rooms[1].Name);
+            Assert.Contains(receivers, r => r.RoomIndex == 0);
+            Assert.Contains(receivers, r => r.RoomIndex == 1);
+
+            // A boundary that is itself the only room stays unchanged
+            var box = Box(0, 0, 10, 8);
+            var single = JobInputBuilder.BuildRoomsAndReceivers(new[] { box },
+                new List<WallSegment2D> { Seg(0, 0, 10, 0), Seg(10, 0, 10, 8), Seg(10, 8, 0, 8), Seg(0, 8, 0, 0) }, settings);
+            Assert.Single(single.Rooms);
+            Assert.Same(box, single.Rooms[0]);
+            Assert.All(single.Receivers, r => Assert.Equal(0, r.RoomIndex));
+        }
+
         [Fact]
         public void ApplyCeilingHeights_UsesTallestSpeakerInRoom()
         {

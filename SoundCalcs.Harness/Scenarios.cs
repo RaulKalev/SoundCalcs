@@ -88,6 +88,7 @@ namespace SoundCalcs.Harness
                 SpeakerRotation(),
                 WallMaterials(),
                 ScreenDiffraction(),
+                TwoRooms(),
                 ReverberantRoom(),
                 StiReference(),
                 MeasurementComparison(),
@@ -687,6 +688,105 @@ namespace SoundCalcs.Harness
             foreach (var w in a.Walls) w.HeightM = screenHeight;
             var ra = ScenarioRun.Execute(a); var rb = ScenarioRun.Execute(b);
             return rb.Nearest(2, 0).SplDb - ra.Nearest(2, 0).SplDb;
+        }
+
+        // -----------------------------------------------------------------
+        // 5e. Boundary split into rooms: own volume, reverberant field and RT60
+        // -----------------------------------------------------------------
+        static Scenario TwoRooms()
+        {
+            var walls = ScenarioSpec.RectangleWalls(0, 0, 16, 8, 50, "concrete_200");
+            walls.Add(new WallSpec { X1 = 10, Y1 = 0, X2 = 10, Y2 = 8, WallType = "concrete_200" });
+            var spec = new ScenarioSpec
+            {
+                Name = "two_rooms",
+                Description = "16×8 m boundary split by a full-height concrete wall into an 80 m² and a 48 m² " +
+                              "room; ceiling cone in the large room, Full quality, RT60 0.8 s. Each room must get " +
+                              "its own volume and reverberant field; the small room none from the speaker; " +
+                              "'Per room' RT60 must follow each room's own geometry; a door gap merges the rooms.",
+                Walls = walls,
+                Quality = CalculationQuality.Full,
+                Environment = new EnvironmentSettings { RT60ByBand = IecReference.Fill(0.8) },
+                Speakers = { new SpeakerSpec { X = 5, Y = 4, HeightM = 3.0, Profile = ScenarioSpec.Cone(90, 60, -12) } }
+            };
+
+            return new Scenario
+            {
+                Spec = spec,
+                ViewerModes = new[] { VisualizationMode.SPL, VisualizationMode.STI },
+                Checks = (run, ctx) =>
+                {
+                    var rooms = run.Input.Rooms;
+                    var areas = rooms.Select(r => r.EffectiveAreaM2).OrderByDescending(a => a).ToList();
+                    ctx.Assert("boundary split into the two walled rooms (80 m² and 48 m², no open remainder)",
+                        rooms.Count == 2 && Math.Abs(areas[0] - 80) < 1 && Math.Abs(areas[1] - 48) < 1,
+                        string.Join(", ", rooms.Select(r => $"{r.Name}: {CheckContext.F(r.EffectiveAreaM2)} m²")));
+                    int big = rooms.FindIndex(r => r.EffectiveAreaM2 > 60);
+                    int wrong = run.Input.Receivers.Count(r => (r.Position.X < 10) != (r.RoomIndex == big));
+                    ctx.Assert("every receiver assigned to the room it stands in", wrong == 0, $"{wrong} misassigned");
+
+                    // Reverberant level in the large room follows its own volume (Barron, V = 80·3 m³)
+                    var env = run.Spec.Environment;
+                    double c = 331.3 + 0.606 * env.TemperatureC;
+                    double q = new SimpleConeProvider(90, 60, -12).DirectivityFactor;
+                    var src = run.Input.Sources[0].Position;
+                    double Barron(ReceiverResult r, double vol) => Analytic.Db(Enumerable.Range(0, 7).Sum(k =>
+                        Math.Pow(10, 9) / 7 * 16 * Math.PI / (q * 0.161 * vol / env.RT60ByBand[k])
+                        * Math.Exp(-13.82 * Dist(r.Position, src) / (c * env.RT60ByBand[k]))));
+                    var far = run.Nearest(1, 1);
+                    ctx.Assert("far corner of the large room is not below its own Barron reverberant level",
+                        far.SplDb >= Barron(far, 240) - 0.05,
+                        $"SPL {CheckContext.F(far.SplDb)} dB, Barron (80 m²) {CheckContext.F(Barron(far, 240))} dB");
+
+                    var mergedSpec = run.Spec.Clone("_doorgap");
+                    mergedSpec.Walls[4] = new WallSpec { X1 = 10, Y1 = 0, X2 = 10, Y2 = 3, WallType = "concrete_200" };
+                    mergedSpec.Walls.Add(new WallSpec { X1 = 10, Y1 = 4.2, X2 = 10, Y2 = 8, WallType = "concrete_200" });
+                    var merged = ScenarioRun.Execute(mergedSpec);
+                    ctx.Assert("a 1.2 m door gap merges the two rooms into one volume",
+                        merged.Input.Rooms.Count == 1, $"{merged.Input.Rooms.Count} rooms");
+                    double gain = far.SplDb - merged.Nearest(1, 1).SplDb;
+                    ctx.InRange("smaller room volume → stronger reverberant field in the large room (≈ 10·log(128/80))",
+                        gain, 0.8, 3.0, " dB");
+
+                    // Small room: no reverberant field from a speaker behind a closed wall
+                    var smallRoom = run.Output.Results.Where(r => r.Position.X > 10.5).ToList();
+                    double gap = run.Output.Results.Where(r => r.Position.X < 9.5).Average(r => r.SplDb) - smallRoom.Average(r => r.SplDb);
+                    ctx.Assert("small room is far quieter (only transmission through the concrete wall)", gap > 20,
+                        $"{CheckContext.F(gap)} dB");
+                    var slowSpec = run.Spec.Clone("_rt60x3");
+                    slowSpec.Environment.RT60ByBand = IecReference.Fill(2.4);
+                    var slow = ScenarioRun.Execute(slowSpec);
+                    double smallShift = slow.Output.Results.Zip(run.Output.Results, (a2, b2) => (a2, b2))
+                        .Where(x => x.b2.Position.X > 10.5).Max(x => Math.Abs(x.a2.SplDb - x.b2.SplDb));
+                    double bigShift = slow.Output.Results.Zip(run.Output.Results, (a2, b2) => a2.SplDb - b2.SplDb)
+                        .Where((d, i) => run.Output.Results[i].Position.X < 9.5).Average();
+                    ctx.Assert("source room's reverberant field stays in the source room (tripling RT60 changes only it)",
+                        smallShift < 0.01 && bigShift > 2,
+                        $"large room +{CheckContext.F(bigShift)} dB, small room max change {CheckContext.F(smallShift)} dB");
+
+                    // Per-room RT60 from each room's own geometry
+                    var autoSpec = run.Spec.Clone("_auto_rt60");
+                    autoSpec.AutoRt60PerRoom = true;
+                    var auto = ScenarioRun.Execute(autoSpec);
+                    ctx.Assert("'Per room' RT60 sets an RT60 on every room",
+                        auto.Input.Rooms.All(r => r.RT60ByBand != null && r.RT60ByBand.Length == 7), "");
+                    var bigRoom = auto.Input.Rooms.First(r => r.EffectiveAreaM2 > 60);
+                    // Independent Eyring: 10×8×3 m, all four sides concrete, concrete floor, plasterboard ceiling
+                    double alpha = (80 * 0.02 + 80 * 0.05 + 36 * 3 * 0.02) / (160 + 108);
+                    double m = OctaveBands.ComputeAirAbsorption(env.TemperatureC, env.RelativeHumidityPct)[2] / 4.3429;
+                    double expected500 = 0.161 * 240 / (-268 * Math.Log(1 - alpha) + 4 * m * 240);
+                    ctx.Near("large room RT60 at 500 Hz = Eyring for its own 10×8×3 m geometry",
+                        bigRoom.RT60ByBand[2], expected500, 0.02, " s");
+                    var smallR = auto.Input.Rooms.First(r => r.EffectiveAreaM2 < 60);
+                    ctx.Assert("smaller room gets a shorter RT60 (same materials, smaller volume)",
+                        smallR.RT60ByBand[2] < bigRoom.RT60ByBand[2],
+                        $"48 m²: {CheckContext.F(smallR.RT60ByBand[2])} s, 80 m²: {CheckContext.F(bigRoom.RT60ByBand[2])} s");
+                    double splAuto = auto.Nearest(1, 1).SplDb;
+                    ctx.Assert("longer auto RT60 (bare concrete) raises the large room's reverberant level",
+                        bigRoom.RT60ByBand[2] > 0.8 && splAuto > far.SplDb,
+                        $"{CheckContext.F(far.SplDb)} → {CheckContext.F(splAuto)} dB");
+                }
+            };
         }
 
         // -----------------------------------------------------------------

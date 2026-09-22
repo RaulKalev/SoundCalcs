@@ -93,6 +93,9 @@ namespace SoundCalcs.Domain
         /// <summary>Relative air humidity in % (ISO 9613-1 air absorption).</summary>
         public double RelativeHumidityPct { get; set; } = 50.0;
 
+        /// <summary>Estimate RT60 per detected room from its geometry at run time.</summary>
+        public bool AutoRt60PerRoom { get; set; }
+
         /// <summary>Number of people in the room, for the RT60 estimate.</summary>
         public int Occupants { get; set; }
 
