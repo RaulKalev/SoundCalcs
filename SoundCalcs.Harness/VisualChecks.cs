@@ -70,7 +70,7 @@ namespace SoundCalcs.Harness
                 viewerFailures.Count == 0, string.Join("; ", viewerFailures.Take(6)));
             ctx.Assert("revit: filled-region strips tile every receiver cell exactly once in its band (all modes)",
                 revitFailures.Count == 0, string.Join("; ", revitFailures.Take(6)));
-            ctx.Assert("revit: legend bands contiguous and span the rendered range (all modes)",
+            ctx.Assert("revit: legend bands contiguous, span the rendered range, STI categories per IEC (all modes)",
                 legendFailures.Count == 0, string.Join("; ", legendFailures.Take(6)));
         }
 
@@ -105,9 +105,12 @@ namespace SoundCalcs.Harness
             Rgba bottom = HeatmapMath.ViewerGradientStops[0];
             Rgba cMax = HeatmapMath.SampleGradient((vals[iMax] - min) / (max - min));
             Rgba cMin = HeatmapMath.SampleGradient((vals[iMin] - min) / (max - min));
-            bool widened = vals.Max() - vals.Min() < (mode == VisualizationMode.STI ? 0.05 : mode == VisualizationMode.C80 ? 1.0 : 3.0);
-            if (!widened && (cMax.G != top.G || cMax.R != top.R || cMin.R != bottom.R || cMin.G != bottom.G))
-                failures.Add($"{mode}: extremes not mapped to gradient ends");
+            // Only when the extremes lie outside the displayed range (the usual case; not when
+            // a near-flat field was widened around its midpoint)
+            if (vals[iMax] >= max && (cMax.G != top.G || cMax.R != top.R))
+                failures.Add($"{mode}: largest value not drawn at the green end");
+            if (vals[iMin] <= min && (cMin.R != bottom.R || cMin.G != bottom.G))
+                failures.Add($"{mode}: smallest value not drawn at the red end");
         }
 
         static void CheckRevit(List<ReceiverResult> results, double[] vals, VisualizationMode mode,
@@ -156,6 +159,12 @@ namespace SoundCalcs.Harness
             ok &= ranges[ranges.Count - 1].Lo.ToString(fmt) == plan.MinVal.ToString(fmt);
             for (int i = 0; i + 1 < ranges.Count; i++)
                 ok &= Math.Abs(ranges[i].Lo - ranges[i + 1].Hi) < 1e-9;
+            if (mode == VisualizationMode.STI)
+                foreach (var l in legend)
+                {
+                    var (lo, hi) = ParseRange(l.Label);
+                    ok &= l.Label.EndsWith($"({HeatmapMath.StiQuality((lo + hi) / 2)})");
+                }
             if (!ok)
                 legendFailures.Add($"{mode}: [{string.Join(" | ", legend.Select(l => l.Label))}] for range {plan.MinVal:F2}..{plan.MaxVal:F2}");
         }

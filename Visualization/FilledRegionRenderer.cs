@@ -29,9 +29,6 @@ namespace SoundCalcs.Visualization
         private const string RegionTypePrefix = "SC_SPL_";
         private const string StiRegionTypePrefix = "SC_STI_";
 
-        /// <summary>STI intelligibility labels for the 8 color bands.</summary>
-        private static readonly string[] StiLabels = HeatmapMath.StiLabels;
-
         // Cached across calls within a session so we don't re-query the pattern every render
         private static ElementId _solidFillPatternId = ElementId.InvalidElementId;
         private static ElementId _invisibleLinesStyleId = ElementId.InvalidElementId;
@@ -322,7 +319,7 @@ namespace SoundCalcs.Visualization
             {
                 double lo = minSti + i * step;
                 double hi = minSti + (i + 1) * step;
-                string quality = i < StiLabels.Length ? StiLabels[i] : "";
+                string quality = HeatmapMath.StiQuality((lo + hi) / 2);
                 bandNames[i] = $"{StiRegionTypePrefix}{lo:F2}-{hi:F2} ({quality})";
             }
 

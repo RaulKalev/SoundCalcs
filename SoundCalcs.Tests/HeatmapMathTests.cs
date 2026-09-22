@@ -78,6 +78,15 @@ namespace SoundCalcs.Tests
             Assert.Equal(0xAA, colors[7].G);
         }
 
+        [Fact]
+        public void ViewerLegendLabel_NarrowBandsGetADecimal()
+        {
+            Assert.Equal("60 \u2013 65 dB", HeatmapMath.ViewerLegendLabel(60, 65, VisualizationMode.SPL));
+            Assert.Equal("85.5 \u2013 86.0 dB", HeatmapMath.ViewerLegendLabel(85.5, 86.0, VisualizationMode.SPL));
+            Assert.Equal("70 \u2013 75 dBA", HeatmapMath.ViewerLegendLabel(70, 75, VisualizationMode.SPL_A));
+            Assert.Equal("0.40 \u2013 0.45", HeatmapMath.ViewerLegendLabel(0.4, 0.45, VisualizationMode.STI));
+        }
+
         // ---------------------------------------------------------------------------
         // Viewer range and grid
         // ---------------------------------------------------------------------------
@@ -205,9 +214,13 @@ namespace SoundCalcs.Tests
             Assert.Equal("40.0 – 45.0 dB", bands[7].Label);
             Assert.Equal("#D20000", bands[7].ColorHex);
 
+            // Categories follow the STI value (IEC 60268-16), not the colour position
             var sti = HeatmapMath.GetStiLegendBands(0.2, 0.6);
-            Assert.EndsWith("(Excellent)", sti[0].Label);
-            Assert.EndsWith("(Bad)", sti[7].Label);
+            Assert.EndsWith("(Fair)", sti[0].Label);      // 0.55–0.60
+            Assert.EndsWith("(Bad)", sti[7].Label);       // 0.20–0.25
+            var high = HeatmapMath.GetStiLegendBands(0.74, 0.83);
+            Assert.All(high.Take(7), b => Assert.EndsWith("(Excellent)", b.Label));
+            Assert.EndsWith("(Good)", high[7].Label);     // 0.740–0.751
         }
 
         [Fact]

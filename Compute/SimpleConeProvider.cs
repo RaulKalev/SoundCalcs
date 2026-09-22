@@ -6,7 +6,9 @@ namespace SoundCalcs.Compute
     /// <summary>
     /// Conical speaker: -6 dB at the rated coverage angle edge,
     /// cosine-power rolloff beyond to off-axis floor.
-    /// Supports frequency-dependent beaming: higher bands use a narrower cone.
+    /// Supports frequency-dependent beaming: higher bands use a narrower cone, and
+    /// bands below 1 kHz radiate more evenly all round (a shallower off-axis floor,
+    /// scaled by f/1 kHz), so low frequencies don't drop abruptly behind the speaker.
     /// </summary>
     public class SimpleConeProvider : ISpeakerDirectivityProvider
     {
@@ -15,6 +17,7 @@ namespace SoundCalcs.Compute
 
         private readonly double _coneHalfAngleRad;
         private readonly double _offAxisLinearGain;
+        private readonly double _offAxisDb;
         private readonly double _n;
 
         // Reference frequency for directivity scaling (cone angle specified at 1 kHz)
@@ -27,7 +30,8 @@ namespace SoundCalcs.Compute
         {
             OnAxisSplAtOneMeter = onAxisSplDb;
             _coneHalfAngleRad = Math.Max(coneHalfAngleDeg, 1.0) * Math.PI / 180.0;
-            _offAxisLinearGain = Math.Pow(10.0, offAxisAttenuationDb / 20.0);
+            _offAxisDb = Math.Min(0.0, offAxisAttenuationDb);
+            _offAxisLinearGain = Math.Pow(10.0, _offAxisDb / 20.0);
 
             double cosHalf = Math.Cos(_coneHalfAngleRad);
             _n = (cosHalf > 0.0001 && cosHalf < 0.9999)
@@ -40,7 +44,7 @@ namespace SoundCalcs.Compute
 
         public double GetDirectivityGain(Vec3 facingDirection, Vec3 toReceiver)
         {
-            return ComputeGain(facingDirection, toReceiver, _n);
+            return ComputeGain(facingDirection, toReceiver, _n, _offAxisLinearGain);
         }
 
         public double GetDirectivityGainForBand(Vec3 facingDirection, Vec3 toReceiver, int bandIndex)
@@ -49,16 +53,17 @@ namespace SoundCalcs.Compute
             // Higher frequencies beam more narrowly → larger exponent → faster rolloff.
             double freqRatio = OctaveBands.CenterFrequencies[bandIndex] / RefFreqHz;
             double nBand = _n * freqRatio;
-            return ComputeGain(facingDirection, toReceiver, nBand);
+            double floor = Math.Pow(10.0, _offAxisDb * Math.Min(1.0, freqRatio) / 20.0);
+            return ComputeGain(facingDirection, toReceiver, nBand, floor);
         }
 
-        private double ComputeGain(Vec3 facingDirection, Vec3 toReceiver, double n)
+        private static double ComputeGain(Vec3 facingDirection, Vec3 toReceiver, double n, double floor)
         {
             double cosAngle = Vec3.Dot(facingDirection, toReceiver);
             cosAngle = Math.Max(-1.0, Math.Min(1.0, cosAngle));
 
             if (cosAngle <= 0)
-                return _offAxisLinearGain;
+                return floor;
 
             double gain = Math.Pow(cosAngle, n);
 
@@ -67,10 +72,10 @@ namespace SoundCalcs.Compute
             {
                 double t = (edgeGain - gain) / edgeGain;
                 t = Math.Min(t, 1.0);
-                gain = edgeGain * (1.0 - t) + _offAxisLinearGain * t;
+                gain = edgeGain * (1.0 - t) + floor * t;
             }
 
-            return Math.Max(gain, _offAxisLinearGain);
+            return Math.Max(gain, floor);
         }
     }
 }

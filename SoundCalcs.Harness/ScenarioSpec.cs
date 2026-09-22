@@ -75,7 +75,8 @@ namespace SoundCalcs.Harness
 
         /// <summary>
         /// Test-only knob: give every wall absorption 1.0 so no reflections are
-        /// produced (Draft still computes first-order wall reflections). Isolates
+        /// produced (Draft still computes first-order wall reflections), and — as a
+        /// fully absorbing room has no diffuse field — enclosure ratio 0. Isolates
         /// direct sound + transmission loss. The plugin itself never sets this.
         /// </summary>
         public bool AnechoicWalls { get; set; }
@@ -178,6 +179,9 @@ namespace SoundCalcs.Harness
             if (AnechoicWalls)
                 foreach (var w in walls)
                     w.AbsorptionByBand = Enumerable.Repeat(1.0, OctaveBands.Count).ToArray();
+            if (AnechoicWalls)
+                foreach (var room in rooms)
+                    room.EnclosureRatio = 0;
 
             return new AcousticJobInput
             {

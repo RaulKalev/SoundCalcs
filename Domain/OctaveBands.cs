@@ -29,34 +29,43 @@ namespace SoundCalcs.Domain
         };
 
         /// <summary>
-        /// IEC 60268-16 male-speech octave-band weighting factors (α).
-        /// Sum ≈ 1.0. Table 1 of IEC 60268-16:2011.
+        /// IEC 60268-16:2011 male-speech octave weighting factors α_k (Table A.1).
+        /// STI = Σ α_k·MTI_k − Σ β_k·√(MTI_k·MTI_k+1); Σα − Σβ = 1.
         /// </summary>
-        public static readonly double[] SpeechWeights =
-            { 0.085, 0.127, 0.230, 0.233, 0.173, 0.072, 0.080 };
+        public static readonly double[] MaleAlpha =
+            { 0.085, 0.127, 0.230, 0.233, 0.309, 0.224, 0.173 };
+
+        /// <summary>IEC 60268-16:2011 male-speech redundancy factors β_k (6 adjacent-band pairs).</summary>
+        public static readonly double[] MaleBeta =
+            { 0.085, 0.078, 0.065, 0.011, 0.047, 0.095 };
+
+        /// <summary>IEC 60268-16:2011 female-speech octave weighting factors α_k (125 Hz unused).</summary>
+        public static readonly double[] FemaleAlpha =
+            { 0.000, 0.117, 0.223, 0.216, 0.328, 0.250, 0.194 };
+
+        /// <summary>IEC 60268-16:2011 female-speech redundancy factors β_k.</summary>
+        public static readonly double[] FemaleBeta =
+            { 0.000, 0.099, 0.066, 0.062, 0.025, 0.076 };
 
         /// <summary>
-        /// IEC 60268-16 female-speech octave-band weighting factors.
-        /// Table 2 of IEC 60268-16:2011.
+        /// IEC 60268-16:2011 absolute speech reception threshold per octave band, dB SPL
+        /// (Table A.3). Adds to the effective noise so very quiet signals lose intelligibility.
         /// </summary>
-        public static readonly double[] FemaleSpeechWeights =
-            { 0.000, 0.117, 0.223, 0.216, 0.328, 0.250, 0.000 }; // sum ≈ 1.134 → internally normalized
+        public static readonly double[] ReceptionThresholdDb =
+            { 46, 27, 12, 6.5, 7.5, 8, 12 };
 
         /// <summary>
-        /// IEC 60268-16 auditory masking correction coefficients (α).
-        /// Applied as: TI'_k = TI_k - α_k × abs(I_{k-1})
-        /// where I_{k-1} is the level-dependent factor from the adjacent lower band.
-        /// Index 0 (125 Hz band) has no lower neighbor so α_0 = 0.
+        /// IEC 60268-16:2011 level-dependent auditory masking: the band below masks band k
+        /// with intensity I_{k-1}·10^(amdB/10), where amdB depends on that band's level L (dB).
         /// </summary>
-        public static readonly double[] MaskingAlpha =
-            { 0.0, 0.45, 0.45, 0.45, 0.45, 0.45, 0.45 };
-
-        /// <summary>
-        /// IEC 60268-16 auditory masking β coefficients.
-        /// I_{k-1} = (L_{k-1} - L_k - β_k)  (clamped ≥ 0 before use in α correction).
-        /// </summary>
-        public static readonly double[] MaskingBeta =
-            { 0.0, 0.45, 0.45, 0.45, 0.45, 0.45, 0.45 };
+        public static double AuditoryMaskingDb(double lowerBandLevelDb)
+        {
+            double l = lowerBandLevelDb;
+            if (l < 63) return 0.5 * l - 65;
+            if (l < 67) return 1.8 * l - 146.9;
+            if (l < 100) return 0.5 * l - 59.8;
+            return -10;
+        }
 
         /// <summary>
         /// Approximate STC-to-per-band transmission loss offsets in dB.

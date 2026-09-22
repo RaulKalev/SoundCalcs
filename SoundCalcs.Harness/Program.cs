@@ -174,7 +174,7 @@ Exit code: 0 = all checks passed (warnings allowed), 1 = a check failed, 2 = usa
                 if (run != null)
                 {
                     Summarise(run, report);
-                    VisualChecks.Run(run.Input, run.Output, run.Spec.GridSpacingM, ctx);
+                    VisualChecks.Run(run.Input, run.Output, HeatmapMath.ViewerGridSpacing(run.Output.Results), ctx);
                 }
                 sc.Checks?.Invoke(run, ctx);
 
@@ -184,7 +184,7 @@ Exit code: 0 = all checks passed (warnings allowed), 1 = a check failed, 2 = usa
                     foreach (var mode in sc.ViewerModes)
                     {
                         string file = Path.Combine(dir, $"viewer_{mode}.png");
-                        ViewerImage.Render(run.Input, run.Output, mode, run.Spec.GridSpacingM, sc.Spec.Name, file);
+                        ViewerImage.Render(run.Input, run.Output, mode, HeatmapMath.ViewerGridSpacing(run.Output.Results), sc.Spec.Name, file);
                         report.Images.Add(Rel(outDir, file));
                     }
                     foreach (var mode in sc.RevitModes)
@@ -274,7 +274,7 @@ Exit code: 0 = all checks passed (warnings allowed), 1 = a check failed, 2 = usa
                 },
                 Probes =
                 {
-                    new ProbeSpec { Name = "front row", X = 1.5, Y = 3.5, MinSplDb = 70, MinSti = 0.25 },
+                    new ProbeSpec { Name = "front row", X = 1.5, Y = 3.5, MinSplDb = 70, MinSti = 0.5 },
                     new ProbeSpec { Name = "back corner", X = 8.5, Y = 6.5, MinSplDb = 65 },
                 }
             };

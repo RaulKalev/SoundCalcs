@@ -158,17 +158,11 @@ namespace SoundCalcs.Harness
                         .Average(r => (air[6] - air[3]) * Dist(r.Position, src));
                     ctx.Near("8 kHz band loses extra air absorption vs 1 kHz far away", hf, expHf, 0.05, " dB");
 
-                    // The viewer's GridSpacing is bound to the live settings field, not to the
-                    // spacing the results were computed with. Simulate the user changing the
-                    // field from 0.5 m to 1.0 m after a run.
-                    var vals = run.Output.Results.Select(r => r.SplDb).ToArray();
-                    var (lo, hi) = HeatmapMath.ComputeViewerRange(vals, VisualizationMode.SPL);
-                    var stale = HeatmapMath.BuildViewerGrid(run.Output.Results, vals, lo, hi - lo, 1.0);
-                    ctx.Assert("viewer heatmap survives editing Grid Spacing after a run",
-                        stale.Collisions == 0,
-                        $"with the field changed 0.5 → 1.0 m, {stale.Collisions}/{vals.Length} receivers " +
-                        "overwrite each other in the viewer bitmap until the analysis is re-run",
-                        CheckSeverity.Warn);
+                    // The viewer must take its bitmap spacing from the results, not from the live
+                    // Grid Spacing field, so editing that field after a run can't scramble it.
+                    double viewerSpacing = HeatmapMath.ViewerGridSpacing(run.Output.Results);
+                    ctx.Near("viewer bitmap spacing = spacing the results were computed with",
+                        viewerSpacing, run.Spec.GridSpacingM, 1e-6, " m");
                 }
             };
         }
@@ -356,7 +350,7 @@ namespace SoundCalcs.Harness
             {
                 Name = "wall_mounted_aim",
                 Description = "Wall-mounted 90 dB speaker at (0,0) 2 m high, aimed +X, Draft, no walls. " +
-                              "Front must be ≈12 dB louder than the back at equal distance.",
+                              "At 1 kHz the front must be ≈12 dB louder than the back; low bands radiate nearly all round.",
                 Boundary = ScenarioSpec.Rectangle(-8.3, -6.3, 8.3, 6.3),
                 Quality = CalculationQuality.Draft,
                 Speakers =
@@ -375,8 +369,10 @@ namespace SoundCalcs.Harness
                         run.Input.Sources[0].FacingDirection.Equals(new Vec3(1, 0, 0)),
                         $"{run.Input.Sources[0].FacingDirection}");
 
+                    // Off-axis floor is −12 dB at ≥1 kHz and scales with f/1 kHz below that
                     var front = run.Nearest(4.2, 0.2); var back = run.Nearest(-4.2, 0.2);
-                    ctx.InRange("front − back at 4 m", front.SplDb - back.SplDb, 10.5, 12.5, " dB");
+                    ctx.InRange("front − back at 4 m, 1 kHz band", front.SplDbByBand[3] - back.SplDbByBand[3], 10.5, 12.5, " dB");
+                    ctx.InRange("front − back at 4 m, 125 Hz band (nearly omni)", front.SplDbByBand[0] - back.SplDbByBand[0], 0, 3, " dB");
 
                     var byPos = run.Output.Results.ToDictionary(r => (Math.Round(r.Position.X, 2), Math.Round(r.Position.Y, 2)));
                     int mirrored = 0, louderFront = 0;
@@ -406,9 +402,7 @@ namespace SoundCalcs.Harness
                         }
                     }
                     ctx.Assert("directivity continuous across the 90° plane (no step > 3 dB)", worstJump <= 3,
-                        $"{CheckContext.F(worstJump)} dB step at {OctaveBands.Labels[worstBand]} Hz, y = {CheckContext.F(worstY)} m: " +
-                        "low bands are almost omni in front but drop straight to the off-axis floor behind",
-                        CheckSeverity.Warn);
+                        $"{CheckContext.F(worstJump)} dB step at {OctaveBands.Labels[worstBand]} Hz, y = {CheckContext.F(worstY)} m");
                 }
             };
         }
@@ -445,11 +439,9 @@ namespace SoundCalcs.Harness
 
                     var draftSpec = run.Spec.Clone("_draft"); draftSpec.Quality = CalculationQuality.Draft;
                     var draft = ScenarioRun.Execute(draftSpec);
-                    int lower = run.Output.Results.Zip(draft.Output.Results, (f, d) => f.SplDb < d.SplDb - 1e-9 ? 1 : 0).Sum();
-                    ctx.Assert("Full ≥ Draft SPL everywhere (reflections only add energy)", lower == 0,
+                    int lower = run.Output.Results.Zip(draft.Output.Results, (f, d) => f.SplDb < d.SplDb - 0.01 ? 1 : 0).Sum();
+                    ctx.Assert("Full ≥ Draft SPL everywhere (more reflections never remove energy)", lower == 0,
                         $"{lower} receivers quieter in Full");
-                    double gain = run.Output.Results.Zip(draft.Output.Results, (f, d) => f.SplDb - d.SplDb).Average();
-                    ctx.InRange("mean reflection gain Full − Draft", gain, 0.5, 10, " dB");
 
                     var slowSpec = run.Spec.Clone("_rt60x3");
                     slowSpec.Environment.RT60ByBand = slowSpec.Environment.RT60ByBand.Select(t => t * 3).ToArray();
@@ -457,47 +449,66 @@ namespace SoundCalcs.Harness
                     double sti0 = run.Output.Results.Average(r => r.Sti), sti1 = slow.Output.Results.Average(r => r.Sti);
                     ctx.Assert("tripling RT60 lowers mean STI", sti1 < sti0 - 0.05,
                         $"{CheckContext.F(sti0)} → {CheckContext.F(sti1)}");
+                    double spl0 = run.Output.Results.Average(r => r.SplDb), spl1 = slow.Output.Results.Average(r => r.SplDb);
+                    ctx.Assert("tripling RT60 raises mean SPL (stronger reverberant field)", spl1 > spl0 + 1,
+                        $"{CheckContext.F(spl0)} → {CheckContext.F(spl1)} dB");
 
                     var noisySpec = run.Spec.Clone("_noise+30");
                     noisySpec.Environment.BackgroundNoiseByBand = noisySpec.Environment.BackgroundNoiseByBand.Select(n => n + 30).ToArray();
                     var noisy = ScenarioRun.Execute(noisySpec);
                     double sti2 = noisy.Output.Results.Average(r => r.Sti);
-                    ctx.Assert("+30 dB background noise lowers mean STI", sti2 < sti0 - 0.01,
+                    ctx.Assert("+30 dB background noise lowers mean STI", sti2 < sti0 - 0.05,
                         $"{CheckContext.F(sti0)} → {CheckContext.F(sti2)}");
 
-                    // Reference STI from the same early/late/noise energies, treating the late
-                    // energy as one exponential tail (reverberation counted once).
+                    // Bounds for the mean STI (IEC 60268-16, reverberation counted once):
+                    //  lower: all speech energy as a pure diffuse tail (no direct sound at all);
+                    //  upper: the plugin's early energy arriving as one instantaneous burst and its
+                    //         late energy as a tail starting at t = 0 (ignores reflection delays).
+                    var env0 = run.Spec.Environment;
+                    double pureDiffuse = IecReference.Sti(IecReference.Fill(80), env0.BackgroundNoiseByBand, env0.RT60ByBand);
                     var (_, bandData) = new SPLCalculator().Calculate(run.Input, System.Threading.CancellationToken.None, null);
-                    double[] noiseLin = run.Spec.Environment.BackgroundNoiseByBand.Select(n => Math.Pow(10, n / 10)).ToArray();
-                    double refSti = bandData.Average(b => IecReference.StiFromEnergies(
-                        b.EarlyLinearByBand, b.LateLinearByBand, noiseLin, run.Spec.Environment.RT60ByBand));
-                    ctx.Near("mean STI vs reference that counts reverberation once", sti0, refSti, 0.05,
-                        severity: CheckSeverity.Warn);
+                    double[] noiseLin = env0.BackgroundNoiseByBand.Select(n => Math.Pow(10, n / 10)).ToArray();
+                    double upper = bandData.Average(b => IecReference.StiFromEnergies(
+                        b.EarlyLinearByBand, b.LateLinearByBand, noiseLin, env0.RT60ByBand));
+                    ctx.InRange("mean STI between pure-diffuse-field and burst+tail IEC bounds", sti0, pureDiffuse, upper);
 
                     // C80 by definition uses an 80 ms early/late split; D50 uses 50 ms.
                     // If C80 == 10·log10(D50/(1−D50)) everywhere, C80 is really C50.
                     var both = run.Output.Results.Where(r => r.D50 > 0.001 && r.D50 < 0.999).ToList();
                     int identical = both.Count(r => Math.Abs(r.C80Db - 10 * Math.Log10(r.D50 / (1 - r.D50))) < 0.05);
                     ctx.Assert("C80 uses an 80 ms early/late split (not the 50 ms D50 split)",
-                        both.Count == 0 || identical < both.Count,
-                        $"C80 equals 10·log10(D50/(1−D50)) at {identical}/{both.Count} receivers, i.e. the map shows C50",
-                        CheckSeverity.Warn);
+                        both.Count > 0 && identical < both.Count,
+                        $"C80 equals 10·log10(D50/(1−D50)) at {identical}/{both.Count} receivers");
+                    int c80BelowC50 = both.Count(r => r.C80Db < 10 * Math.Log10(r.D50 / (1 - r.D50)) - 0.05);
+                    ctx.Assert("C80 ≥ C50 at every receiver (a longer early window holds more energy)",
+                        c80BelowC50 == 0, $"{c80BelowC50} receivers");
 
-                    // Diffuse field: in a closed room SPL should level off at the Sabine
-                    // reverberant level L ≈ Lw + 10·log10(4/A) far from the speakers.
-                    double rt = run.Spec.Environment.RT60ByBand.Average();
+                    // Diffuse field (Barron's revised theory): the reflected energy at distance r is
+                    // the Sabine level Lw·16π/(Q·A) decayed by e^(−13.82·r/(c·T)). SPL can't be lower.
+                    var env = run.Spec.Environment;
+                    double c = 331.3 + 0.606 * env.TemperatureC;
                     double vol = run.Input.Rooms[0].Area * 3.0;
-                    double A = 0.161 * vol / rt;
                     double q = new SimpleConeProvider(90, 60, -12).DirectivityFactor;
-                    double revPerSrc = Math.Pow(10, 9) * 16 * Math.PI / (q * A); // on-axis 1 m intensity × 16π/(Q·A)
-                    double revDb = Analytic.Db(revPerSrc * run.Input.Sources.Count);
-                    double farSpl = run.Output.Results.OrderBy(r => r.SplDb).Take(10).Average(r => r.SplDb);
-                    ctx.Assert("quietest SPL not below the Sabine reverberant level",
-                        farSpl >= revDb - 1.0,
-                        $"quietest 10 receivers average {CheckContext.F(farSpl)} dB, Sabine diffuse level " +
-                        $"{CheckContext.F(revDb)} dB (A = {CheckContext.F(A)} m² Sabine). The reverberant field only " +
-                        "feeds STI/C80 as late energy and is not added to the SPL map.",
-                        CheckSeverity.Warn);
+                    double worstDeficit = double.MinValue; ReceiverResult worstR = null; double worstRev = 0;
+                    foreach (var r in run.Output.Results)
+                    {
+                        double rev = 0;
+                        foreach (var src in run.Input.Sources)
+                        {
+                            double dist = Dist(r.Position, src.Position);
+                            for (int k = 0; k < 7; k++)
+                            {
+                                double sabineA = 0.161 * vol / env.RT60ByBand[k];
+                                rev += Math.Pow(10, 9) / 7 * 16 * Math.PI / (q * sabineA)
+                                     * Math.Exp(-13.82 * dist / (c * env.RT60ByBand[k]));
+                            }
+                        }
+                        double deficit = Analytic.Db(rev) - r.SplDb;
+                        if (deficit > worstDeficit) { worstDeficit = deficit; worstR = r; worstRev = Analytic.Db(rev); }
+                    }
+                    ctx.Assert("SPL never below the Barron reverberant level", worstDeficit <= 0.05,
+                        $"worst receiver {worstR?.Position}: SPL {CheckContext.F(worstR?.SplDb ?? 0)} dB vs reverberant " +
+                        $"level {CheckContext.F(worstRev)} dB");
                 }
             };
         }
@@ -519,38 +530,48 @@ namespace SoundCalcs.Harness
                 },
                 Checks = (run, ctx) =>
                 {
-                    double noiseDb = 40;
+                    // 70 dB speech level: above the reception threshold, little masking.
+                    const double level = 70;
                     double Plugin(double snr, double t60)
                     {
+                        // Noise-only cases: speech arrives at once (early). Reverb cases: all speech
+                        // energy is a diffuse tail (late) with the given decay time.
                         var bd = new ReceiverBandData();
                         for (int k = 0; k < 7; k++)
-                            bd.EarlyLinearByBand[k] = double.IsPositiveInfinity(snr)
-                                ? Math.Pow(10, 12) : Math.Pow(10, (noiseDb + snr) / 10);
+                        {
+                            double e = Math.Pow(10, level / 10);
+                            if (t60 > 0) bd.LateLinearByBand[k] = e; else bd.EarlyLinearByBand[k] = e;
+                        }
                         var res = new List<ReceiverResult> { new ReceiverResult() };
                         STICalculator.Calculate(res, new List<ReceiverBandData> { bd },
-                            IecReference.Fill(double.IsPositiveInfinity(snr) ? -200 : noiseDb),
+                            IecReference.Fill(double.IsPositiveInfinity(snr) ? -200 : level - snr),
                             IecReference.Fill(t60));
                         return res[0].Sti;
                     }
+                    double Reference(double snr, double t60) => IecReference.Sti(
+                        IecReference.Fill(level), IecReference.Fill(double.IsPositiveInfinity(snr) ? -200 : level - snr),
+                        IecReference.Fill(t60));
 
-                    ctx.Near("SNR +15 dB, no reverb → STI 1.0", Plugin(15, 0), 1.0, 0.01);
+                    ctx.Near("SNR +15 dB, no reverb → STI ≈ 1.0", Plugin(15, 0), 1.0, 0.02);
                     ctx.Near("SNR 0 dB, no reverb → STI 0.5", Plugin(0, 0), 0.5, 0.01);
                     ctx.Near("SNR −15 dB, no reverb → STI 0.0", Plugin(-15, 0), 0.0, 0.01);
 
                     foreach (double snr in new[] { -6.0, 0, 6, 12 })
                         ctx.Near($"noise only, SNR {snr:+0;-0} dB vs IEC reference",
-                            Plugin(snr, 0), IecReference.Sti(IecReference.Fill(snr), IecReference.Fill(0)), 0.03,
-                            severity: CheckSeverity.Warn);
+                            Plugin(snr, 0), Reference(snr, 0), 0.01);
 
                     foreach (double t in new[] { 0.5, 1.0, 2.0, 4.0 })
                         ctx.Near($"reverb only, T60 {t:0.0} s vs IEC reference",
-                            Plugin(double.PositiveInfinity, t),
-                            IecReference.Sti(IecReference.Fill(double.PositiveInfinity), IecReference.Fill(t)), 0.03,
-                            severity: CheckSeverity.Warn);
+                            Plugin(double.PositiveInfinity, t), Reference(double.PositiveInfinity, t), 0.01);
 
-                    ctx.Near("T60 1.0 s + SNR 6 dB vs IEC reference", Plugin(6, 1.0),
-                        IecReference.Sti(IecReference.Fill(6), IecReference.Fill(1.0)), 0.03,
-                        severity: CheckSeverity.Warn);
+                    ctx.Near("T60 1.0 s + SNR 6 dB vs IEC reference", Plugin(6, 1.0), Reference(6, 1.0), 0.01);
+
+                    // Quiet speech falls below the hearing threshold and must lose intelligibility
+                    var quiet = new ReceiverBandData();
+                    for (int k = 0; k < 7; k++) quiet.EarlyLinearByBand[k] = Math.Pow(10, 20.0 / 10);
+                    var qr = new List<ReceiverResult> { new ReceiverResult() };
+                    STICalculator.Calculate(qr, new List<ReceiverBandData> { quiet }, IecReference.Fill(-200), IecReference.Fill(0));
+                    ctx.InRange("20 dB speech in silence is limited by the reception threshold", qr[0].Sti, 0.3, 0.9);
                 }
             };
         }

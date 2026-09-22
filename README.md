@@ -6,10 +6,11 @@ A Revit plugin for room acoustics analysis. Calculates per-receiver SPL and Spee
 
 - **SPL heatmap** — broadband Sound Pressure Level, red (quiet) → dark green (loud)
 - **Per-octave-band heatmaps** — individual SPL maps at 125 / 250 / 500 / 1k / 2k / 4k / 8k Hz
-- **STI heatmap** — IEC 60268-16 Speech Transmission Index with intelligibility labels (Bad → Excellent)
+- **STI heatmap** — IEC 60268-16:2011 Speech Transmission Index (indirect method: MTF of the computed impulse response incl. arrival times, male/female α/β weighting, auditory masking and reception threshold) with IEC intelligibility categories (Bad < 0.30 … Excellent ≥ 0.75)
 - **Wall transmission loss** — detail lines in the plan view act as wall boundaries; each line style is assigned an STC rating. Sound through walls is attenuated per band using the ASTM E413 STC contour
-- **First-order reflections** — image-source method, wall surface absorption considered on both incoming and outgoing legs
-- **Reverberant field** — Sabine room acoustics applied per octave band (RT60 configurable)
+- **Reflections** — image-source method: first-order wall reflections (plus second-order and floor/ceiling in Full quality), 3D path lengths, transmission loss on every leg
+- **Reverberant field** — Barron's revised theory per octave band (RT60 configurable): the Sabine diffuse level decaying with distance, minus the energy the explicit reflections already carry; included in SPL and as the reverberant tail for STI, C80 and D50
+- **Clarity** — C80 (80 ms split) and D50 (50 ms split) over the 500 Hz / 1 kHz bands
 - **Air absorption** — frequency-dependent attenuation per IEC
 - **Speaker directivity** — configurable cone angle or omnidirectional; GLL stub support
 - **Linked IFC support** — wall boundaries are drawn as detail lines (not Revit wall elements), which works reliably with linked IFC models

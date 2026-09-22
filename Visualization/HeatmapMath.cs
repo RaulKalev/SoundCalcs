@@ -122,6 +122,19 @@ namespace SoundCalcs.Visualization
             return colors;
         }
 
+        /// <summary>
+        /// Label for one viewer legend swatch. Uses one decimal when a band is narrower
+        /// than 2 units, so adjacent swatches never show identical ranges.
+        /// </summary>
+        public static string ViewerLegendLabel(double lo, double hi, VisualizationMode mode)
+        {
+            if (mode == VisualizationMode.STI)
+                return $"{lo:F2} \u2013 {hi:F2}";
+            string unit = mode == VisualizationMode.SPL_A ? " dBA" : " dB";
+            string fmt = hi - lo < 2.0 ? "F1" : "F0";
+            return $"{lo.ToString(fmt)} \u2013 {hi.ToString(fmt)}{unit}";
+        }
+
         // -------------------------------------------------------------------
         // Revit FilledRegion palette: 8 discrete bands quiet (red) → loud (green)
         // -------------------------------------------------------------------
@@ -138,11 +151,18 @@ namespace SoundCalcs.Visualization
             ("SC_SPL_7",   0, 160,   0),   // dark green  (loud / strong)
         };
 
-        /// <summary>STI intelligibility labels for the 8 colour bands.</summary>
-        public static readonly string[] StiLabels =
+        /// <summary>
+        /// IEC 60268-16 intelligibility category of an STI value:
+        /// Bad &lt; 0.30 ≤ Poor &lt; 0.45 ≤ Fair &lt; 0.60 ≤ Good &lt; 0.75 ≤ Excellent.
+        /// </summary>
+        public static string StiQuality(double sti)
         {
-            "Bad", "Bad", "Poor", "Poor", "Fair", "Good", "Good", "Excellent"
-        };
+            if (sti < 0.30) return "Bad";
+            if (sti < 0.45) return "Poor";
+            if (sti < 0.60) return "Fair";
+            if (sti < 0.75) return "Good";
+            return "Excellent";
+        }
 
         // -------------------------------------------------------------------
         // Mode helpers
@@ -208,6 +228,12 @@ namespace SoundCalcs.Visualization
             }
             return (min, max);
         }
+
+        /// <summary>
+        /// Grid spacing the viewer uses for the bitmap: derived from the receiver positions
+        /// so it always matches the spacing the results were computed with.
+        /// </summary>
+        public static double ViewerGridSpacing(List<ReceiverResult> results) => EstimateGridSpacing(results);
 
         /// <summary>
         /// Place each receiver on a one-pixel-per-cell grid and colour it.
@@ -401,7 +427,8 @@ namespace SoundCalcs.Visualization
                 double lo = minSti + i * step;
                 // Last band always extends to maxSti exactly
                 double hi = (i == n - 1) ? maxSti : minSti + (i + 1) * step;
-                string quality = i < StiLabels.Length ? StiLabels[i] : "";
+                // Category of the band's midpoint value, not of its position in the colour ramp
+                string quality = StiQuality((lo + hi) / 2);
                 string label = $"{lo:F2} – {hi:F2} ({quality})";
                 items.Add((i, hex, label));
             }

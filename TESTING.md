@@ -42,11 +42,13 @@ Built-in physics scenarios (`--list`):
 | `two_sources_sum` | Incoherent energy sum; +3.01 dB on the bisector |
 | `wall_partition` | Source side untouched by walls; shadow side carries exactly one partition's per-band TL |
 | `cone_ceiling` | 0 dB on axis, −6 dB at the rated half-angle, never below the off-axis floor, narrower beam at high frequencies |
-| `wall_mounted_aim` | Aims along the drag line; front ≈12 dB over back; directivity continuous |
-| `reverberant_room` | Full ≥ Draft (reflections only add energy); more RT60 or noise lowers STI; C80/D50; Sabine diffuse level; STI vs a reference that counts reverberation once |
-| `sti_reference` | STICalculator end points (SNR ±15, 0 dB) and comparison with an independent IEC 60268-16:2011 implementation (`IecReference.cs`) |
+| `wall_mounted_aim` | Aims along the drag line; ≈12 dB front/back at 1 kHz, nearly omni at 125 Hz; directivity continuous across 90° |
+| `reverberant_room` | Full ≥ Draft; longer RT60 raises SPL and lowers STI; noise lowers STI; C80 uses 80 ms (≥ C50); SPL never below the Barron reverberant level; STI between the pure-diffuse-field and burst+tail IEC bounds |
+| `sti_reference` | STICalculator end points (SNR ±15, 0 dB), exact agreement (±0.01) with an independent IEC 60268-16:2011 implementation (`IecReference.cs`) for noise, reverberation and both, and the reception threshold for quiet speech |
 
-**Fail** means a broken invariant or a clear bug. **Warn** means the result deviates from a reference model (IEC / Sabine) or has a known UX weakness, and needs an engineering decision rather than an automatic fix.
+**Fail** means a broken invariant or a clear bug. **Warn** is available for deviations from a reference model that need an engineering decision rather than an automatic fix; all built-in checks currently pass without warnings.
+
+`PhysicsRegressionTests.cs` in the unit tests pins each model bug the harness found (spurious wall blocking near walls, 2D reflection distances, missing / double-counted reverberant field, C80 split, directivity step behind speakers).
 
 ### Your own scenes
 

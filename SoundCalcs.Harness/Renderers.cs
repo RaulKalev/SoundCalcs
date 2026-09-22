@@ -149,7 +149,6 @@ namespace SoundCalcs.Harness
         {
             Rgba[] colors = HeatmapMath.ViewerLegendColors();
             bool isSti = mode == VisualizationMode.STI;
-            string unit = isSti ? "" : mode == VisualizationMode.SPL_A ? " DBA" : " DB";
             int bandIdx = HeatmapMath.GetOctaveBandIndex(mode);
             string modeLabel = isSti ? "STI"
                 : mode == VisualizationMode.SPL_A ? "DBA"
@@ -171,7 +170,7 @@ namespace SoundCalcs.Harness
                 img.FillRect(ox, sy, ox + swW, sy + swH, colors[i]);
                 double lo = minVal + (maxVal - minVal) * i / colors.Length;
                 double hi = minVal + (maxVal - minVal) * (i + 1) / colors.Length;
-                string label = isSti ? $"{lo:F2} - {hi:F2}" : $"{lo:F0} - {hi:F0}{unit}";
+                string label = HeatmapMath.ViewerLegendLabel(lo, hi, mode);
                 img.Text(ox + swW + 6, sy + 5, label, TextBright);
             }
         }

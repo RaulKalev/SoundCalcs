@@ -337,7 +337,10 @@ namespace SoundCalcs.UI
                 (_heatMinVal, _heatMaxVal) = HeatmapMath.ComputeViewerRange(vals, Mode);
 
                 _heatBitmap?.Dispose();
-                _heatBitmap       = BuildHeatmapBitmap(results, vals, _heatMinVal, _heatMaxVal - _heatMinVal, GridSpacing, out _heatWorldRect);
+                // Spacing comes from the results themselves, not the live Grid Spacing field,
+                // so editing that field after a run can't scramble the bitmap.
+                double spacing = HeatmapMath.ViewerGridSpacing(results);
+                _heatBitmap       = BuildHeatmapBitmap(results, vals, _heatMinVal, _heatMaxVal - _heatMinVal, spacing, out _heatWorldRect);
                 _heatBitmapSource = JobOutput;
                 _heatBitmapMode   = Mode;
             }
@@ -467,7 +470,6 @@ namespace SoundCalcs.UI
             bool isC80Leg = Mode == VisualizationMode.C80;
             int  bandIdx  = MainViewModel.GetOctaveBandIndex(Mode);
             bool isPerBand = bandIdx >= 0;
-            string unit   = isSti ? "" : isSplA ? " dBA" : isC80Leg ? " dB" : " dB";
 
             // Use the same range that was used to build the heatmap bitmap
             double minVal = _heatMinVal;
@@ -517,9 +519,7 @@ namespace SoundCalcs.UI
 
                 double lo = minVal + (maxVal - minVal) * i       / HeatColors.Length;
                 double hi = minVal + (maxVal - minVal) * (i + 1) / HeatColors.Length;
-                string label = isSti
-                    ? $"{lo:F2} – {hi:F2}"
-                    : $"{lo:F0} – {hi:F0}{unit}";
+                string label = HeatmapMath.ViewerLegendLabel(lo, hi, Mode);
                 canvas.DrawText(label, ox + txtX, sy + swH - 4f, tf);
             }
         }

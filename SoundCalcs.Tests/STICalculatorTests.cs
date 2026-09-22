@@ -45,8 +45,10 @@ namespace SoundCalcs.Tests
         [Fact]
         public void STI_HighSNR_NoReverb_YieldsMaximumSTI()
         {
-            // Very high early energy, near-silent background, zero RT60:
-            // m_noise → 1, m_rt → 1, snrApp → clamped at +15 dB, TI → 1.0 for all bands.
+            // Very high early energy (90 dB), near-silent background, no late energy:
+            // m_room = 1, m_noise → 1. The only degradation left is IEC level-dependent
+            // auditory masking by the band below (amdB = 0.5·90 − 59.8 ≈ −15 dB), which
+            // keeps STI just under 1 at high speech levels.
             var results = new List<ReceiverResult> { MakeResult(0) };
             var bandData = new List<ReceiverBandData> { MakeBandData(0, 1e9, 0) };
             var bgNoise = new double[] { -100, -100, -100, -100, -100, -100, -100 };
@@ -54,7 +56,7 @@ namespace SoundCalcs.Tests
 
             STICalculator.Calculate(results, bandData, bgNoise, rt60);
 
-            Assert.Equal(1.0, results[0].Sti, 2);
+            Assert.InRange(results[0].Sti, 0.98, 1.0);
         }
 
         [Fact]
@@ -123,15 +125,16 @@ namespace SoundCalcs.Tests
             double earlyLinear = 1e6;
             var bgNoise = new double[] { 25, 25, 25, 25, 25, 25, 25 };
 
+            // The late energy is the reverberant tail; its decay time sets the MTF loss.
             var rShort = new List<ReceiverResult> { MakeResult(0) };
             STICalculator.Calculate(rShort,
-                new List<ReceiverBandData> { MakeBandData(0, earlyLinear, 0) },
+                new List<ReceiverBandData> { MakeBandData(0, earlyLinear, earlyLinear) },
                 bgNoise,
                 new double[] { 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2 });
 
             var rLong = new List<ReceiverResult> { MakeResult(0) };
             STICalculator.Calculate(rLong,
-                new List<ReceiverBandData> { MakeBandData(0, earlyLinear, 0) },
+                new List<ReceiverBandData> { MakeBandData(0, earlyLinear, earlyLinear) },
                 bgNoise,
                 new double[] { 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0 });
 
@@ -210,13 +213,13 @@ namespace SoundCalcs.Tests
         public void STI_MultipleReceivers_EachReceivesIndependentResult()
         {
             // Receiver 0: perfect SNR (1e9 early vs −100 dB noise), zero RT60 → STI ≈ 1.0.
-            // Receiver 1: no signal, loud noise → STI ≈ 0.0.
+            // Receiver 1: 0 dB signal, far below the IEC speech reception threshold → STI ≈ 0.0.
             // Each receiver must be processed independently.
             var results = new List<ReceiverResult> { MakeResult(0), MakeResult(1) };
             var bandData = new List<ReceiverBandData>
             {
                 MakeBandData(0, 1e9, 0),     // perfect signal, no reverb
-                MakeBandData(1, 1.0, 1e9)    // no signal, very poor
+                MakeBandData(1, 1e-3, 0)     // −30 dB: inaudible
             };
             var bgNoise = new double[] { -100, -100, -100, -100, -100, -100, -100 };
             var rt60 = new double[7]; // zero RT60 → no reverberation degradation
@@ -242,9 +245,10 @@ namespace SoundCalcs.Tests
             //   m_avg   = 1 × 0.5 = 0.5  (no reverberation degradation)
             //   snrApp  = 10·log10(0.5/0.5) = 0 dB
             //   TI      = (0 + 15) / 30 = 0.5 for every band
-            //   STI     = Σ weight_k · 0.5 = 0.5  (male weights sum to 1.0)
-            double earlyLinear = Math.Pow(10.0, 40.0 / 10.0); // 40 dB early
-            var bgNoise = new double[] { 40, 40, 40, 40, 40, 40, 40 }; // 40 dB → SNR = 0 dB
+            //   STI     = (Σα − Σβ)·0.5 = 0.5  (IEC male weights)
+            // Levels are 70 dB so the reception threshold and masking are negligible.
+            double earlyLinear = Math.Pow(10.0, 70.0 / 10.0); // 70 dB early
+            var bgNoise = new double[] { 70, 70, 70, 70, 70, 70, 70 }; // 70 dB → SNR = 0 dB
             var rt60 = new double[7]; // all 0.0
 
             var results = new List<ReceiverResult> { MakeResult(0) };
@@ -280,31 +284,29 @@ namespace SoundCalcs.Tests
         [Fact]
         public void STI_MaskingCorrection_ReducesSTIWhenLowerBandIsLouder()
         {
-            // IEC 60268-16 auditory masking correction (§A.3):
-            //   levelDiff = L_{k-1} − L_k − β_k
-            //   if levelDiff > 0: snrApp_k -= α_k × levelDiff
+            // IEC 60268-16:2011 level-dependent auditory masking (§A.2.3):
+            //   I_am,k = I_{k-1} · 10^(amdB/10), amdB = −10 dB for L_{k-1} ≥ 100 dB
+            //   m'_k   = m_k · I_k / (I_k + I_am,k + I_rt,k)
             //
-            // Setup: band 0 (125 Hz) at 80 dB, bands 1–6 at 40 dB, bgNoise=30 dB, RT60=0.
-            // For band 1 (250 Hz):
-            //   snrApp before masking = 10 dB  (SNR = 40-30 = 10 dB, no reverb)
-            //   levelDiff = 80 − 40 − 0.45 = 39.55 > 0
-            //   correction = 0.45 × 39.55 ≈ 17.8 dB  → snrApp ≈ -7.8 dB
-            //   TI drops from 0.833 to 0.24
-            // Uniform 40 dB reference gives STI ≈ 0.833; masked case must be lower.
-            var bgNoise = new double[] { 30, 30, 30, 30, 30, 30, 30 };
+            // Setup: band 3 (1 kHz) at 100 dB, all other bands at 70 dB, bgNoise = 60 dB.
+            // Band 4 (2 kHz) is masked by ≈ 90 dB of 1 kHz energy, 20 dB above its own
+            // level, so its TI collapses. Uniform 70 dB reference gives STI ≈ 0.83.
+            // (1 kHz → 2 kHz is used because α₄ = 0.309 dominates the redundancy terms;
+            // at 125 → 250 Hz the IEC formula can rise when band 1 is lost.)
+            var bgNoise = new double[] { 60, 60, 60, 60, 60, 60, 60 };
             var rt60 = new double[7]; // zero RT60
 
-            // Reference: uniform 40 dB across all bands (SNR = 10 dB everywhere, no masking)
+            // Reference: uniform 70 dB across all bands (SNR = 10 dB everywhere)
             var rUniform = new List<ReceiverResult> { MakeResult(0) };
             STICalculator.Calculate(rUniform,
-                new List<ReceiverBandData> { MakeBandData(0, Math.Pow(10, 40.0 / 10.0), 0) },
+                new List<ReceiverBandData> { MakeBandData(0, Math.Pow(10, 70.0 / 10.0), 0) },
                 bgNoise, rt60);
 
-            // Masked case: band 0 is 40 dB louder than the rest
+            // Masked case: band 3 is 30 dB louder than the rest
             var bd = new ReceiverBandData { ReceiverIndex = 0 };
-            bd.EarlyLinearByBand[0] = Math.Pow(10, 80.0 / 10.0); // 80 dB
-            for (int k = 1; k < OctaveBands.Count; k++)
-                bd.EarlyLinearByBand[k] = Math.Pow(10, 40.0 / 10.0); // 40 dB
+            for (int k = 0; k < OctaveBands.Count; k++)
+                bd.EarlyLinearByBand[k] = Math.Pow(10, 70.0 / 10.0); // 70 dB
+            bd.EarlyLinearByBand[3] = Math.Pow(10, 100.0 / 10.0);    // 100 dB
 
             var rMasked = new List<ReceiverResult> { MakeResult(0) };
             STICalculator.Calculate(rMasked, new List<ReceiverBandData> { bd }, bgNoise, rt60);
@@ -316,8 +318,8 @@ namespace SoundCalcs.Tests
         [Fact]
         public void STI_FemaleWeights_ZeroForFirstAndLastBand()
         {
-            // FemaleSpeechWeights = [0.000, 0.117, 0.223, 0.216, 0.328, 0.250, 0.000]
-            // Bands 0 (125 Hz) and 6 (8 kHz) carry zero female weight.
+            // IEC female α = [0.000, 0.117, 0.223, 0.216, 0.328, 0.250, 0.194]
+            // Band 0 (125 Hz) carries zero female weight.
             // If only band 0 has signal and all other bands have near-zero SNR:
             //   Male   STI ≈ weight_male[0] × TI[0] = 0.085 × 1.0 = 0.085  (non-zero)
             //   Female STI ≈ weight_female[0] × TI[0] = 0.000 × 1.0 = 0.000
@@ -351,32 +353,22 @@ namespace SoundCalcs.Tests
         public void STI_KnownValue_SNR10dB_RT60_0p5s_YieldsExpectedResult()
         {
             // Analytically verifiable case (uniform across all 7 bands):
-            //   SNR = earlyDb - noiseDb = 70 - 60 = +10 dB
-            //   RT60 = 0.5 s
+            //   all speech energy arrives as a reverberant tail with T60 = 0.5 s
+            //   SNR = 70 − 60 = +10 dB
             //
-            // m_noise = 1 / (1 + 10^(-10/10)) = 1/1.1 ≈ 0.9091
-            //
-            // m_rt(F) = 1 / sqrt(1 + (2π·F·0.5/13.8)²)  for each of 14 mod freqs
-            //
-            // m_avg  = mean(m_rt(F) * m_noise)  across 14 frequencies ≈ 0.6901
-            //
-            // snrApp = 10·log10(m_avg / (1−m_avg)) ≈ +3.48 dB
-            //
-            // TI     = (snrApp + 15) / 30                ≈ 0.616
-            //
-            // No masking (uniform energy per band)
-            // STI    = Σ weight_k · TI                   ≈ 0.616  (male weights, sum=1)
+            // m(F)  = 1/√(1 + (2πF·τ)²) · 1/(1 + 10^(−1)),  τ = 0.5/13.82
+            // TI(F) = (clip(10·log10(m/(1−m)), ±15) + 15)/30,  MTI = mean over 14 F
+            // STI   = (Σα − Σβ)·MTI ≈ 0.641  (masking/threshold negligible at 70 dB)
 
-            double earlyLinear = Math.Pow(10.0, 70.0 / 10.0);
-            var bd = MakeBandData(0, earlyLinear, 0);
+            double lateLinear = Math.Pow(10.0, 70.0 / 10.0);
+            var bd = MakeBandData(0, 0, lateLinear);
             var bgNoise = new double[] { 60, 60, 60, 60, 60, 60, 60 };
             var rt60 = new double[] { 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5 };
 
             var results = new List<ReceiverResult> { MakeResult(0) };
             STICalculator.Calculate(results, new List<ReceiverBandData> { bd }, bgNoise, rt60);
 
-            // Expected ≈ 0.616; allow ±0.01 for floating-point rounding
-            Assert.InRange(results[0].Sti, 0.606, 0.626);
+            Assert.InRange(results[0].Sti, 0.631, 0.645);
         }
     }
 }
