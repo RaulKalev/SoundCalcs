@@ -92,6 +92,12 @@ namespace SoundCalcs.Domain
         /// </summary>
         public bool UseSpeechSpectrumForSti { get; set; } = true;
 
+        /// <summary>
+        /// Room-shape-aware reverberation (Full quality): box-shaped rooms use the shoebox
+        /// image-source lattice instead of the diffuse-field (Barron) model. Default on.
+        /// </summary>
+        public bool UseRoomShapeModel { get; set; } = true;
+
         /// <summary>Floor finish, used for floor reflections.</summary>
         public WallAbsorptionPreset FloorSurface { get; set; } = SurfaceMaterialCatalog.DefaultFloor;
 

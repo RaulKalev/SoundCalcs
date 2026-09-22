@@ -91,6 +91,7 @@ namespace SoundCalcs.Harness
                 TwoRooms(),
                 DirectivityData(),
                 ReverberantRoom(),
+                RoomShape(),
                 StiReference(),
                 MeasurementComparison(),
             };
@@ -495,9 +496,9 @@ namespace SoundCalcs.Harness
         // -----------------------------------------------------------------
         static Scenario WallMaterials()
         {
-            // RT60 is set very short so the statistical tail is negligible and the explicit
-            // wall reflections (which use the wall type's material) dominate.
-            var env = new EnvironmentSettings { RT60ByBand = IecReference.Fill(0.05) };
+            // RT60 is estimated per room from the materials (as with "Auto RT60 per room" in the
+            // UI), so a material change reaches both the reflections and the reverberation.
+            var env = new EnvironmentSettings();
             var spec = new ScenarioSpec
             {
                 Name = "wall_materials",
@@ -509,6 +510,7 @@ namespace SoundCalcs.Harness
                 Walls = ScenarioSpec.RectangleWalls(0, 0, 10, 8, 0, "concrete_200"),
                 Quality = CalculationQuality.Full,
                 Environment = env,
+                AutoRt60PerRoom = true,
                 Speakers = { new SpeakerSpec { X = 3, Y = 4, HeightM = 2.8, Profile = ScenarioSpec.Omni(90) } }
             };
 
@@ -879,6 +881,129 @@ namespace SoundCalcs.Harness
         // -----------------------------------------------------------------
         // 6. Closed reverberant room: reflections, STI trends, C80/D50
         // -----------------------------------------------------------------
+        // Room-shape-aware reverberation (shoebox image-source lattice) vs the diffuse model
+        // -----------------------------------------------------------------
+        static Scenario RoomShape()
+        {
+            // Flat open-plan room: 30 × 24 m, 3 m ceiling, carpet and acoustic tiles, drywall perimeter.
+            // Omni flush in the ceiling near one end; RT60 estimated from the materials.
+            var spec = new ScenarioSpec
+            {
+                Name = "room_shape",
+                Description = "Flat 30×24×3 m office (carpet, acoustic tiles, drywall perimeter), omni flush in " +
+                              "the ceiling at (4, 12), Full quality, RT60 from the materials. The room-shape " +
+                              "(shoebox lattice) reverberation is compared with the diffuse (Barron) model: same " +
+                              "floor/ceiling physics without perimeter walls, agreement in a proportionate room, " +
+                              "steady fall along a flat room and a corridor, and no change for an L-shaped room.",
+                Walls = ScenarioSpec.RectangleWalls(0, 0, 30, 24, 50),
+                Quality = CalculationQuality.Full,
+                GridSpacingM = 1.0,
+                Environment = new EnvironmentSettings
+                {
+                    FloorSurface = WallAbsorptionPreset.Carpet,
+                    CeilingSurface = WallAbsorptionPreset.AcousticTile
+                },
+                AutoRt60PerRoom = true,
+                Speakers = { new SpeakerSpec { X = 4, Y = 12, HeightM = 3.0, Profile = ScenarioSpec.Omni(90) } }
+            };
+
+            ScenarioRun Diffuse(ScenarioSpec s)
+            {
+                var d = s.Clone("_diffuse");
+                d.Environment.UseRoomShapeModel = false;
+                return ScenarioRun.Execute(d);
+            }
+            double MeanNear(ScenarioRun r, double x, double y, double radius) => EnergyMean(
+                r.Output.Results.Where(p => Math.Abs(p.Position.X - x) <= radius && Math.Abs(p.Position.Y - y) <= radius)
+                    .Select(p => p.SplDb));
+            // Receivers along a line y = const, x > xMin, in order of distance from the speaker
+            int Rises(ScenarioRun r, double y, double xMin, double xMax, double tolDb)
+            {
+                var row = r.Output.Results.Where(p => Math.Abs(p.Position.Y - y) < 0.26 && p.Position.X > xMin && p.Position.X < xMax)
+                    .OrderBy(p => p.Position.X).ToList();
+                int n = 0;
+                for (int i = 1; i < row.Count; i++)
+                    if (row[i].SplDb > row[i - 1].SplDb + tolDb) n++;
+                return n;
+            }
+
+            return new Scenario
+            {
+                Spec = spec,
+                ViewerModes = new[] { VisualizationMode.SPL, VisualizationMode.STI },
+                RevitModes = new[] { VisualizationMode.SPL },
+                Checks = (run, ctx) =>
+                {
+                    var diffuse = Diffuse(run.Spec);
+                    string Profile(ScenarioRun a, ScenarioRun b, double y, IEnumerable<double> xs) => string.Join(", ",
+                        xs.Select(x => $"x={x}: {CheckContext.F(a.Nearest(x, y).SplDb)}/{CheckContext.F(b.Nearest(x, y).SplDb)}"));
+                    ctx.Assert("flat room: level along the axis falls steadily away from the speaker (no rise > 0.3 dB)",
+                        Rises(run, 12, 6, 30, 0.3) == 0,
+                        "SPL room shape / diffuse: " + Profile(run, diffuse, 12, new[] { 6.0, 10, 14, 18, 22, 26, 29 }));
+
+                    // Without perimeter walls both models are left with the same floor and ceiling
+                    var openSpec = run.Spec.Clone("_open");
+                    foreach (var w in openSpec.Walls) w.WallType = "open";
+                    openSpec.Boundary = ScenarioSpec.Rectangle(0, 0, 30, 24);
+                    var open = ScenarioRun.Execute(openSpec);
+                    var openDiffuse = Diffuse(openSpec);
+                    double openMax = open.Output.Results.Zip(openDiffuse.Output.Results, (a, b) => Math.Abs(a.SplDb - b.SplDb)).Max();
+                    ctx.Assert("no perimeter walls: room shape ≈ explicit floor/ceiling reflections (within 1.5 dB)",
+                        openMax < 1.5, $"max SPL difference {CheckContext.F(openMax)} dB " +
+                        "(the lattice also has the higher-order floor–ceiling bounces)");
+
+                    // Proportionate room: the two models agree
+                    var boxSpec = run.Spec.Clone("_box");
+                    boxSpec.Walls = ScenarioSpec.RectangleWalls(0, 0, 10, 8, 50);
+                    boxSpec.Environment = new EnvironmentSettings();
+                    boxSpec.AutoRt60PerRoom = false;
+                    boxSpec.GridSpacingM = 0.5;
+                    boxSpec.Speakers[0].X = 3; boxSpec.Speakers[0].Y = 4;
+                    var box = ScenarioRun.Execute(boxSpec);
+                    var boxDiffuse = Diffuse(boxSpec);
+                    double splDiff = box.Output.Results.Zip(boxDiffuse.Output.Results, (a, b) => a.SplDb - b.SplDb).Average();
+                    double stiDiff = box.Output.Results.Zip(boxDiffuse.Output.Results, (a, b) => a.Sti - b.Sti).Average();
+                    ctx.InRange("proportionate 10×8×3 m room: mean SPL agrees with the diffuse model", splDiff, -1.5, 1.5, " dB");
+                    // The lattice has discrete late reflections and a diffuse part that builds up;
+                    // the diffuse model a smooth tail from the direct sound on — STI may differ a little.
+                    ctx.InRange("proportionate 10×8×3 m room: mean STI agrees with the diffuse model", stiDiff, -0.1, 0.1);
+
+                    // Corridor: level keeps falling along it (a Sabine field would be uniform)
+                    var corrSpec = boxSpec.Clone("_corridor");
+                    corrSpec.Walls = ScenarioSpec.RectangleWalls(0, 0, 40, 2.5, 50);
+                    corrSpec.Speakers[0].X = 3; corrSpec.Speakers[0].Y = 1.25;
+                    var corr = ScenarioRun.Execute(corrSpec);
+                    var corrDiffuse = Diffuse(corrSpec);
+                    double corrDrop = MeanNear(corr, 7, 1.25, 1.0) - MeanNear(corr, 37, 1.25, 1.0);
+                    ctx.Assert("corridor: level falls steadily along the corridor, ≥ 5 dB from 4 m to 34 m",
+                        Rises(corr, 1.25, 5, 40, 0.3) == 0 && corrDrop >= 5,
+                        $"drop {CheckContext.F(corrDrop)} dB; SPL room shape / diffuse: " +
+                        Profile(corr, corrDiffuse, 1.25, new[] { 5.0, 10, 20, 30, 39 }));
+
+                    // L-shaped room: not a box, so the diffuse model is used unchanged
+                    var lSpec = boxSpec.Clone("_lshape");
+                    var lPts = new[] { new Vec2(0, 0), new Vec2(16, 0), new Vec2(16, 6), new Vec2(8, 6), new Vec2(8, 14), new Vec2(0, 14) };
+                    lSpec.Walls = lPts.Select((p, i) => new WallSpec
+                    {
+                        X1 = p.X, Y1 = p.Y, X2 = lPts[(i + 1) % lPts.Length].X, Y2 = lPts[(i + 1) % lPts.Length].Y, Stc = 50
+                    }).ToList();
+                    lSpec.Speakers[0].X = 4; lSpec.Speakers[0].Y = 4;
+                    var lRun = ScenarioRun.Execute(lSpec);
+                    var lDiffuse = Diffuse(lSpec);
+                    double lMax = lRun.Output.Results.Zip(lDiffuse.Output.Results, (a, b) => Math.Abs(a.SplDb - b.SplDb)).Max();
+                    ctx.Assert("L-shaped room: identical to the diffuse model (not treated as a box)", lMax < 0.01,
+                        $"max SPL difference {CheckContext.F(lMax)} dB");
+                }
+            };
+        }
+
+        static double EnergyMean(IEnumerable<double> db)
+        {
+            var list = db.ToList();
+            return list.Count == 0 ? double.NaN : 10 * Math.Log10(list.Average(v => Math.Pow(10, v / 10)));
+        }
+
+        // -----------------------------------------------------------------
         static Scenario ReverberantRoom()
         {
             var spec = new ScenarioSpec
@@ -933,13 +1058,16 @@ namespace SoundCalcs.Harness
                     //  lower: all speech energy as a pure diffuse tail (no direct sound at all);
                     //  upper: the plugin's early energy arriving as one instantaneous burst and its
                     //         late energy as a tail starting at t = 0 (ignores reflection delays).
+                    // The lower bound gets 0.03 of slack: the room-shape model's reverberation
+                    // builds up over the first reflections instead of starting at t = 0, and that
+                    // delay can take the MTF slightly below a tail that starts with the direct sound.
                     var env0 = run.Spec.Environment;
                     double pureDiffuse = IecReference.Sti(IecReference.Fill(80), env0.BackgroundNoiseByBand, env0.RT60ByBand);
                     var (_, bandData) = new SPLCalculator().Calculate(run.Input, System.Threading.CancellationToken.None, null);
                     double[] noiseLin = env0.BackgroundNoiseByBand.Select(n => Math.Pow(10, n / 10)).ToArray();
                     double upper = bandData.Average(b => IecReference.StiFromEnergies(
                         b.EarlyLinearByBand, b.LateLinearByBand, noiseLin, env0.RT60ByBand));
-                    ctx.InRange("mean STI between pure-diffuse-field and burst+tail IEC bounds", sti0, pureDiffuse, upper);
+                    ctx.InRange("mean STI between pure-diffuse-field and burst+tail IEC bounds", sti0, pureDiffuse - 0.03, upper);
 
                     // C80 by definition uses an 80 ms early/late split; D50 uses 50 ms.
                     // If C80 == 10·log10(D50/(1−D50)) everywhere, C80 is really C50.
