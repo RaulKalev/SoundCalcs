@@ -126,6 +126,10 @@ namespace SoundCalcs.Domain
                 { WallAbsorptionPreset.Carpet,         new[] { 0.02, 0.06, 0.14, 0.37, 0.60, 0.65, 0.65 } },
                 { WallAbsorptionPreset.AcousticTile,   new[] { 0.50, 0.70, 0.60, 0.70, 0.70, 0.50, 0.50 } },
                 { WallAbsorptionPreset.Custom,         new[] { 0.10, 0.10, 0.10, 0.10, 0.10, 0.10, 0.10 } },
+                { WallAbsorptionPreset.Wood,           new[] { 0.14, 0.10, 0.06, 0.08, 0.10, 0.10, 0.10 } },
+                { WallAbsorptionPreset.Curtain,        new[] { 0.07, 0.31, 0.49, 0.75, 0.70, 0.60, 0.60 } },
+                // An opening absorbs everything that reaches it: no reflection
+                { WallAbsorptionPreset.Open,           new[] { 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00 } },
             };
 
         /// <summary>
@@ -181,6 +185,10 @@ namespace SoundCalcs.Domain
         AcousticPanel,
         Carpet,
         AcousticTile,
-        Custom
+        Custom,
+        // Appended so existing serialized values keep their meaning
+        Wood,
+        Curtain,
+        Open
     }
 }

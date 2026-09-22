@@ -85,6 +85,7 @@ namespace SoundCalcs.Harness
                 ConeCeiling(),
                 WallMountedAim(),
                 SpeakerRotation(),
+                WallMaterials(),
                 ReverberantRoom(),
                 StiReference(),
             };
@@ -468,6 +469,77 @@ namespace SoundCalcs.Harness
                         $"max SPL difference {CheckContext.F(maxDiff)} dB");
                     ctx.Near("ceiling cone sets the ceiling height to its mounting height",
                         cone.Input.Rooms[0].CeilingHeightM, 3.0, 1e-9, " m");
+                }
+            };
+        }
+
+        // -----------------------------------------------------------------
+        // 5c. Line style → wall type mapping carries the surface material
+        // -----------------------------------------------------------------
+        static Scenario WallMaterials()
+        {
+            // RT60 is set very short so the statistical tail is negligible and the explicit
+            // wall reflections (which use the wall type's material) dominate.
+            var env = new EnvironmentSettings { RT60ByBand = IecReference.Fill(0.05) };
+            var spec = new ScenarioSpec
+            {
+                Name = "wall_materials",
+                Description = "10×8 m room whose four lines are mapped to a wall type, Full quality. " +
+                              "Concrete walls must reflect more than fabric curtains; lines mapped to " +
+                              "'Open (No Wall)' must neither block, reflect nor enclose; the RT60 estimate " +
+                              "must follow the wall materials.",
+                Walls = ScenarioSpec.RectangleWalls(0, 0, 10, 8, 0, "concrete_200"),
+                Quality = CalculationQuality.Full,
+                Environment = env,
+                Speakers = { new SpeakerSpec { X = 3, Y = 4, HeightM = 2.8, Profile = ScenarioSpec.Omni(90) } }
+            };
+
+            return new Scenario
+            {
+                Spec = spec,
+                Checks = (run, ctx) =>
+                {
+                    ctx.Assert("wall type's surface material reaches the compute walls",
+                        run.Input.Walls.All(w => w.AbsorptionByBand != null &&
+                            w.AbsorptionByBand.SequenceEqual(OctaveBands.AbsorptionPresets[WallAbsorptionPreset.Concrete])),
+                        "");
+                    ctx.Assert("every catalog wall type has a surface material",
+                        WallTypeCatalog.All.All(t => OctaveBands.AbsorptionPresets.ContainsKey(t.Surface)), "");
+
+                    var curtainSpec = run.Spec.Clone("_curtain");
+                    foreach (var w in curtainSpec.Walls) w.WallType = "curtain_fabric";
+                    var curtain = ScenarioRun.Execute(curtainSpec);
+                    double gain = run.Output.Results.Zip(curtain.Output.Results, (c, f) => c.SplDb - f.SplDb).Average();
+                    ctx.InRange("concrete room louder than curtained room (stronger reflections)", gain, 1, 15, " dB");
+                    ctx.Assert("curtained room has more early energy share (higher D50)",
+                        curtain.Output.Results.Average(r => r.D50) > run.Output.Results.Average(r => r.D50),
+                        $"D50 {CheckContext.F(run.Output.Results.Average(r => r.D50))} (concrete) vs " +
+                        $"{CheckContext.F(curtain.Output.Results.Average(r => r.D50))} (curtain)");
+
+                    // "Open (No Wall)" lines: same as no walls at all over the same boundary
+                    var openSpec = run.Spec.Clone("_open");
+                    foreach (var w in openSpec.Walls) w.WallType = "open";
+                    openSpec.Environment = new EnvironmentSettings();
+                    var open = ScenarioRun.Execute(openSpec);
+                    var bareSpec = openSpec.Clone("_bare");
+                    bareSpec.Boundary = ScenarioSpec.Rectangle(0, 0, 10, 8);
+                    bareSpec.Walls.Clear();
+                    var bare = ScenarioRun.Execute(bareSpec);
+                    ctx.Near("'Open (No Wall)' lines don't enclose the room", open.Input.Rooms[0].EnclosureRatio, 0, 1e-9);
+                    double maxDiff = open.Output.Results.Zip(bare.Output.Results, (a, b) => Math.Abs(a.SplDb - b.SplDb)).Max();
+                    ctx.Assert("'Open (No Wall)' lines neither block nor reflect (same as no lines)", maxDiff < 0.01,
+                        $"max SPL difference {CheckContext.F(maxDiff)} dB");
+
+                    // RT60 estimate (Estimate RT60 button) follows the wall materials
+                    double area = 80, height = 3, vol = area * height;
+                    double surface = RoomAcoustics.EstimateSurfaceArea(area, height);
+                    double[] drywall = OctaveBands.AbsorptionPresets[WallAbsorptionPreset.Drywall];
+                    double Rt500(string key) => RoomAcoustics.EstimateEyringRt60(vol, surface,
+                        RoomAcoustics.AverageAbsorption(area, surface,
+                            new[] { (36.0, WallTypeCatalog.FindByKey(key).AbsorptionByBand) }, drywall))[2];
+                    double rtConcrete = Rt500("concrete_200"), rtCurtain = Rt500("curtain_fabric");
+                    ctx.Assert("estimated RT60 longer with concrete walls than with curtains", rtConcrete > rtCurtain * 1.5,
+                        $"500 Hz: {CheckContext.F(rtConcrete)} s (concrete) vs {CheckContext.F(rtCurtain)} s (curtain)");
                 }
             };
         }

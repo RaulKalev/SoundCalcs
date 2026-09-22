@@ -45,6 +45,24 @@ namespace SoundCalcs.Domain
             profileSource == ProfileSourceType.WallMounted;
 
         /// <summary>
+        /// True for the "Open (No Wall)" type: it neither blocks, reflects nor encloses.
+        /// </summary>
+        public static bool IsOpening(WallTypeInfo wallType) =>
+            wallType != null && wallType.Surface == WallAbsorptionPreset.Open;
+
+        /// <summary>
+        /// Convert a detail-line wall segment into a compute wall with the STC and surface
+        /// material of its assigned wall type (null = no type: STC 0, default surface).
+        /// </summary>
+        public static ComputeWall ToComputeWall(WallSegment2D seg, WallTypeInfo wallType)
+        {
+            ComputeWall w = ToComputeWall(seg, wallType?.StcRating ?? 0);
+            if (wallType != null)
+                w.AbsorptionByBand = (double[])wallType.AbsorptionByBand.Clone();
+            return w;
+        }
+
+        /// <summary>
         /// Convert a detail-line wall segment into a compute wall with the given STC,
         /// extending both ends by <see cref="WallEndExtensionM"/>.
         /// </summary>

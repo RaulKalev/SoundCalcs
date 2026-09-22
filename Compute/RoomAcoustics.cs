@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using SoundCalcs.Domain;
 
 namespace SoundCalcs.Compute
@@ -66,6 +68,35 @@ namespace SoundCalcs.Compute
                 double alpha = Math.Max(0.001, avgAbsorptionByBand[k]);
                 double t60 = 0.161 * volumeM3 / (surfaceAreaM2 * alpha);
                 result[k] = Math.Round(Math.Max(0.05, Math.Min(30.0, t60)), 2);
+            }
+            return result;
+        }
+
+        /// <summary>
+        /// Area-weighted mean absorption per band. Floor and ceiling (2 × floor area) use
+        /// <paramref name="floorCeilingAbsorption"/>; the remaining wall area is split
+        /// between wall types in proportion to their line length. With no wall types the
+        /// walls use the floor/ceiling value.
+        /// </summary>
+        public static double[] AverageAbsorption(
+            double floorAreaM2, double totalSurfaceAreaM2,
+            IEnumerable<(double LengthM, double[] Absorption)> wallMix,
+            double[] floorCeilingAbsorption)
+        {
+            if (totalSurfaceAreaM2 <= 0) return (double[])floorCeilingAbsorption.Clone();
+
+            var mix = wallMix.Where(w => w.LengthM > 0 && w.Absorption != null).ToList();
+            double totalLength = mix.Sum(w => w.LengthM);
+            double floorCeiling = Math.Min(2 * floorAreaM2, totalSurfaceAreaM2);
+            double walls = totalSurfaceAreaM2 - floorCeiling;
+
+            var result = new double[OctaveBands.Count];
+            for (int k = 0; k < OctaveBands.Count; k++)
+            {
+                double wallAlpha = totalLength > 0
+                    ? mix.Sum(w => w.LengthM * w.Absorption[k]) / totalLength
+                    : floorCeilingAbsorption[k];
+                result[k] = (floorCeiling * floorCeilingAbsorption[k] + walls * wallAlpha) / totalSurfaceAreaM2;
             }
             return result;
         }

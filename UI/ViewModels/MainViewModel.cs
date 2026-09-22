@@ -578,10 +578,16 @@ namespace SoundCalcs.UI.ViewModels
             double volumeM3 = totalFloorArea * avgCeilingH;
             double surfaceAreaM2 = Compute.RoomAcoustics.EstimateSurfaceArea(totalFloorArea, avgCeilingH);
 
-            // Get wall absorption preset (already selected by user in Grid tab)
-            double[] absorption = OctaveBands.AbsorptionPresets.ContainsKey(WallAbsorptionPreset.Drywall)
-                ? OctaveBands.AbsorptionPresets[WallAbsorptionPreset.Drywall]
-                : new double[] { 0.10, 0.10, 0.10, 0.10, 0.10, 0.10, 0.10 };
+            // Area-weighted absorption: walls use the surface material of their assigned wall
+            // type (weighted by detail-line length), floor and ceiling use the drywall default.
+            var wallMix = WallLineGroups
+                .Select(w => w.GetGroup())
+                .Where(g => g.TotalLengthM > 0 && g.WallType != null)
+                .Select(g => (g.TotalLengthM, g.WallType.AbsorptionByBand))
+                .ToList();
+            double[] absorption = Compute.RoomAcoustics.AverageAbsorption(
+                totalFloorArea, surfaceAreaM2, wallMix,
+                OctaveBands.AbsorptionPresets[WallAbsorptionPreset.Drywall]);
 
             double[] rt60 = Compute.RoomAcoustics.EstimateEyringRt60(volumeM3, surfaceAreaM2, absorption);
 
@@ -1028,9 +1034,11 @@ namespace SoundCalcs.UI.ViewModels
 
                 // Compute enclosure ratio for each room polygon using original wall segments.
                 // This determines how much reverberant energy is applied per room.
+                // Openings ("Open (No Wall)") don't enclose anything.
                 var allWallSegs = new List<WallSegment2D>();
                 foreach (var wvm in WallLineGroups)
-                    allWallSegs.AddRange(wvm.GetGroup().Segments);
+                    if (!JobInputBuilder.IsOpening(wvm.GetGroup().WallType))
+                        allWallSegs.AddRange(wvm.GetGroup().Segments);
                 RoomDetector.ComputeEnclosureRatios(analysisRooms, allWallSegs);
 
                 StatusMessage = $"Generating grid in boundary with {sources.Count} speakers...";
@@ -1076,11 +1084,11 @@ namespace SoundCalcs.UI.ViewModels
                     WallLineGroup grp = wvm.GetGroup();
                     int stc = grp.WallType?.StcRating ?? 0;
                     FileLogger.Log($"  WallGroup '{grp.LineStyleName}': {grp.SegmentCount} segs, " +
-                        $"type='{grp.WallType?.DisplayName}', STC={stc}");
+                        $"type='{grp.WallType?.DisplayName}', STC={stc}, surface={grp.WallType?.Surface}");
                     // Each segment is extended 0.10 m at both ends to bridge
                     // small gaps at corners and T-junctions.
                     foreach (WallSegment2D seg in grp.Segments)
-                        computeWalls.Add(JobInputBuilder.ToComputeWall(seg, stc));
+                        computeWalls.Add(JobInputBuilder.ToComputeWall(seg, grp.WallType));
                 }
                 FileLogger.Log($"Wall segments for calc: {computeWalls.Count} " +
                     $"(groups: {WallLineGroups.Count})");

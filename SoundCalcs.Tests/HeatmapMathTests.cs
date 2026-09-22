@@ -276,6 +276,22 @@ namespace SoundCalcs.Tests
         }
 
         [Fact]
+        public void ToComputeWall_WithWallType_CarriesStcAndSurfaceMaterial()
+        {
+            var seg = new WallSegment2D { Start = new Vec2(0, 0), End = new Vec2(4, 0), ThicknessM = 0.1 };
+            ComputeWall glass = JobInputBuilder.ToComputeWall(seg, WallTypeCatalog.FindByKey("glass_double"));
+            Assert.Equal(33, glass.StcRating);
+            Assert.Equal(OctaveBands.AbsorptionPresets[WallAbsorptionPreset.Glass], glass.AbsorptionByBand);
+
+            ComputeWall none = JobInputBuilder.ToComputeWall(seg, (WallTypeInfo)null);
+            Assert.Equal(0, none.StcRating);
+            Assert.Null(none.AbsorptionByBand);
+
+            Assert.True(JobInputBuilder.IsOpening(WallTypeCatalog.FindByKey("open")));
+            Assert.False(JobInputBuilder.IsOpening(WallTypeCatalog.FindByKey("curtain_fabric")));
+        }
+
+        [Fact]
         public void ApplyCeilingHeights_UsesTallestSpeakerInRoom()
         {
             var room = new RoomPolygon

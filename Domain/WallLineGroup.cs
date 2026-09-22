@@ -4,7 +4,8 @@ using System.Collections.Generic;
 namespace SoundCalcs.Domain
 {
     /// <summary>
-    /// Describes an acoustic wall type with its STC (Sound Transmission Class) rating.
+    /// Describes an acoustic wall type: its STC (Sound Transmission Class) rating for
+    /// sound passing through, and its surface material for sound reflecting off it.
     /// </summary>
     public class WallTypeInfo
     {
@@ -12,11 +13,19 @@ namespace SoundCalcs.Domain
         public string DisplayName { get; }
         public int StcRating { get; }
 
-        public WallTypeInfo(string key, string displayName, int stcRating)
+        /// <summary>Surface material used for reflections and the RT60 estimate.</summary>
+        public WallAbsorptionPreset Surface { get; }
+
+        /// <summary>Per-octave-band absorption coefficients of <see cref="Surface"/>.</summary>
+        public double[] AbsorptionByBand => OctaveBands.AbsorptionPresets[Surface];
+
+        public WallTypeInfo(string key, string displayName, int stcRating,
+            WallAbsorptionPreset surface = WallAbsorptionPreset.Drywall)
         {
             Key = key;
             DisplayName = displayName;
             StcRating = stcRating;
+            Surface = surface;
         }
 
         public override string ToString() => DisplayName;
@@ -31,32 +40,32 @@ namespace SoundCalcs.Domain
     {
         public static readonly List<WallTypeInfo> All = new List<WallTypeInfo>
         {
-            new WallTypeInfo("concrete_200",     "200mm Concrete — STC 55",               55),
-            new WallTypeInfo("concrete_150",     "150mm Concrete — STC 50",               50),
-            new WallTypeInfo("cmu_200",          "200mm CMU Block — STC 50",              50),
-            new WallTypeInfo("cmu_200_plaster",  "200mm CMU + Plaster — STC 55",          55),
-            new WallTypeInfo("brick_230",        "230mm Brick — STC 52",                  52),
-            new WallTypeInfo("brick_double",     "Double Brick + Cavity — STC 58",        58),
-            new WallTypeInfo("stud_single",      "Single Stud 1×GWB — STC 35",           35),
-            new WallTypeInfo("stud_single_2gwb", "Single Stud 2×GWB — STC 40",           40),
-            new WallTypeInfo("stud_insulated",   "Single Stud Insulated 1×GWB — STC 42", 42),
-            new WallTypeInfo("stud_insul_2gwb",  "Single Stud Insulated 2×GWB — STC 50", 50),
-            new WallTypeInfo("stud_double",      "Double Stud 2×GWB — STC 55",           55),
-            new WallTypeInfo("stud_staggered",   "Staggered Stud Insulated — STC 52",    52),
-            new WallTypeInfo("metal_stud",       "Metal Stud 1×GWB — STC 38",            38),
-            new WallTypeInfo("metal_stud_2gwb",  "Metal Stud 2×GWB — STC 45",            45),
-            new WallTypeInfo("metal_insul_2gwb", "Metal Stud Insulated 2×GWB — STC 52",  52),
-            new WallTypeInfo("glass_single",     "Single Glazing 6mm — STC 28",          28),
-            new WallTypeInfo("glass_double",     "Double Glazing — STC 33",               33),
-            new WallTypeInfo("glass_laminated",  "Laminated Glass 10mm — STC 36",         36),
-            new WallTypeInfo("glass_curtain",    "Curtain Wall / IGU — STC 38",          38),
-            new WallTypeInfo("glass_acoustic",   "Acoustic Glass — STC 42",              42),
-            new WallTypeInfo("door_hollow",      "Hollow Core Door — STC 20",             20),
-            new WallTypeInfo("door_solid",       "Solid Core Door — STC 30",              30),
-            new WallTypeInfo("door_acoustic",    "Acoustic Door — STC 40",                40),
-            new WallTypeInfo("partition_movable","Movable Partition — STC 42",            42),
-            new WallTypeInfo("curtain_fabric",   "Fabric Curtain / Drape — STC 10",      10),
-            new WallTypeInfo("open",             "Open (No Wall) — STC 0",                 0),
+            new WallTypeInfo("concrete_200",     "200mm Concrete — STC 55",               55, WallAbsorptionPreset.Concrete),
+            new WallTypeInfo("concrete_150",     "150mm Concrete — STC 50",               50, WallAbsorptionPreset.Concrete),
+            new WallTypeInfo("cmu_200",          "200mm CMU Block — STC 50",              50, WallAbsorptionPreset.Brick),
+            new WallTypeInfo("cmu_200_plaster",  "200mm CMU + Plaster — STC 55",          55, WallAbsorptionPreset.Concrete),
+            new WallTypeInfo("brick_230",        "230mm Brick — STC 52",                  52, WallAbsorptionPreset.Brick),
+            new WallTypeInfo("brick_double",     "Double Brick + Cavity — STC 58",        58, WallAbsorptionPreset.Brick),
+            new WallTypeInfo("stud_single",      "Single Stud 1×GWB — STC 35",           35, WallAbsorptionPreset.Drywall),
+            new WallTypeInfo("stud_single_2gwb", "Single Stud 2×GWB — STC 40",           40, WallAbsorptionPreset.Drywall),
+            new WallTypeInfo("stud_insulated",   "Single Stud Insulated 1×GWB — STC 42", 42, WallAbsorptionPreset.Drywall),
+            new WallTypeInfo("stud_insul_2gwb",  "Single Stud Insulated 2×GWB — STC 50", 50, WallAbsorptionPreset.Drywall),
+            new WallTypeInfo("stud_double",      "Double Stud 2×GWB — STC 55",           55, WallAbsorptionPreset.Drywall),
+            new WallTypeInfo("stud_staggered",   "Staggered Stud Insulated — STC 52",    52, WallAbsorptionPreset.Drywall),
+            new WallTypeInfo("metal_stud",       "Metal Stud 1×GWB — STC 38",            38, WallAbsorptionPreset.Drywall),
+            new WallTypeInfo("metal_stud_2gwb",  "Metal Stud 2×GWB — STC 45",            45, WallAbsorptionPreset.Drywall),
+            new WallTypeInfo("metal_insul_2gwb", "Metal Stud Insulated 2×GWB — STC 52",  52, WallAbsorptionPreset.Drywall),
+            new WallTypeInfo("glass_single",     "Single Glazing 6mm — STC 28",          28, WallAbsorptionPreset.Glass),
+            new WallTypeInfo("glass_double",     "Double Glazing — STC 33",               33, WallAbsorptionPreset.Glass),
+            new WallTypeInfo("glass_laminated",  "Laminated Glass 10mm — STC 36",         36, WallAbsorptionPreset.Glass),
+            new WallTypeInfo("glass_curtain",    "Curtain Wall / IGU — STC 38",          38, WallAbsorptionPreset.Glass),
+            new WallTypeInfo("glass_acoustic",   "Acoustic Glass — STC 42",              42, WallAbsorptionPreset.Glass),
+            new WallTypeInfo("door_hollow",      "Hollow Core Door — STC 20",             20, WallAbsorptionPreset.Wood),
+            new WallTypeInfo("door_solid",       "Solid Core Door — STC 30",              30, WallAbsorptionPreset.Wood),
+            new WallTypeInfo("door_acoustic",    "Acoustic Door — STC 40",                40, WallAbsorptionPreset.Wood),
+            new WallTypeInfo("partition_movable","Movable Partition — STC 42",            42, WallAbsorptionPreset.Drywall),
+            new WallTypeInfo("curtain_fabric",   "Fabric Curtain / Drape — STC 10",      10, WallAbsorptionPreset.Curtain),
+            new WallTypeInfo("open",             "Open (No Wall) — STC 0",                 0, WallAbsorptionPreset.Open),
         };
 
         public static WallTypeInfo Default => All[0];

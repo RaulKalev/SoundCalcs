@@ -14,6 +14,15 @@ namespace SoundCalcs.Harness
         public double Y2 { get; set; }
         public int Stc { get; set; } = 50;
 
+        /// <summary>
+        /// Optional WallTypeCatalog key (e.g. "concrete_200", "curtain_fabric", "open"), as
+        /// assigned to the line style in the plugin. Sets STC and surface material; when
+        /// null, <see cref="Stc"/> is used with the default (drywall) surface.
+        /// </summary>
+        public string WallType { get; set; }
+
+        public WallTypeInfo CatalogType() => WallType == null ? null : WallTypeCatalog.FindByKey(WallType);
+
         /// <summary>SelectBoundary assigns 0.1 m to every picked detail line.</summary>
         public double ThicknessM { get; set; } = 0.1;
     }
@@ -154,7 +163,8 @@ namespace SoundCalcs.Harness
             };
 
             // --- Receivers, enclosure, ceiling height (MainViewModel.RunAnalysis) ---
-            RoomDetector.ComputeEnclosureRatios(rooms, segments);
+            RoomDetector.ComputeEnclosureRatios(rooms,
+                segments.Where((seg, i) => !JobInputBuilder.IsOpening(Walls[i].CatalogType())).ToList());
 
             var settings = new AnalysisSettings
             {
@@ -176,7 +186,9 @@ namespace SoundCalcs.Harness
 
             var walls = new List<ComputeWall>();
             for (int i = 0; i < segments.Count; i++)
-                walls.Add(JobInputBuilder.ToComputeWall(segments[i], Walls[i].Stc));
+                walls.Add(Walls[i].WallType != null
+                    ? JobInputBuilder.ToComputeWall(segments[i], Walls[i].CatalogType())
+                    : JobInputBuilder.ToComputeWall(segments[i], Walls[i].Stc));
             if (AnechoicWalls)
                 foreach (var w in walls)
                     w.AbsorptionByBand = Enumerable.Repeat(1.0, OctaveBands.Count).ToArray();
@@ -200,14 +212,15 @@ namespace SoundCalcs.Harness
         // Convenience builders for scenarios
         // ---------------------------------------------------------------
 
-        public static List<WallSpec> RectangleWalls(double x0, double y0, double x1, double y1, int stc)
+        public static List<WallSpec> RectangleWalls(double x0, double y0, double x1, double y1, int stc,
+            string wallType = null)
         {
             return new List<WallSpec>
             {
-                new WallSpec { X1 = x0, Y1 = y0, X2 = x1, Y2 = y0, Stc = stc },
-                new WallSpec { X1 = x1, Y1 = y0, X2 = x1, Y2 = y1, Stc = stc },
-                new WallSpec { X1 = x1, Y1 = y1, X2 = x0, Y2 = y1, Stc = stc },
-                new WallSpec { X1 = x0, Y1 = y1, X2 = x0, Y2 = y0, Stc = stc },
+                new WallSpec { X1 = x0, Y1 = y0, X2 = x1, Y2 = y0, Stc = stc, WallType = wallType },
+                new WallSpec { X1 = x1, Y1 = y0, X2 = x1, Y2 = y1, Stc = stc, WallType = wallType },
+                new WallSpec { X1 = x1, Y1 = y1, X2 = x0, Y2 = y1, Stc = stc, WallType = wallType },
+                new WallSpec { X1 = x0, Y1 = y1, X2 = x0, Y2 = y0, Stc = stc, WallType = wallType },
             };
         }
 
