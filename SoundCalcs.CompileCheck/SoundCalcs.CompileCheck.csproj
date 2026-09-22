@@ -24,6 +24,8 @@
     <Compile Include="../**/*.cs"
              Exclude="../SoundCalcs.Tests/**;../SoundCalcs.Harness/**;../SoundCalcs.CompileCheck/**;../**/obj/**;../**/bin/**" />
     <Compile Include="XamlStubs.cs" />
+    <!-- Written by scripts/xamlcheck.py: the icon names used in the XAML, checked against PackIconKind -->
+    <Compile Include="XamlIcons.g.cs" Condition="Exists('XamlIcons.g.cs')" />
   </ItemGroup>
 
   <!-- Same packages as SoundCalcs.csproj -->

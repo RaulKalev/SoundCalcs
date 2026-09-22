@@ -3,12 +3,13 @@
 Everything here runs headless on Linux or Windows with only the .NET 8 SDK. No Revit, no WPF window, no clicks.
 
 ```bash
-scripts/selftest.sh              # all three layers below; output in harness-output/
+scripts/selftest.sh              # all four layers below; output in harness-output/
 ```
 
 | Layer | Command | What it proves |
 |---|---|---|
 | Unit tests | `dotnet test SoundCalcs.Tests` | Calculator formulas, heatmap colour mapping and grid geometry, job-input helpers |
+| XAML checks | `python3 scripts/xamlcheck.py` | The XAML is not compiled on Linux, so this checks what would otherwise fail inside Revit: resource keys (and StaticResource order), styles on the right element types, event handlers and `x:Name` fields, binding paths, both palettes plus high contrast defining every key. It writes the icon names to `SoundCalcs.CompileCheck/XamlIcons.g.cs`, which the compile check then builds against `PackIconKind` |
 | Compile check | `dotnet build SoundCalcs.CompileCheck -p:EnableWindowsTargeting=true` | All plugin C# (Revit + WPF code included) compiles for net48 **and** net8.0-windows, using NuGet reference assemblies; XAML-generated members are stubbed in `XamlStubs.cs` |
 | Scenario harness | `dotnet run -c Release --project SoundCalcs.Harness -- --out harness-output` | Whole scenes go through the real pipeline: job built like `MainViewModel`, computed by `JobRunner.Compute`, drawn by the same `HeatmapMath` code as the viewer and the Revit renderer. Results are checked against physics and rendering invariants, and PNGs are written |
 

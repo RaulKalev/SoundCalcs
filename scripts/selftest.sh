@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Headless self-test of SoundCalcs — no Revit, no Windows, no user input.
 #   1. unit tests                    (SoundCalcs.Tests)
-#   2. plugin compile check          (all Revit/WPF code, net48 + net8.0-windows)
-#   3. scenario harness + images     (SoundCalcs.Harness → $OUT/report.md, *.png)
+#   2. XAML checks                   (resource keys, styles, handlers, bindings, icons; scripts/xamlcheck.py)
+#   3. plugin compile check          (all Revit/WPF code, net48 + net8.0-windows)
+#   4. scenario harness + images     (SoundCalcs.Harness → $OUT/report.md, *.png)
 # Usage: scripts/selftest.sh [output-dir]      Exit code is non-zero if any step fails.
 set -uo pipefail
 cd "$(dirname "$0")/.."
@@ -22,6 +23,7 @@ step() {
 }
 
 step "unit tests" dotnet test SoundCalcs.Tests/SoundCalcs.Tests.csproj --nologo -v q
+step "xaml checks" python3 scripts/xamlcheck.py
 step "plugin compile check" bash -c \
   'dotnet build SoundCalcs.CompileCheck/SoundCalcs.CompileCheck.csproj -p:EnableWindowsTargeting=true -nologo -v q 2>&1 | grep -E "error|Build succeeded|Error\(s\)" | sort -u; exit ${PIPESTATUS[0]}'
 step "scenario harness" dotnet run -c Release --project SoundCalcs.Harness -- --out "$OUT"
