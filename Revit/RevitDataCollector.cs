@@ -26,11 +26,12 @@ namespace SoundCalcs.Revit
         // -----------------------------------------------------------------
 
         /// <summary>
-        /// Collect all family instances of the given built-in category from the host model.
-        /// When <paramref name="abLineParameterName"/> is non-empty, the value of that
-        /// instance parameter is stored in <see cref="SpeakerInstance.AbLine"/>.
+        /// Read the given speakers from the host model as they are now: position, type, level, A/B line and
+        /// the aim correction stored by the viewer. Ids that are deleted or not point-placed family instances
+        /// are left out. When <paramref name="abLineParameterName"/> is non-empty, the value of that instance
+        /// parameter is stored in <see cref="SpeakerInstance.AbLine"/>.
         /// </summary>
-        public List<SpeakerInstance> CollectSpeakers(BuiltInCategory category, string abLineParameterName = "")
+        public List<SpeakerInstance> CollectSpeakersById(IEnumerable<int> elementIds, string abLineParameterName = "")
         {
             var speakers = new List<SpeakerInstance>();
 
@@ -39,75 +40,68 @@ namespace SoundCalcs.Revit
                 levels = levelCollector.OfClass(typeof(Level)).Cast<Level>()
                     .OrderBy(l => l.ProjectElevation).ToList();
 
-            using (var collector = new FilteredElementCollector(_doc))
+            foreach (int id in elementIds.Distinct())
             {
-                var elements = collector
-                    .OfCategory(category)
-                    .OfClass(typeof(FamilyInstance))
-                    .WhereElementIsNotElementType()
-                    .ToElements();
-
-                foreach (Element elem in elements)
-                {
-                    FamilyInstance fi = elem as FamilyInstance;
-                    if (fi == null) continue;
-
-                    LocationPoint locPt = fi.Location as LocationPoint;
-                    if (locPt == null) continue;
-
-                    XYZ position = locPt.Point;
-                    XYZ facing = fi.FacingOrientation;
-
-                    Vec3 posM = UnitConversion.XyzToVec3(position);
-
-                    // Determine level name and elevation. ProjectElevation is in the same
-                    // internal coordinates as the location point; Level.Elevation is relative
-                    // to the level type's Elevation Base (project base / survey point).
-                    // Face-hosted families (e.g. on a ceiling or a linked host) often have no
-                    // LevelId: use the reference-level parameter, else the level just below.
-                    Level level = ResolveLevel(fi, position.Z, levels);
-                    string levelName = level?.Name ?? "";
-                    double levelElevM = level != null ? UnitConversion.FtToM(level.ProjectElevation) : 0;
-
-                    string familyName = fi.Symbol?.Family?.Name ?? "Unknown";
-                    string typeName = fi.Symbol?.Name ?? "Unknown";
-
-                    // Read A/B line designation from the configured parameter, if any
-                    string abLine = "";
-                    if (!string.IsNullOrEmpty(abLineParameterName))
-                    {
-                        Parameter abParam = fi.LookupParameter(abLineParameterName);
-                        if (abParam != null)
-                            abLine = abParam.AsString() ?? abParam.AsValueString() ?? "";
-                    }
-
-                    speakers.Add(new SpeakerInstance
-                    {
-                        ElementId = RevitCompat.GetIdValue(fi.Id),
-                        TypeKey = $"{familyName} : {typeName}",
-                        Position = posM,
-                        FacingDirection = UnitConversion.DirectionToVec3(facing),
-                        LevelName = levelName,
-                        LevelElevationM = levelElevM,
-                        ElevationFromLevelM = posM.Z - levelElevM,
-                        AbLine = abLine
-                    });
-
-                    // Override horizontal aim with any rotation stored by the user
-                    if (SpeakerRotationStorage.TryRead(fi, out double aimDeg))
-                    {
-                        double rad  = aimDeg * Math.PI / 180.0;
-                        double fz   = speakers[speakers.Count - 1].FacingDirection.Z;
-                        double hLen = Math.Sqrt(Math.Max(0.0, 1.0 - fz * fz));
-                        if (hLen < 1e-6) hLen = 1.0;
-                        speakers[speakers.Count - 1].FacingDirection =
-                            new Domain.Vec3(Math.Cos(rad) * hLen, Math.Sin(rad) * hLen, fz);
-                    }
-                }
+                FamilyInstance fi = _doc.GetElement(RevitCompat.ToElementId(id)) as FamilyInstance;
+                if (fi == null) continue;
+                SpeakerInstance speaker = ReadSpeaker(fi, levels, abLineParameterName);
+                if (speaker != null) speakers.Add(speaker);
             }
 
-            Debug.WriteLine($"[SoundCalcs] Collected {speakers.Count} speakers from category {category}");
+            Debug.WriteLine($"[SoundCalcs] Read {speakers.Count} speakers by id");
             return speakers;
+        }
+
+        private SpeakerInstance ReadSpeaker(FamilyInstance fi, List<Level> levels, string abLineParameterName)
+        {
+            LocationPoint locPt = fi.Location as LocationPoint;
+            if (locPt == null) return null;
+
+            XYZ position = locPt.Point;
+            Vec3 posM = UnitConversion.XyzToVec3(position);
+            Vec3 facing = UnitConversion.DirectionToVec3(fi.FacingOrientation);
+
+            // Determine level name and elevation. ProjectElevation is in the same
+            // internal coordinates as the location point; Level.Elevation is relative
+            // to the level type's Elevation Base (project base / survey point).
+            // Face-hosted families (e.g. on a ceiling or a linked host) often have no
+            // LevelId: use the reference-level parameter, else the level just below.
+            Level level = ResolveLevel(fi, position.Z, levels);
+            string levelName = level?.Name ?? "";
+            double levelElevM = level != null ? UnitConversion.FtToM(level.ProjectElevation) : 0;
+
+            string familyName = fi.Symbol?.Family?.Name ?? "Unknown";
+            string typeName = fi.Symbol?.Name ?? "Unknown";
+
+            // Read A/B line designation from the configured parameter, if any
+            string abLine = "";
+            if (!string.IsNullOrEmpty(abLineParameterName))
+            {
+                Parameter abParam = fi.LookupParameter(abLineParameterName);
+                if (abParam != null)
+                    abLine = abParam.AsString() ?? abParam.AsValueString() ?? "";
+            }
+
+            var speaker = new SpeakerInstance
+            {
+                ElementId = RevitCompat.GetIdValue(fi.Id),
+                TypeKey = $"{familyName} : {typeName}",
+                Position = posM,
+                FacingDirection = facing,
+                LevelName = levelName,
+                LevelElevationM = levelElevM,
+                ElevationFromLevelM = posM.Z - levelElevM,
+                AbLine = abLine,
+                ModelAimDeg = SpeakerAim.HorizontalAngleDeg(facing)
+            };
+
+            // Turn by any aim correction the user made in the viewer
+            if (SpeakerRotationStorage.TryReadOffset(fi, speaker.ModelAimDeg, out double offsetDeg))
+            {
+                speaker.AimOffsetDeg = offsetDeg;
+                SpeakerAim.ApplyOffset(speaker);
+            }
+            return speaker;
         }
 
         /// <summary>
@@ -139,26 +133,60 @@ namespace SoundCalcs.Revit
             return below ?? levelsByElevation.FirstOrDefault();
         }
 
+        // -----------------------------------------------------------------
+        // Boundary lines
+        // -----------------------------------------------------------------
+
         /// <summary>
-        /// Group speakers by TypeKey.
+        /// Read the given detail / model lines as wall segments in meters, one group per line style.
+        /// Ids that are deleted or not curve elements are left out of <paramref name="foundIds"/>.
+        /// <paramref name="lineZ"/> is the elevation of the lines (0 when none were read).
         /// </summary>
-        public List<SpeakerTypeGroup> GroupSpeakers(List<SpeakerInstance> speakers)
+        public List<WallLineGroup> ReadBoundaryLines(IEnumerable<int> elementIds, out List<int> foundIds, out double lineZ)
         {
-            return speakers
-                .GroupBy(s => s.TypeKey)
-                .Select(g =>
+            var groups = new Dictionary<string, WallLineGroup>();
+            foundIds = new List<int>();
+            lineZ = 0;
+
+            foreach (int id in elementIds.Distinct())
+            {
+                CurveElement curveElem = _doc.GetElement(RevitCompat.ToElementId(id)) as CurveElement;
+                Curve curve = curveElem?.GeometryCurve;
+                if (curve == null) continue;
+                foundIds.Add(id);
+
+                string styleName = "Unknown";
+                try
                 {
-                    string[] parts = g.Key.Split(new[] { " : " }, StringSplitOptions.None);
-                    return new SpeakerTypeGroup
+                    if (curveElem.LineStyle is GraphicsStyle gs) styleName = gs.Name;
+                }
+                catch { }
+
+                if (!groups.TryGetValue(styleName, out WallLineGroup grp))
+                    groups[styleName] = grp = new WallLineGroup { LineStyleName = styleName };
+
+                IList<XYZ> pts = curve.Tessellate();
+                for (int i = 0; i < pts.Count - 1; i++)
+                {
+                    XYZ p0 = pts[i];
+                    XYZ p1 = pts[i + 1];
+                    lineZ = UnitConversion.FtToM(p0.Z);
+
+                    var seg = new WallSegment2D
                     {
-                        TypeKey = g.Key,
-                        FamilyName = parts.Length > 0 ? parts[0] : g.Key,
-                        TypeName = parts.Length > 1 ? parts[1] : "",
-                        Instances = g.ToList()
+                        Start = new Vec2(UnitConversion.FtToM(p0.X), UnitConversion.FtToM(p0.Y)),
+                        End = new Vec2(UnitConversion.FtToM(p1.X), UnitConversion.FtToM(p1.Y)),
+                        BaseElevationM = lineZ,
+                        HeightM = 3.0,
+                        ThicknessM = 0.1
                     };
-                })
-                .OrderBy(g => g.TypeKey)
-                .ToList();
+                    grp.Segments.Add(seg);
+                    grp.SegmentCount++;
+                    grp.TotalLengthM += seg.Length;
+                }
+            }
+
+            return groups.Values.ToList();
         }
 
         // -----------------------------------------------------------------

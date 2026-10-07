@@ -281,6 +281,11 @@ namespace SoundCalcs.UI
             _vm.ClearWalls();
         }
 
+        private void RefreshLayout_Click(object sender, RoutedEventArgs e)
+        {
+            _vm.RefreshLayoutFromModel();
+        }
+
         // ============ Speakers page ============
 
         private void PickSpeaker_Click(object sender, RoutedEventArgs e)
@@ -293,6 +298,11 @@ namespace SoundCalcs.UI
         private void ClearPickedSpeakers_Click(object sender, RoutedEventArgs e)
         {
             _vm.ClearPickedSpeakers();
+        }
+
+        private void RefreshSpeakers_Click(object sender, RoutedEventArgs e)
+        {
+            _vm.RefreshSpeakersFromModel();
         }
 
         private void UseConeAngle_Click(object sender, RoutedEventArgs e)

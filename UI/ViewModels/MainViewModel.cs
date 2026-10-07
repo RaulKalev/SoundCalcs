@@ -82,6 +82,8 @@ namespace SoundCalcs.UI.ViewModels
             }
             foreach (var room in settings.BoundaryRooms)
                 DetectedRooms.Add(room);
+            _boundaryLineIds = settings.BoundaryLineIds ?? new List<int>();
+            _wallsDetected = settings.WallsDetected;
 
             // Every change is saved shortly after it is made; the checklist follows the inputs.
             _speakerGroups.CollectionChanged += OnInputCollectionChanged;
@@ -234,6 +236,8 @@ namespace SoundCalcs.UI.ViewModels
             RunBlockedReason = RunPreflight.BlockReason(items);
             OnPropertyChanged(nameof(CanRun));
             OnPropertyChanged(nameof(PreflightIssueCount));
+            OnPropertyChanged(nameof(CanRefreshSpeakers));
+            OnPropertyChanged(nameof(CanRefreshLayout));
         }
 
         // ========================= UNDO =========================
@@ -425,84 +429,49 @@ namespace SoundCalcs.UI.ViewModels
                 return;
             }
 
-            // Group line segments by their Revit line style
-            var groupDict = new Dictionary<string, WallLineGroup>();
-            double lineZ = 0;
-
-            foreach (Autodesk.Revit.DB.Reference r in pickedRefs)
-            {
-                Element elem = doc.GetElement(r.ElementId);
-                if (elem == null) continue;
-
-                CurveElement curveElem = elem as CurveElement;
-                if (curveElem == null) continue;
-
-                Curve curve = curveElem.GeometryCurve;
-                if (curve == null) continue;
-
-                // Get line style name
-                string styleName = "Unknown";
-                try
-                {
-                    GraphicsStyle gs = curveElem.LineStyle as GraphicsStyle;
-                    if (gs != null) styleName = gs.Name;
-                }
-                catch { }
-
-                if (!groupDict.ContainsKey(styleName))
-                {
-                    groupDict[styleName] = new WallLineGroup
-                    {
-                        LineStyleName = styleName
-                    };
-                }
-
-                WallLineGroup grp = groupDict[styleName];
-
-                IList<XYZ> pts = curve.Tessellate();
-                for (int i = 0; i < pts.Count - 1; i++)
-                {
-                    XYZ p0 = pts[i];
-                    XYZ p1 = pts[i + 1];
-                    lineZ = UnitConversion.FtToM(p0.Z);
-
-                    var seg = new WallSegment2D
-                    {
-                        Start = new Vec2(UnitConversion.FtToM(p0.X), UnitConversion.FtToM(p0.Y)),
-                        End = new Vec2(UnitConversion.FtToM(p1.X), UnitConversion.FtToM(p1.Y)),
-                        BaseElevationM = lineZ,
-                        HeightM = 3.0,
-                        ThicknessM = 0.1
-                    };
-                    grp.Segments.Add(seg);
-                    grp.SegmentCount++;
-                    grp.TotalLengthM += seg.Length;
-                }
-            }
-
-            if (groupDict.Count == 0)
+            var ids = pickedRefs.Select(r => RevitCompat.GetIdValue(r.ElementId)).ToList();
+            List<WallLineGroup> groups = new RevitDataCollector(doc).ReadBoundaryLines(ids, out List<int> found, out double lineZ);
+            if (groups.Count == 0)
             {
                 StatusMessage = "No wall segments extracted.";
                 return;
             }
 
-            // Populate the WallLineGroups collection for display
-            WallLineGroups.Clear();
-            foreach (var grp in groupDict.Values)
-                WallLineGroups.Add(new WallLineGroupViewModel(grp));
+            // Line styles traced before keep the wall type and height set for them
+            ModelSync.KeepWallSettings(WallLineGroups.Select(w => w.GetGroup()), groups);
+            _wallsDetected = false;
+            ApplyBoundaryLines(groups, lineZ, found, replaceWalls: true);
+            MarkLayoutFromCurrentProject();
 
-            // Gather all segment endpoints
-            var allSegments = new List<WallSegment2D>();
-            var allPoints = new List<Vec2>();
-            foreach (var grp in groupDict.Values)
+            // Auto-persist so walls survive window close/reopen
+            SaveSettingsCore();
+            RefreshPreflight();
+            RoomPolygon boundary = DetectedRooms[0];
+            StatusMessage = $"Boundary selected: {boundary.Area:F0} m², {WallLineGroups.Count} line style(s), " +
+                $"{groups.Sum(g => g.SegmentCount)} segments.";
+        }
+
+        /// <summary>
+        /// Makes the boundary the convex hull of <paramref name="groups"/> and, with
+        /// <paramref name="replaceWalls"/>, the walls the line groups. <paramref name="lineIds"/> are the
+        /// lines they were read from, so Refresh can read them again.
+        /// </summary>
+        private void ApplyBoundaryLines(List<WallLineGroup> groups, double lineZ, List<int> lineIds, bool replaceWalls)
+        {
+            if (replaceWalls)
             {
+                WallLineGroups.Clear();
+                foreach (var grp in groups)
+                    WallLineGroups.Add(new WallLineGroupViewModel(grp));
+            }
+
+            var allPoints = new List<Vec2>();
+            foreach (var grp in groups)
                 foreach (var seg in grp.Segments)
                 {
-                    allSegments.Add(seg);
                     allPoints.Add(seg.Start);
                     allPoints.Add(seg.End);
                 }
-            }
 
             // Floor elevation: prefer speaker level elevation if available
             double elevM = lineZ;
@@ -526,18 +495,12 @@ namespace SoundCalcs.UI.ViewModels
                 Name = "Boundary"
             };
 
-            FileLogger.Log($"SelectBoundary: {allSegments.Count} wall segments, hull={hull.Count} pts, " +
-                $"area={boundary.Area:F1}m², floorElev={elevM:F3}m");
+            FileLogger.Log($"Boundary: {groups.Sum(g => g.SegmentCount)} wall segments from {lineIds.Count} lines, " +
+                $"hull={hull.Count} pts, area={boundary.Area:F1}m², floorElev={elevM:F3}m");
 
             DetectedRooms.Clear();
             DetectedRooms.Add(boundary);
-            MarkLayoutFromCurrentProject();
-
-            // Auto-persist so walls survive window close/reopen
-            SaveSettingsCore();
-            RefreshPreflight();
-            StatusMessage = $"Boundary selected: {boundary.Area:F0} m², {WallLineGroups.Count} line style(s), " +
-                $"{allSegments.Count} segments.";
+            _boundaryLineIds = lineIds.ToList();
         }
 
         /// <summary>
@@ -550,29 +513,19 @@ namespace SoundCalcs.UI.ViewModels
             Document doc = _uiApp.ActiveUIDocument?.Document;
             if (doc == null) { StatusMessage = "No active document."; return; }
 
-            var collector = new RevitDataCollector(doc);
-            var allGroups = new List<WallLineGroup>();
-
-            // Host document walls
-            var hostGroups = collector.GetHostWallGroups();
-            allGroups.AddRange(hostGroups);
-
-            // Linked model walls (if a link is selected)
-            if (SelectedLink != null && SelectedLink.IsValid)
-            {
-                var linkGroups = collector.GetLinkWallGroups(SelectedLink.LinkInstanceId);
-                allGroups.AddRange(linkGroups);
-            }
-
+            List<WallLineGroup> allGroups = DetectWallGroups(doc);
             if (allGroups.Count == 0)
             {
                 StatusMessage = "No wall elements found in the model.";
                 return;
             }
 
+            // Wall types detected before keep the rating and height set for them
+            ModelSync.KeepWallSettings(WallLineGroups.Select(w => w.GetGroup()), allGroups);
             WallLineGroups.Clear();
             foreach (var grp in allGroups)
                 WallLineGroups.Add(new WallLineGroupViewModel(grp));
+            _wallsDetected = true;
             MarkLayoutFromCurrentProject();
 
             int totalSegs = allGroups.Sum(g => g.SegmentCount);
@@ -585,6 +538,105 @@ namespace SoundCalcs.UI.ViewModels
                 "Check the wall types in the table.";
         }
 
+        /// <summary>The Wall elements of the host and the selected linked model, one group per wall type.</summary>
+        private List<WallLineGroup> DetectWallGroups(Document doc)
+        {
+            var collector = new RevitDataCollector(doc);
+            var allGroups = new List<WallLineGroup>();
+            allGroups.AddRange(collector.GetHostWallGroups());
+            if (SelectedLink != null && SelectedLink.IsValid)
+                allGroups.AddRange(collector.GetLinkWallGroups(SelectedLink.LinkInstanceId));
+            return allGroups;
+        }
+
+        // Detail lines the boundary was traced from, and whether the walls came from "Detect walls"
+        // instead of those lines: what Refresh reads again.
+        private List<int> _boundaryLineIds = new List<int>();
+        private bool _wallsDetected;
+
+        /// <summary>True when the boundary or walls came from the model and can be read again.</summary>
+        public bool CanRefreshLayout => _boundaryLineIds.Count > 0 || _wallsDetected;
+
+        /// <summary>
+        /// Reads the boundary lines (and detected walls) again so moved, extended or deleted lines show up,
+        /// keeping the wall type and height set for each line style / wall type.
+        /// </summary>
+        public void RefreshLayoutFromModel()
+        {
+            Document doc = _uiApp.ActiveUIDocument?.Document;
+            if (doc == null) { StatusMessage = "No active document."; return; }
+            if (!CanRefreshLayout)
+            {
+                StatusMessage = "Nothing to refresh: select the boundary or detect the walls first.";
+                return;
+            }
+            if (!FromCurrentProject(_layoutProjectKey, _layoutProjectName, "boundary", out string why))
+            {
+                StatusMessage = why;
+                return;
+            }
+
+            var walls = WallLineGroups.ToList();
+            var rooms = DetectedRooms.ToList();
+            var lineIds = _boundaryLineIds.ToList();
+            bool detected = _wallsDetected;
+            var previous = walls.Select(w => w.GetGroup()).ToList();
+            var parts = new List<string>();
+
+            if (_boundaryLineIds.Count > 0)
+            {
+                List<WallLineGroup> groups = new RevitDataCollector(doc).ReadBoundaryLines(_boundaryLineIds, out List<int> found, out double lineZ);
+                if (groups.Count == 0)
+                {
+                    StatusMessage = "None of the boundary lines are in the model any more. Select the boundary again.";
+                    return;
+                }
+                int lost = _boundaryLineIds.Count - found.Count;
+                if (!_wallsDetected) ModelSync.KeepWallSettings(previous, groups);
+                ApplyBoundaryLines(groups, lineZ, found, replaceWalls: !_wallsDetected);
+                parts.Add($"boundary {DetectedRooms[0].Area:F0} m² from {found.Count} line(s)" +
+                    (lost > 0 ? $", {lost} deleted line(s) dropped" : ""));
+            }
+
+            if (_wallsDetected)
+            {
+                List<WallLineGroup> groups = DetectWallGroups(doc);
+                ModelSync.KeepWallSettings(previous, groups);
+                WallLineGroups.Clear();
+                foreach (var grp in groups)
+                    WallLineGroups.Add(new WallLineGroupViewModel(grp));
+                parts.Add($"{groups.Count} wall type(s), {groups.Sum(g => g.SegmentCount)} segment(s)");
+            }
+
+            SaveSettingsCore();
+            RefreshPreflight();
+            OfferUndo("Refreshed from the model: " + string.Join("; ", parts) + ". Wall types kept.", "Undo", () =>
+            {
+                WallLineGroups.Clear();
+                foreach (var w in walls) WallLineGroups.Add(w);
+                DetectedRooms.Clear();
+                foreach (var r in rooms) DetectedRooms.Add(r);
+                _boundaryLineIds = lineIds;
+                _wallsDetected = detected;
+                SaveSettingsCore();
+                RefreshPreflight();
+                StatusMessage = "Boundary and walls restored.";
+            });
+        }
+
+        /// <summary>
+        /// False (with the reason) when <paramref name="what"/> was taken from another project than the
+        /// active one: its element ids mean nothing here.
+        /// </summary>
+        private bool FromCurrentProject(string key, string name, string what, out string why)
+        {
+            why = null;
+            CurrentProject(out string currentKey, out _);
+            if (string.IsNullOrEmpty(key) || string.Equals(key, currentKey, StringComparison.OrdinalIgnoreCase)) return true;
+            why = $"The {what} comes from '{name}'. Open that project to refresh it, or pick again here.";
+            return false;
+        }
+
         /// <summary>
         /// Clear all selected walls and the boundary polygon so the user can pick fresh ones.
         /// The status line offers Undo for a while instead of asking first.
@@ -594,10 +646,14 @@ namespace SoundCalcs.UI.ViewModels
             if (WallLineGroups.Count == 0 && DetectedRooms.Count == 0) return;
             var walls = WallLineGroups.ToList();
             var rooms = DetectedRooms.ToList();
+            var lineIds = _boundaryLineIds;
+            bool detected = _wallsDetected;
             string key = _layoutProjectKey, name = _layoutProjectName;
 
             WallLineGroups.Clear();
             DetectedRooms.Clear();
+            _boundaryLineIds = new List<int>();
+            _wallsDetected = false;
             _layoutProjectKey = _layoutProjectName = null;
             SaveSettingsCore();
             RefreshPreflight();
@@ -606,6 +662,8 @@ namespace SoundCalcs.UI.ViewModels
             {
                 foreach (var w in walls) WallLineGroups.Add(w);
                 foreach (var r in rooms) DetectedRooms.Add(r);
+                _boundaryLineIds = lineIds;
+                _wallsDetected = detected;
                 _layoutProjectKey = key;
                 _layoutProjectName = name;
                 SaveSettingsCore();
@@ -688,50 +746,92 @@ namespace SoundCalcs.UI.ViewModels
                 return;
             }
 
-            // Collect / refresh all speakers so SpeakerGroups is up-to-date
-            RefreshSpeakers();
+            var pickedIds = pickedRefs.Select(r => RevitCompat.GetIdValue(r.ElementId)).Distinct().ToList();
+            var wanted = _pickedSpeakerIds.Union(pickedIds).ToList();
+            List<SpeakerInstance> fresh = new RevitDataCollector(doc).CollectSpeakersById(wanted, AbLineParameterName);
+            var freshIds = new HashSet<int>(fresh.Select(f => f.ElementId));
 
-            // Build a lookup of all known speaker element IDs
-            var knownIds = new HashSet<int>();
-            foreach (SpeakerGroupViewModel gvm in SpeakerGroups)
-                foreach (SpeakerInstance inst in gvm.GetGroup().Instances)
-                    knownIds.Add(inst.ElementId);
+            // The speakers already in the list are read again too: they keep their settings and aims.
+            SpeakerSyncResult result = ModelSync.MergeSpeakers(SpeakerGroups.Select(g => g.GetGroup()), fresh, wanted, _savedMappings);
+            ApplySpeakerGroups(result.Groups);
 
-            int added = 0;
-            int skipped = 0;
-            foreach (Autodesk.Revit.DB.Reference r in pickedRefs)
-            {
-                int pickedId = RevitCompat.GetIdValue(r.ElementId);
-                if (!knownIds.Contains(pickedId))
-                {
-                    skipped++;
-                    continue;
-                }
-                if (!_pickedSpeakerIds.Contains(pickedId))
-                {
-                    _pickedSpeakerIds.Add(pickedId);
-                    added++;
-                }
-            }
-
-            OnPropertyChanged(nameof(PickedSpeakerSummary));
-
-            // Filter SpeakerGroups to only show picked speakers
-            var pickedSet = new HashSet<int>(_pickedSpeakerIds);
-            foreach (var gvm in SpeakerGroups.ToList())
-            {
-                gvm.GetGroup().Instances.RemoveAll(inst => !pickedSet.Contains(inst.ElementId));
-                if (gvm.GetGroup().Instances.Count == 0)
-                    SpeakerGroups.Remove(gvm);
-            }
-
-            string msg = $"{added} speaker(s) added.";
+            int skipped = pickedIds.Count(id => !freshIds.Contains(id));
+            int gone = result.MissingIds.Count - skipped;
+            string msg = $"{result.Added} speaker(s) added.";
             if (skipped > 0) msg += $" {skipped} non-speaker element(s) ignored.";
+            if (gone > 0) msg += $" {gone} deleted speaker(s) removed.";
             msg += $" {PickedSpeakerSummary}";
             MarkSpeakersFromCurrentProject();
             SaveSettingsCore();
             RefreshPreflight();
             StatusMessage = msg;
+        }
+
+        /// <summary>True when there are picked speakers to read again.</summary>
+        public bool CanRefreshSpeakers => _pickedSpeakerIds.Count > 0;
+
+        /// <summary>
+        /// Reads the picked speakers from the model again: new positions, levels, types and A/B lines.
+        /// Type settings and the aim corrections made in the viewer are kept; deleted speakers are dropped.
+        /// </summary>
+        public void RefreshSpeakersFromModel()
+        {
+            Document doc = _uiApp.ActiveUIDocument?.Document;
+            if (doc == null) { StatusMessage = "No active document."; return; }
+            if (!CanRefreshSpeakers)
+            {
+                StatusMessage = "Nothing to refresh: pick the speakers first.";
+                return;
+            }
+            if (!FromCurrentProject(_speakersProjectKey, _speakersProjectName, "speaker list", out string why))
+            {
+                StatusMessage = why;
+                return;
+            }
+
+            var groups = SpeakerGroups.ToList();
+            var ids = _pickedSpeakerIds.ToList();
+
+            List<SpeakerInstance> fresh = new RevitDataCollector(doc).CollectSpeakersById(ids, AbLineParameterName);
+            SpeakerSyncResult result = ModelSync.MergeSpeakers(groups.Select(g => g.GetGroup()), fresh, ids, _savedMappings);
+            ApplySpeakerGroups(result.Groups);
+            SaveSettingsCore();
+            RefreshPreflight();
+
+            var parts = new List<string> { $"{fresh.Count} speaker(s) read", $"{result.Moved} moved" };
+            if (result.Retyped > 0) parts.Add($"{result.Retyped} changed type");
+            if (result.MissingIds.Count > 0) parts.Add($"{result.MissingIds.Count} deleted (removed)");
+            if (result.AimsKept > 0) parts.Add($"{result.AimsKept} aim correction(s) kept");
+            FileLogger.Log("RefreshSpeakersFromModel: " + string.Join(", ", parts) +
+                (result.MissingIds.Count > 0 ? $"; missing ids {string.Join(",", result.MissingIds)}" : ""));
+
+            OfferUndo("Refreshed from the model: " + string.Join(", ", parts) + ". Re-run to update the results.", "Undo", () =>
+            {
+                SpeakerGroups.Clear();
+                foreach (var g in groups) SpeakerGroups.Add(g);
+                _pickedSpeakerIds.Clear();
+                foreach (int id in ids) _pickedSpeakerIds.Add(id);
+                OnPropertyChanged(nameof(PickedSpeakerSummary));
+                SaveSettingsCore();
+                RefreshPreflight();
+                StatusMessage = "Speakers restored.";
+            });
+        }
+
+        /// <summary>Shows <paramref name="groups"/> as the speaker list; the selected type stays selected.</summary>
+        private void ApplySpeakerGroups(List<SpeakerTypeGroup> groups)
+        {
+            string selectedType = SelectedSpeakerGroup?.TypeKey;
+            SpeakerGroups.Clear();
+            _pickedSpeakerIds.Clear();
+            foreach (SpeakerTypeGroup group in groups)
+            {
+                SpeakerGroups.Add(new SpeakerGroupViewModel(group));
+                foreach (SpeakerInstance inst in group.Instances)
+                    _pickedSpeakerIds.Add(inst.ElementId);
+            }
+            SelectedSpeakerGroup = SpeakerGroups.FirstOrDefault(g => g.TypeKey == selectedType) ?? SpeakerGroups.FirstOrDefault();
+            OnPropertyChanged(nameof(PickedSpeakerSummary));
         }
 
         /// <summary>
@@ -1239,37 +1339,6 @@ namespace SoundCalcs.UI.ViewModels
             StatusMessage = $"Found {links.Count} linked model(s).";
         }
 
-        /// <summary>
-        /// Refresh speaker instances. Must be called from Revit context.
-        /// </summary>
-        public void RefreshSpeakers()
-        {
-            StatusMessage = "Collecting speakers...";
-            Document doc = _uiApp.ActiveUIDocument?.Document;
-            if (doc == null) { StatusMessage = "No active document."; return; }
-
-            BuiltInCategory cat = RevitDataCollector.ParseCategory(SpeakerCategoryName);
-            var collector = new RevitDataCollector(doc);
-            List<SpeakerInstance> speakers = collector.CollectSpeakers(cat, AbLineParameterName);
-            List<SpeakerTypeGroup> groups = collector.GroupSpeakers(speakers);
-
-            SpeakerGroups.Clear();
-            foreach (SpeakerTypeGroup group in groups)
-            {
-                var vm = new SpeakerGroupViewModel(group);
-
-                // Restore saved mapping if available
-                SpeakerProfileMapping saved = _savedMappings
-                    .FirstOrDefault(m => m.TypeKey == group.TypeKey);
-                if (saved != null)
-                    vm.ApplyMapping(saved);
-
-                SpeakerGroups.Add(vm);
-            }
-
-            StatusMessage = $"Found {speakers.Count} speaker(s) in {groups.Count} type(s).";
-        }
-
         /// <summary>Save settings to disk and update the status bar.</summary>
         public void SaveSettings() => SaveSettingsCore(updateStatus: true);
 
@@ -1303,7 +1372,9 @@ namespace SoundCalcs.UI.ViewModels
                 LayoutProjectKey    = _layoutProjectKey,
                 LayoutProjectName   = _layoutProjectName,
                 SpeakersProjectKey  = _speakersProjectKey,
-                SpeakersProjectName = _speakersProjectName
+                SpeakersProjectName = _speakersProjectName,
+                BoundaryLineIds     = _boundaryLineIds.ToList(),
+                WallsDetected       = _wallsDetected
             };
 
             SettingsStore.Save(settings);
@@ -1317,6 +1388,11 @@ namespace SoundCalcs.UI.ViewModels
         /// </summary>
         public void SetSpeakerAimAngle(int elementId, double angleDeg)
         {
+            // Kept as a correction to the family's facing, so it survives a refresh after the speaker moves
+            foreach (SpeakerInstance inst in SpeakerGroups.SelectMany(g => g.GetGroup().Instances))
+                if (inst.ElementId == elementId)
+                    inst.AimOffsetDeg = SpeakerAim.OffsetFor(angleDeg, inst.ModelAimDeg);
+
             _dispatcher.Enqueue(uiApp =>
             {
                 Document doc = uiApp.ActiveUIDocument?.Document;

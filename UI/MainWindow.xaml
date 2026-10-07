@@ -467,7 +467,7 @@
                         <TextBlock Style="{StaticResource Type.GroupTitle}" Text="Room boundary" />
                         <Border Style="{StaticResource Card}">
                             <StackPanel>
-                                <TextBlock Style="{StaticResource Type.Secondary}" Text="Select the detail lines that outline the room. Each line style becomes a wall type you can set below." />
+                                <TextBlock Style="{StaticResource Type.Secondary}" Text="Select the detail lines that outline the room. Each line style becomes a wall type you can set below. After editing the lines in Revit, press Refresh." />
                                 <DockPanel Margin="0,12,0,0">
                                     <Button
                                         Height="28"
@@ -490,12 +490,24 @@
                                             </StackPanel>
                                         </Button>
                                         <Button
+                                            Margin="0,0,8,0"
                                             Click="AutoDetectWalls_Click"
                                             Style="{StaticResource Button.Secondary}"
                                             ToolTip="Read the Revit walls of the host and linked model and estimate their ratings">
                                             <StackPanel Orientation="Horizontal">
                                                 <materialDesign:PackIcon Kind="AutoFix" Style="{StaticResource ButtonIconLabel}" />
                                                 <TextBlock Text="Detect walls" />
+                                            </StackPanel>
+                                        </Button>
+                                        <Button
+                                            AutomationProperties.Name="Refresh boundary and walls from the model"
+                                            Click="RefreshLayout_Click"
+                                            IsEnabled="{Binding CanRefreshLayout}"
+                                            Style="{StaticResource Button.Secondary}"
+                                            ToolTip="Read the same boundary lines and walls again after you change them in Revit. Wall types and heights are kept">
+                                            <StackPanel Orientation="Horizontal">
+                                                <materialDesign:PackIcon Kind="Refresh" Style="{StaticResource ButtonIconLabel}" />
+                                                <TextBlock Text="Refresh" />
                                             </StackPanel>
                                         </Button>
                                     </WrapPanel>
@@ -610,6 +622,17 @@
                                 <StackPanel Orientation="Horizontal">
                                     <materialDesign:PackIcon Kind="CursorDefaultClickOutline" Style="{StaticResource ButtonIconLabel}" />
                                     <TextBlock Text="Pick speakers" />
+                                </StackPanel>
+                            </Button>
+                            <Button
+                                AutomationProperties.Name="Refresh speakers from the model"
+                                Click="RefreshSpeakers_Click"
+                                IsEnabled="{Binding CanRefreshSpeakers}"
+                                Style="{StaticResource Button.Secondary}"
+                                ToolTip="Read the picked speakers again after you move or change them in Revit. Speaker settings and aim corrections are kept">
+                                <StackPanel Orientation="Horizontal">
+                                    <materialDesign:PackIcon Kind="Refresh" Style="{StaticResource ButtonIconLabel}" />
+                                    <TextBlock Text="Refresh" />
                                 </StackPanel>
                             </Button>
                         </WrapPanel>

@@ -32,6 +32,12 @@ namespace SoundCalcs.IO
         public string LayoutProjectName { get; set; }
         public string SpeakersProjectKey { get; set; }
         public string SpeakersProjectName { get; set; }
+
+        /// <summary>Detail lines the boundary was traced from, read again by Refresh. Empty in older settings.</summary>
+        public List<int> BoundaryLineIds { get; set; } = new List<int>();
+
+        /// <summary>True when the walls came from "Detect walls" (Refresh detects them again).</summary>
+        public bool WallsDetected { get; set; }
     }
 
     /// <summary>
