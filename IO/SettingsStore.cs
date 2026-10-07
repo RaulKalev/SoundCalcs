@@ -36,6 +36,9 @@ namespace SoundCalcs.IO
         /// <summary>Detail lines the boundary was traced from, read again by Refresh. Empty in older settings.</summary>
         public List<int> BoundaryLineIds { get; set; } = new List<int>();
 
+        /// <summary>Original IFC file chosen for an IFC link; empty = the one next to the link.</summary>
+        public string IfcFileOverride { get; set; } = "";
+
         /// <summary>True when the walls came from "Detect walls" (Refresh detects them again).</summary>
         public bool WallsDetected { get; set; }
     }

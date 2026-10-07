@@ -264,6 +264,28 @@ namespace SoundCalcs.UI
             _vm.RefreshLinks();
         }
 
+        private void BrowseIfc_Click(object sender, RoutedEventArgs e)
+        {
+            var dialog = new Microsoft.Win32.OpenFileDialog
+            {
+                Title = "Original IFC file of the linked model",
+                Filter = "IFC files (*.ifc)|*.ifc",
+                CheckFileExists = true
+            };
+            string current = _vm.SelectedLink?.IfcFilePath;
+            if (!string.IsNullOrEmpty(current))
+            {
+                string dir = System.IO.Path.GetDirectoryName(current);
+                if (System.IO.Directory.Exists(dir)) dialog.InitialDirectory = dir;
+            }
+            if (dialog.ShowDialog(this) == true) _vm.IfcFileOverride = dialog.FileName;
+        }
+
+        private void ClearIfcFile_Click(object sender, RoutedEventArgs e)
+        {
+            _vm.IfcFileOverride = "";
+        }
+
         private void SelectBoundary_Click(object sender, RoutedEventArgs e)
         {
             _vm.SelectBoundary(

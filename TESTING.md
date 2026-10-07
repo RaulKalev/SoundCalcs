@@ -52,6 +52,7 @@ Built-in physics scenarios (`--list`):
 | `two_rooms` | Boundary split into walled rooms (and merged by a door gap); per-room volume, Barron level and Eyring RT60; a source's reverberant field stays in its room |
 | `directivity_data` | Datasheet coverage angles (−6 dB at each half-angle, omni at 180°), polar-table CSV followed at every receiver, fallback when the file is unreadable |
 | `measurement_comparison` | The `--measured` tool: zero error for exact data, correct bias and tolerance handling for offset data, CSV parsing, off-grid (wrong unit) detection |
+| `ifc_walls` | The `two_rooms` plan as linked-IFC wall shapes (walls run to the outer face, an L-shaped element, a partition cut at the faces): rebuilt wall lines lie on the true centerlines with the right thickness, corners and junctions close, the same two rooms result; the walls written as an IFC file in a rotated, moved frame are read and fitted back exactly, AcousticRating sets the rating, a wall whose file axis misses its shape keeps the shape's line |
 | `sti_reference` | STICalculator end points (SNR ±15, 0 dB), exact agreement (±0.01) with an independent IEC 60268-16:2011 implementation (`IecReference.cs`) for noise, reverberation and both, and the reception threshold for quiet speech |
 
 **Fail** means a broken invariant or a clear bug. **Warn** is available for deviations from a reference model that need an engineering decision rather than an automatic fix; all built-in checks currently pass without warnings.

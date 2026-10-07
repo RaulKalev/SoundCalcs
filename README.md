@@ -20,7 +20,7 @@ A Revit plugin for room acoustics analysis. Calculates per-receiver SPL and Spee
 - **Speaker directivity** — cone angle, datasheet coverage angles per octave band, or a measured polar table CSV (see `docs/examples/polar_table_example.csv`); omnidirectional; GLL stub
 - **Wall height & diffraction** — per line style height (screens, low partitions); thin-screen diffraction (Kurze–Anderson / Maekawa) around free wall ends and over partial walls, with no hard shadow edges
 - **Rooms** — the boundary is split into the rooms its walls form plus the open remainder; each has its own volume and reverberant field, optionally its own RT60 estimated from its geometry ("Per room")
-- **Linked IFC support** — wall boundaries are drawn as detail lines (not Revit wall elements), which works reliably with linked IFC models
+- **Linked IFC support** — wall boundaries can be drawn as detail lines over any linked model. *Experimental:* with a linked IFC selected, **Detect walls** rebuilds the walls from the IFC's shapes (Revit links IFC walls as plain geometry, without wall lines or widths) and, when the original `.ifc` is next to the link or chosen in the Model page, uses its exact wall axes, layer thicknesses and `Pset_WallCommon.AcousticRating`
 - **Configurable environment** — temperature, per-band RT60, per-band background noise
 - **Live legend** — always reflects the exact rendered min/max range
 

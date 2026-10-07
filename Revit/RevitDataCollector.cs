@@ -232,11 +232,21 @@ namespace SoundCalcs.Revit
                         catch { /* May not be available */ }
                     }
 
+                    // An IFC link is a converted "<file>.ifc.RVT" copy; the original .ifc sits next to it
+                    string linkDocPath = "";
+                    try { linkDocPath = linkInst.GetLinkDocument()?.PathName ?? ""; } catch { }
+                    string ifcPath;
+                    bool isIfc = LinkSelection.DetectIfc(filePath, out ifcPath) ||
+                                 LinkSelection.DetectIfc(linkDocPath, out ifcPath) ||
+                                 LinkSelection.DetectIfc(name, out _);
+
                     links.Add(new LinkSelection
                     {
                         LinkInstanceId = RevitCompat.GetIdValue(linkInst.Id),
                         LinkName = name,
-                        FilePath = filePath
+                        FilePath = filePath,
+                        IsIfc = isIfc,
+                        IfcFilePath = ifcPath ?? ""
                     });
                 }
             }
@@ -488,6 +498,238 @@ namespace SoundCalcs.Revit
         }
 
         // -----------------------------------------------------------------
+        // Walls of a linked IFC (shapes only: Revit rebuilds IFC walls as DirectShapes)
+        // -----------------------------------------------------------------
+
+        static readonly string[] IfcEntityParams = { "IfcExportAs", "Export to IFC As", "IfcEntity", "IFC Entity", "IfcType" };
+        static readonly string[] ObjectTypeParams = { "IfcObjectType", "ObjectType", "Object Type" };
+
+        /// <summary>
+        /// Read the walls of a linked IFC: each wall's top face outlines and vertices in host coordinates
+        /// (metres), its IfcGUID, type name, AcousticRating and materials. Walls are the Walls category, plus
+        /// Generic Models exported as IfcWall* or whose IFC object type names a wall (IfcBuildingElementProxy).
+        /// </summary>
+        public List<IfcLinkWall> ReadIfcLinkWalls(int linkInstanceId)
+        {
+            var result = new List<IfcLinkWall>();
+            RevitLinkInstance linkInstance = _doc.GetElement(RevitCompat.ToElementId(linkInstanceId)) as RevitLinkInstance;
+            Document linkDoc = linkInstance?.GetLinkDocument();
+            if (linkDoc == null) return result;
+            Transform xform = linkInstance.GetTotalTransform();
+
+            var elements = new List<Element>();
+            using (var walls = new FilteredElementCollector(linkDoc))
+                elements.AddRange(walls.OfCategory(BuiltInCategory.OST_Walls).WhereElementIsNotElementType().ToElements());
+            using (var generic = new FilteredElementCollector(linkDoc))
+                elements.AddRange(generic.OfCategory(BuiltInCategory.OST_GenericModel).WhereElementIsNotElementType()
+                    .ToElements().Where(IsIfcWallProxy));
+
+            var options = new Options { ComputeReferences = false, DetailLevel = ViewDetailLevel.Fine };
+            foreach (Element elem in elements)
+            {
+                try
+                {
+                    var wall = new IfcLinkWall
+                    {
+                        ElementId = RevitCompat.GetIdValue(elem.Id),
+                        IfcGuid = IfcGuid(elem),
+                        GroupName = IfcGroupName(linkDoc, elem),
+                        AcousticRating = ParamStartingWith(elem, "AcousticRating")
+                            ?? ParamStartingWith(linkDoc.GetElement(elem.GetTypeId()), "AcousticRating")
+                    };
+                    foreach (ElementId mid in elem.GetMaterialIds(false))
+                        if (linkDoc.GetElement(mid) is Material m && !wall.Materials.Contains(m.Name)) wall.Materials.Add(m.Name);
+
+                    var geom = new IfcGeometry();
+                    GeometryElement ge = elem.get_Geometry(options);
+                    if (ge != null) CollectIfcGeometry(ge, xform, geom);
+                    if (geom.Points.Count < 3) continue;
+
+                    wall.Points = geom.Points;
+                    wall.BaseZ = geom.MinZ;
+                    wall.TopZ = geom.MaxZ;
+                    wall.Outlines = geom.Outlines();
+                    result.Add(wall);
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"[SoundCalcs] IFC wall {elem.Id} skipped: {ex.Message}");
+                }
+            }
+            return result;
+        }
+
+        private static bool IsIfcWallProxy(Element elem)
+        {
+            foreach (string name in IfcEntityParams)
+            {
+                string v = ParamString(elem, name);
+                if (v.StartsWith("IfcWall", StringComparison.OrdinalIgnoreCase) ||
+                    v.StartsWith("IfcCurtainWall", StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+            foreach (string name in ObjectTypeParams)
+                if (ParamString(elem, name).IndexOf("wall", StringComparison.OrdinalIgnoreCase) >= 0) return true;
+            return false;
+        }
+
+        private static string IfcGuid(Element elem)
+        {
+            string guid = "";
+            try { guid = elem.get_Parameter(BuiltInParameter.IFC_GUID)?.AsString() ?? ""; } catch { }
+            return guid.Length > 0 ? guid : ParamString(elem, "IfcGUID");
+        }
+
+        /// <summary>The walls-table row name: the IFC type, else object type, else the IFC name without its id.</summary>
+        private static string IfcGroupName(Document linkDoc, Element elem)
+        {
+            string typeName = linkDoc.GetElement(elem.GetTypeId())?.Name ?? "";
+            if (typeName.Length > 0 && !typeName.StartsWith("Ifc", StringComparison.OrdinalIgnoreCase)) return typeName;
+            foreach (string name in ObjectTypeParams)
+            {
+                string v = ParamString(elem, name);
+                if (v.Length > 0) return v;
+            }
+            string ifcName = ParamString(elem, "IfcName");
+            if (ifcName.Length == 0) ifcName = elem.Name ?? "";
+            // Revit-exported IFC names end with the element id: "Basic Wall:Generic - 200mm:123456"
+            int colon = ifcName.LastIndexOf(':');
+            if (colon > 0 && ifcName.Substring(colon + 1).All(char.IsDigit)) ifcName = ifcName.Substring(0, colon);
+            return ifcName.Length > 0 ? ifcName : (elem.Category?.Name ?? "Wall");
+        }
+
+        private static string ParamString(Element elem, string name)
+        {
+            Parameter p = elem?.LookupParameter(name);
+            if (p == null || !p.HasValue) return "";
+            return (p.StorageType == StorageType.String ? p.AsString() : p.AsValueString()) ?? "";
+        }
+
+        /// <summary>A parameter whose name starts with <paramref name="prefix"/> ("AcousticRating(Pset_WallCommon)").</summary>
+        private static string ParamStartingWith(Element elem, string prefix)
+        {
+            if (elem == null) return null;
+            foreach (Parameter p in elem.Parameters)
+            {
+                if (p?.Definition == null || !p.HasValue) continue;
+                if (!p.Definition.Name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) continue;
+                string v = p.StorageType == StorageType.String ? p.AsString() : p.AsValueString();
+                if (!string.IsNullOrWhiteSpace(v)) return v.Trim();
+            }
+            return null;
+        }
+
+        /// <summary>Plan geometry of one wall: vertices, and its top faces per solid / mesh.</summary>
+        private class IfcGeometry
+        {
+            public readonly List<Vec2> Points = new List<Vec2>();
+            public double MinZ = double.MaxValue, MaxZ = double.MinValue;
+            // Per solid or mesh: upward faces (height, outline) and upward triangles (height, triangle)
+            public readonly List<List<(double Z, List<Vec2> Loop)>> SolidTops = new List<List<(double, List<Vec2>)>>();
+            public readonly List<List<(double Z, Vec2 A, Vec2 B, Vec2 C)>> MeshTops = new List<List<(double, Vec2, Vec2, Vec2)>>();
+
+            public void Add(XYZ p)
+            {
+                Points.Add(new Vec2(UnitConversion.FtToM(p.X), UnitConversion.FtToM(p.Y)));
+                double z = UnitConversion.FtToM(p.Z);
+                MinZ = Math.Min(MinZ, z);
+                MaxZ = Math.Max(MaxZ, z);
+            }
+
+            /// <summary>The highest upward faces of each solid / mesh, as outlines.</summary>
+            public List<List<Vec2>> Outlines()
+            {
+                var result = new List<List<Vec2>>();
+                foreach (var tops in SolidTops.Where(t => t.Count > 0))
+                {
+                    double top = tops.Max(t => t.Z);
+                    result.AddRange(tops.Where(t => t.Z > top - 0.001).Select(t => t.Loop));
+                }
+                foreach (var tris in MeshTops.Where(t => t.Count > 0))
+                {
+                    double top = tris.Max(t => t.Z);
+                    List<Vec2> loop = WallFootprint.OutlineFromTriangles(tris.Where(t => t.Z > top - 0.001).Select(t => (t.A, t.B, t.C)));
+                    if (loop.Count >= 3) result.Add(loop);
+                }
+                return result;
+            }
+        }
+
+        private static void CollectIfcGeometry(GeometryElement ge, Transform xform, IfcGeometry geom)
+        {
+            foreach (GeometryObject obj in ge)
+            {
+                if (obj is Solid solid && solid.Faces.Size > 0)
+                {
+                    var tops = new List<(double, List<Vec2>)>();
+                    foreach (Face face in solid.Faces)
+                    {
+                        foreach (EdgeArray loop in face.EdgeLoops)
+                            foreach (Edge edge in loop)
+                                foreach (XYZ p in edge.Tessellate()) geom.Add(xform.OfPoint(p));
+
+                        if (!(face is PlanarFace pf) || xform.OfVector(pf.FaceNormal).Z < 0.99) continue;
+                        List<Vec2> outer = null;
+                        double outerArea = 0, z = 0;
+                        foreach (CurveLoop cl in pf.GetEdgesAsCurveLoops())
+                        {
+                            var pts = new List<Vec2>();
+                            foreach (Curve c in cl)
+                            {
+                                IList<XYZ> tess = c.Tessellate();
+                                for (int i = 0; i < tess.Count - 1; i++)
+                                {
+                                    XYZ q = xform.OfPoint(tess[i]);
+                                    pts.Add(new Vec2(UnitConversion.FtToM(q.X), UnitConversion.FtToM(q.Y)));
+                                    z = UnitConversion.FtToM(q.Z);
+                                }
+                            }
+                            double area = Math.Abs(SignedArea(pts));
+                            if (area > outerArea) { outerArea = area; outer = pts; }
+                        }
+                        if (outer != null && outer.Count >= 3) tops.Add((z, outer));
+                    }
+                    geom.SolidTops.Add(tops);
+                }
+                else if (obj is Mesh mesh)
+                {
+                    var tris = new List<(double, Vec2, Vec2, Vec2)>();
+                    foreach (XYZ v in mesh.Vertices) geom.Add(xform.OfPoint(v));
+                    for (int i = 0; i < mesh.NumTriangles; i++)
+                    {
+                        MeshTriangle t = mesh.get_Triangle(i);
+                        XYZ a = xform.OfPoint(t.get_Vertex(0)), b = xform.OfPoint(t.get_Vertex(1)), c = xform.OfPoint(t.get_Vertex(2));
+                        XYZ n = (b - a).CrossProduct(c - a);
+                        if (n.GetLength() < 1e-12 || Math.Abs(n.Normalize().Z) < 0.99) continue;
+                        // Upward in either winding: meshes are not reliably oriented
+                        Vec2 A = new Vec2(UnitConversion.FtToM(a.X), UnitConversion.FtToM(a.Y));
+                        Vec2 B = new Vec2(UnitConversion.FtToM(b.X), UnitConversion.FtToM(b.Y));
+                        Vec2 C = new Vec2(UnitConversion.FtToM(c.X), UnitConversion.FtToM(c.Y));
+                        tris.Add((UnitConversion.FtToM((a.Z + b.Z + c.Z) / 3), A, B, C));
+                    }
+                    // Horizontal triangles at the very top only (the bottom is horizontal too)
+                    geom.MeshTops.Add(tris);
+                }
+                else if (obj is GeometryInstance gi)
+                {
+                    GeometryElement inst = gi.GetInstanceGeometry(xform);
+                    if (inst != null) CollectIfcGeometry(inst, Transform.Identity, geom);
+                }
+            }
+        }
+
+        private static double SignedArea(List<Vec2> pts)
+        {
+            double a = 0;
+            for (int i = 0; i < pts.Count; i++)
+            {
+                Vec2 p = pts[i], q = pts[(i + 1) % pts.Count];
+                a += p.X * q.Y - q.X * p.Y;
+            }
+            return a / 2;
+        }
+
+        // -----------------------------------------------------------------
         // Auto wall detection from Revit wall elements
         // -----------------------------------------------------------------
 
@@ -545,11 +787,10 @@ namespace SoundCalcs.Revit
 
                     if (!groups.TryGetValue(typeName, out Domain.WallLineGroup grp))
                     {
-                        int estStc = EstimateStcForWall(typeName, thicknessM);
                         grp = new Domain.WallLineGroup
                         {
                             LineStyleName = typeName,
-                            WallType = Domain.WallTypeCatalog.FindClosestByStc(estStc)
+                            WallType = WallTypeEstimator.Estimate(typeName, thicknessM)
                         };
                         groups[typeName] = grp;
                     }
@@ -569,55 +810,6 @@ namespace SoundCalcs.Revit
             }
 
             return new List<Domain.WallLineGroup>(groups.Values);
-        }
-
-        /// <summary>
-        /// Estimate STC from wall type name keywords and physical thickness.
-        /// </summary>
-        private static int EstimateStcForWall(string typeName, double thicknessM)
-        {
-            string n = typeName.ToLowerInvariant();
-
-            bool isConcrete = n.Contains("concrete") || n.Contains("beton");
-            bool isMasonry  = n.Contains("brick") || n.Contains("masonry") ||
-                              n.Contains("cmu")   || n.Contains("block");
-            bool isStud     = n.Contains("stud")  || n.Contains("timber") ||
-                              n.Contains("gypsum")|| n.Contains("drywall") ||
-                              n.Contains("plasterboard");
-            bool isGlass    = n.Contains("glass") || n.Contains("glaz") ||
-                              n.Contains("curtain");
-
-            if (isGlass)    return 32;
-
-            if (isConcrete)
-            {
-                if (thicknessM >= 0.25) return 57;
-                if (thicknessM >= 0.18) return 55;
-                if (thicknessM >= 0.13) return 50;
-                return 45;
-            }
-
-            if (isMasonry)
-            {
-                if (thicknessM >= 0.25) return 55;
-                if (thicknessM >= 0.18) return 50;
-                return 45;
-            }
-
-            if (isStud)
-            {
-                if (thicknessM >= 0.15) return 45;
-                if (thicknessM >= 0.10) return 40;
-                return 35;
-            }
-
-            // Generic: thickness only
-            if (thicknessM >= 0.30) return 55;
-            if (thicknessM >= 0.20) return 50;
-            if (thicknessM >= 0.15) return 45;
-            if (thicknessM >= 0.10) return 40;
-            if (thicknessM >= 0.07) return 35;
-            return 30;
         }
     }
 

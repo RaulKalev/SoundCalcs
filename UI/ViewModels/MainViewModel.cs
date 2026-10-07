@@ -84,6 +84,7 @@ namespace SoundCalcs.UI.ViewModels
                 DetectedRooms.Add(room);
             _boundaryLineIds = settings.BoundaryLineIds ?? new List<int>();
             _wallsDetected = settings.WallsDetected;
+            _ifcFileOverride = settings.IfcFileOverride ?? "";
 
             // Every change is saved shortly after it is made; the checklist follows the inputs.
             _speakerGroups.CollectionChanged += OnInputCollectionChanged;
@@ -123,7 +124,7 @@ namespace SoundCalcs.UI.ViewModels
         // Properties stored in settings.json: changing one schedules a save.
         private static readonly HashSet<string> PersistedProperties = new HashSet<string>
         {
-            nameof(SelectedLink), nameof(GridSpacing), nameof(ReceiverHeight), nameof(BoundaryOffset),
+            nameof(SelectedLink), nameof(IfcFileOverride), nameof(GridSpacing), nameof(ReceiverHeight), nameof(BoundaryOffset),
             nameof(SpeakerCategoryName), nameof(UseMinSplThreshold), nameof(MinSplThreshold), nameof(AbLineParameterName),
             nameof(BackgroundNoiseDb), nameof(Humidity), nameof(Occupants), nameof(AutoRt60PerRoom),
             nameof(FloorSurface), nameof(CeilingSurface),
@@ -366,7 +367,118 @@ namespace SoundCalcs.UI.ViewModels
         public LinkSelection SelectedLink
         {
             get => _selectedLink;
-            set { _selectedLink = value ?? new LinkSelection(); OnPropertyChanged(nameof(SelectedLink)); }
+            set
+            {
+                _selectedLink = value ?? new LinkSelection();
+                OnPropertyChanged(nameof(SelectedLink));
+                OnPropertyChanged(nameof(SelectedLinkIsIfc));
+                OnPropertyChanged(nameof(IfcFileStatus));
+            }
+        }
+
+        // ========================= IFC LINK (experimental) =========================
+
+        /// <summary>True when the selected link is an IFC: Detect walls rebuilds its walls from their shapes.</summary>
+        public bool SelectedLinkIsIfc => _selectedLink != null && _selectedLink.IsValid && _selectedLink.IsIfc;
+
+        private string _ifcFileOverride = "";
+        /// <summary>The original .ifc chosen by the user; empty = the one next to the link's converted copy.</summary>
+        public string IfcFileOverride
+        {
+            get => _ifcFileOverride;
+            set
+            {
+                _ifcFileOverride = value?.Trim().Trim('"') ?? "";
+                OnPropertyChanged(nameof(IfcFileOverride));
+                OnPropertyChanged(nameof(IfcFileStatus));
+            }
+        }
+
+        /// <summary>The original IFC file Detect walls reads axes and layers from, or null when there is none.</summary>
+        private string IfcFilePath()
+        {
+            string path = _ifcFileOverride.Length > 0 ? _ifcFileOverride : _selectedLink?.IfcFilePath ?? "";
+            return path.Length > 0 && System.IO.File.Exists(path) ? path : null;
+        }
+
+        /// <summary>One line under the link list about the original IFC file.</summary>
+        public string IfcFileStatus
+        {
+            get
+            {
+                if (!SelectedLinkIsIfc) return "";
+                string path = IfcFilePath();
+                if (path != null)
+                    return $"Wall axes and layers from {System.IO.Path.GetFileName(path)}" +
+                        (_ifcFileOverride.Length > 0 ? " (chosen)" : "") + ".";
+                return _ifcFileOverride.Length > 0
+                    ? $"{System.IO.Path.GetFileName(_ifcFileOverride)} was not found. Walls come from the link's shapes only."
+                    : "Original .ifc not found next to the link. Walls come from the link's shapes only; choose the file for exact wall lines.";
+            }
+        }
+
+        // Parsed IFC files, kept while unchanged on disk (reading a large model takes a moment)
+        private static readonly Dictionary<string, (DateTime Written, Domain.Ifc.IfcFileData Data)> IfcFileCache =
+            new Dictionary<string, (DateTime, Domain.Ifc.IfcFileData)>(StringComparer.OrdinalIgnoreCase);
+
+        private Domain.Ifc.IfcFileData LoadIfcFile(string path, out string error)
+        {
+            error = null;
+            try
+            {
+                DateTime written = System.IO.File.GetLastWriteTimeUtc(path);
+                if (IfcFileCache.TryGetValue(path, out var cached) && cached.Written == written) return cached.Data;
+                var data = Domain.Ifc.IfcWallReader.Read(path);
+                IfcFileCache[path] = (written, data);
+                return data;
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+                FileLogger.Log($"IFC file '{path}' could not be read: {ex}");
+                return null;
+            }
+        }
+
+        // What the last wall detection did with the IFC link, for the status line
+        private string _lastIfcReport;
+
+        /// <summary>
+        /// Walls of the selected IFC link, rebuilt from their shapes and, when the original file is available,
+        /// placed from its axes and layer thicknesses.
+        /// </summary>
+        private List<WallLineGroup> DetectIfcWallGroups(RevitDataCollector collector)
+        {
+            List<IfcLinkWall> linkWalls = collector.ReadIfcLinkWalls(_selectedLink.LinkInstanceId);
+
+            string fileError = null;
+            string path = IfcFilePath();
+            Domain.Ifc.IfcFileData file = path != null ? LoadIfcFile(path, out fileError) : null;
+
+            var options = new IfcWallBuildOptions { LevelElevationM = AnalysisLevelElevation(), File = file };
+            IfcWallBuildResult built = IfcWallBuilder.Build(linkWalls, options);
+
+            string fileNote = fileError != null ? $"IFC file unreadable ({fileError})"
+                : path == null ? "no original IFC file"
+                : built.FileStatus;
+            _lastIfcReport = built.Summary() + (fileNote.Length > 0 ? "; " + fileNote : "");
+            FileLogger.Log($"IFC walls from '{_selectedLink.LinkName}': {_lastIfcReport}" +
+                (file != null ? $"; file {file.Schema}, {file.Walls.Count} walls, unit {file.LengthUnitM} m" +
+                    (file.Warnings.Count > 0 ? ", " + string.Join("; ", file.Warnings) : "") : ""));
+            return built.Groups;
+        }
+
+        /// <summary>
+        /// Floor level the walls are taken at: the boundary's, else the speakers' most common level, else none
+        /// (every storey's walls).
+        /// </summary>
+        private double? AnalysisLevelElevation()
+        {
+            if (DetectedRooms.Count > 0) return DetectedRooms[0].FloorElevationM;
+            var levels = SpeakerGroups.SelectMany(g => g.GetGroup().Instances)
+                .Where(i => !string.IsNullOrEmpty(i.LevelName)).Select(i => i.LevelElevationM).ToList();
+            if (levels.Count == 0) return null;
+            return levels.GroupBy(e => e).OrderByDescending(g => g.Count()).First().Key;
         }
 
         private string _speakerCategoryName = "OST_DataDevices";
@@ -516,7 +628,7 @@ namespace SoundCalcs.UI.ViewModels
             List<WallLineGroup> allGroups = DetectWallGroups(doc);
             if (allGroups.Count == 0)
             {
-                StatusMessage = "No wall elements found in the model.";
+                StatusMessage = "No wall elements found in the model." + (_lastIfcReport != null ? $" IFC link: {_lastIfcReport}." : "");
                 return;
             }
 
@@ -534,8 +646,8 @@ namespace SoundCalcs.UI.ViewModels
             // Auto-persist so walls survive window close/reopen
             SaveSettingsCore();
             RefreshPreflight();
-            StatusMessage = $"Detected {WallLineGroups.Count} wall type(s), {totalSegs} segment(s). " +
-                "Check the wall types in the table.";
+            StatusMessage = $"Detected {WallLineGroups.Count} wall type(s), {totalSegs} segment(s)" +
+                (_lastIfcReport != null ? $" ({_lastIfcReport})" : "") + ". Check the wall types in the table.";
         }
 
         /// <summary>The Wall elements of the host and the selected linked model, one group per wall type.</summary>
@@ -543,9 +655,13 @@ namespace SoundCalcs.UI.ViewModels
         {
             var collector = new RevitDataCollector(doc);
             var allGroups = new List<WallLineGroup>();
+            _lastIfcReport = null;
             allGroups.AddRange(collector.GetHostWallGroups());
             if (SelectedLink != null && SelectedLink.IsValid)
+            {
                 allGroups.AddRange(collector.GetLinkWallGroups(SelectedLink.LinkInstanceId));
+                if (SelectedLink.IsIfc) allGroups.AddRange(DetectIfcWallGroups(collector));
+            }
             return allGroups;
         }
 
@@ -605,7 +721,8 @@ namespace SoundCalcs.UI.ViewModels
                 WallLineGroups.Clear();
                 foreach (var grp in groups)
                     WallLineGroups.Add(new WallLineGroupViewModel(grp));
-                parts.Add($"{groups.Count} wall type(s), {groups.Sum(g => g.SegmentCount)} segment(s)");
+                parts.Add($"{groups.Count} wall type(s), {groups.Sum(g => g.SegmentCount)} segment(s)" +
+                    (_lastIfcReport != null ? $" ({_lastIfcReport})" : ""));
             }
 
             SaveSettingsCore();
@@ -1332,9 +1449,12 @@ namespace SoundCalcs.UI.ViewModels
             var collector = new RevitDataCollector(doc);
             List<LinkSelection> links = collector.GetAvailableLinks();
 
+            int selectedId = SelectedLink?.LinkInstanceId ?? -1;
             AvailableLinks.Clear();
             foreach (LinkSelection link in links)
                 AvailableLinks.Add(link);
+            LinkSelection same = links.FirstOrDefault(l => l.LinkInstanceId == selectedId);
+            if (same != null) SelectedLink = same;
 
             StatusMessage = $"Found {links.Count} linked model(s).";
         }
@@ -1373,6 +1493,7 @@ namespace SoundCalcs.UI.ViewModels
                 LayoutProjectName   = _layoutProjectName,
                 SpeakersProjectKey  = _speakersProjectKey,
                 SpeakersProjectName = _speakersProjectName,
+                IfcFileOverride     = _ifcFileOverride,
                 BoundaryLineIds     = _boundaryLineIds.ToList(),
                 WallsDetected       = _wallsDetected
             };

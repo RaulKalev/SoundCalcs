@@ -94,6 +94,7 @@ namespace SoundCalcs.Harness
                 RoomShape(),
                 StiReference(),
                 MeasurementComparison(),
+                IfcScenarios.IfcWalls(),
             };
         }
 

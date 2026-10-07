@@ -444,7 +444,21 @@
                                     <ListBox.ItemTemplate>
                                         <DataTemplate>
                                             <StackPanel>
-                                                <TextBlock Text="{Binding LinkName}" TextTrimming="CharacterEllipsis" />
+                                                <DockPanel>
+                                                    <Border
+                                                        Margin="6,0,0,0"
+                                                        Padding="5,0"
+                                                        VerticalAlignment="Center"
+                                                        BorderBrush="{DynamicResource Surface.Stroke}"
+                                                        BorderThickness="1"
+                                                        CornerRadius="{StaticResource Radius.Small}"
+                                                        DockPanel.Dock="Right"
+                                                        ToolTip="IFC link: walls are rebuilt from its shapes (experimental)"
+                                                        Visibility="{Binding KindLabel, Converter={StaticResource NotEmptyToVis}}">
+                                                        <TextBlock Style="{StaticResource Type.Caption}" Text="{Binding KindLabel}" />
+                                                    </Border>
+                                                    <TextBlock Text="{Binding LinkName}" TextTrimming="CharacterEllipsis" />
+                                                </DockPanel>
                                                 <TextBlock
                                                     Margin="0,1,0,0"
                                                     Style="{StaticResource Type.Caption}"
@@ -461,6 +475,44 @@
                                     Style="{StaticResource Type.Caption}"
                                     Text="No linked models found. Link the architectural model in Revit, then press Refresh."
                                     Visibility="{Binding AvailableLinks.Count, Converter={StaticResource CountToVis}, ConverterParameter=Invert}" />
+                                <!--  IFC link (experimental): where the exact wall lines come from  -->
+                                <StackPanel Margin="14,6,8,8" Visibility="{Binding SelectedLinkIsIfc, Converter={StaticResource BoolToVis}}">
+                                    <TextBlock
+                                        Style="{StaticResource Type.Secondary}"
+                                        Text="IFC link (experimental). Detect walls rebuilds its walls from their shapes, and reads the original .ifc for exact wall lines, thicknesses and acoustic ratings."
+                                        TextWrapping="Wrap" />
+                                    <DockPanel Margin="0,6,0,0">
+                                        <Button
+                                            Height="28"
+                                            Margin="8,0,0,0"
+                                            AutomationProperties.Name="Use the IFC file next to the link"
+                                            Click="ClearIfcFile_Click"
+                                            DockPanel.Dock="Right"
+                                            Style="{StaticResource Button.Plain}"
+                                            ToolTip="Go back to the .ifc file next to the linked model"
+                                            Visibility="{Binding IfcFileOverride, Converter={StaticResource NotEmptyToVis}}">
+                                            Automatic
+                                        </Button>
+                                        <Button
+                                            Height="28"
+                                            Margin="8,0,0,0"
+                                            AutomationProperties.Name="Choose the original IFC file"
+                                            Click="BrowseIfc_Click"
+                                            DockPanel.Dock="Right"
+                                            Style="{StaticResource Button.Plain}"
+                                            ToolTip="Choose the .ifc file this link was made from">
+                                            <StackPanel Orientation="Horizontal">
+                                                <materialDesign:PackIcon Kind="FolderOpenOutline" Style="{StaticResource ButtonIconLabel}" />
+                                                <TextBlock Text="Choose file" />
+                                            </StackPanel>
+                                        </Button>
+                                        <TextBlock
+                                            VerticalAlignment="Center"
+                                            Style="{StaticResource Type.Caption}"
+                                            Text="{Binding IfcFileStatus}"
+                                            TextWrapping="Wrap" />
+                                    </DockPanel>
+                                </StackPanel>
                             </StackPanel>
                         </Border>
 
