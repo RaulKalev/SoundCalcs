@@ -71,6 +71,67 @@ namespace SoundCalcs.Tests
         }
 
         [Fact]
+        public void WallBehindAWallMountedSpeaker_BlocksAtEveryDistance()
+        {
+            // Speaker 10 cm in front of an STC 50 wall. Crossings near the path's ends used to be ignored
+            // as a fraction (2 %) of the path, so beyond ~5 m the room behind got the direct sound unblocked.
+            var walls = new List<ComputeWall> { Wall(0, -30, 0, 30, 50, Anechoic) };
+            var receivers = new List<Vec3> { new Vec3(-2, 0, 1.2), new Vec3(-10, 0, 1.2), new Vec3(-25, 0, 1.2) };
+            var (res, _) = Run(new List<ComputeSource> { Omni(0.1, 0, 1.2) }, receivers, walls);
+            for (int i = 0; i < receivers.Count; i++)
+            {
+                double freeField = 90 - 20 * Math.Log10(0.1 - receivers[i].X);
+                Assert.True(res[i].SplDb < freeField - 30, $"{receivers[i]}: {res[i].SplDb} dB, free field {freeField:F1} dB");
+            }
+        }
+
+        [Fact]
+        public void SpeakerInsideAThickWall_IsNotBlockedByIt_AlongTheWall()
+        {
+            // An in-wall speaker 5 cm in front of the centreline of a 300 mm wall, listener along the wall
+            var walls = new List<ComputeWall> { Wall(0, -30, 0, 30, 50, Anechoic) };
+            walls[0].HalfThicknessM = 0.15;
+            var (res, _) = Run(new List<ComputeSource> { Omni(0.05, 0, 1.2) }, new List<Vec3> { new Vec3(0.4, 6, 1.2) }, walls);
+            double freeField = 90 - 20 * Math.Log10(Math.Sqrt(0.35 * 0.35 + 36));
+            Assert.InRange(res[0].SplDb, freeField - 0.5, freeField + 0.1);
+        }
+
+        [Fact]
+        public void ReverberantField_UsesTheDirectivityOfEachBand()
+        {
+            // A cone beams at high frequencies and is nearly omni at low ones; the reverberant field is fed by
+            // the power radiated in each band. One broadband Q (4 for this cone) put 5 dB too little reverberant
+            // energy at 125 Hz and 4 dB too much at 8 kHz.
+            var cone = new SimpleConeProvider(90, 60, -12);
+            var down = new Vec3(0, 0, -1);
+            Assert.Equal(1.0, SPLCalculator.DirectivityQ(new SimpleOmniProvider(90), down, 3), 2);
+            double q125 = SPLCalculator.DirectivityQ(cone, down, 0), q8k = SPLCalculator.DirectivityQ(cone, down, 6);
+            Assert.InRange(q125, 1.1, 1.6);
+            Assert.InRange(q8k, 9, 13);
+            for (int k = 1; k < 7; k++)
+                Assert.True(SPLCalculator.DirectivityQ(cone, down, k) > SPLCalculator.DirectivityQ(cone, down, k - 1));
+            // Orientation does not change Q
+            Assert.Equal(SPLCalculator.DirectivityQ(cone, down, 4), SPLCalculator.DirectivityQ(cone, new Vec3(1, 0, 0), 4), 1);
+        }
+
+        [Fact]
+        public void ReflectedPath_ThroughAPartition_PaysItsTl()
+        {
+            // 16 × 8 m, STC 55 partition at x = 10. Second-order path: speaker → through the partition → east wall →
+            // back off the partition's far face → listener. Reflecting walls used to be skipped on every leg, so
+            // the crossing on the first leg was free and ~40 dB leaked into the small room (8 kHz at 42 dB).
+            var walls = new List<ComputeWall>
+            {
+                Wall(-0.1, 0, 16.1, 0, 55), Wall(16, -0.1, 16, 8.1, 55), Wall(16.1, 8, -0.1, 8, 55),
+                Wall(0, 8.1, 0, -0.1, 55), Wall(10, -0.1, 10, 8.1, 55)
+            };
+            var (res, _) = Run(new List<ComputeSource> { Omni(5, 4, 1.5) }, new List<Vec3> { new Vec3(13.3, 3.8, 1.2) },
+                walls, quality: CalculationQuality.Full);
+            // In front: ≈ 90 − 8.5 (band share) − 20·log(8.3) ≈ 63 dB at 8 kHz; the partition takes 54 dB
+            Assert.True(res[0].SplDbByBand[6] < 20, $"8 kHz behind the partition: {res[0].SplDbByBand[6]} dB");
+        }
+
+        [Fact]
         public void PathGrazingPastWallEnd_AtACornerGap_StillBlocks()
         {
             // Wall x = 0 from y = −5 to y = 1.00 whose end meets a second wall (y = 1.1): a

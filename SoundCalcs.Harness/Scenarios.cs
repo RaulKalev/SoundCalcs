@@ -67,9 +67,39 @@ namespace SoundCalcs.Harness
 
         public static double Db(double linear) => 10 * Math.Log10(linear);
 
+        /// <summary>
+        /// Directivity factor per band, Q = 4π / ∫ g² dΩ: integrated independently of SPLCalculator
+        /// (equal-area bands in cos θ, fine grid). The reverberant field is fed per band. A speaker flush in
+        /// the ceiling (<paramref name="flush"/>) radiates into the lower half-space only.
+        /// </summary>
+        public static double[] BandQ(ISpeakerDirectivityProvider p, bool flush = false)
+        {
+            var q = new double[7];
+            const int nU = 400, nPhi = 180;
+            var axis = new Vec3(0, 0, -1);
+            for (int k = 0; k < 7; k++)
+            {
+                double sum = 0;
+                for (int i = 0; i < nU; i++)
+                {
+                    double u = -1 + (i + 0.5) * 2.0 / nU;          // cos θ, equal solid angle per step
+                    if (flush && u < 0) continue;                   // above the ceiling (θ from straight down)
+                    double sin = Math.Sqrt(1 - u * u);
+                    for (int j = 0; j < nPhi; j++)
+                    {
+                        double phi = (j + 0.5) * 2 * Math.PI / nPhi;
+                        double g = p.GetDirectivityGainForBand(axis, new Vec3(sin * Math.Cos(phi), sin * Math.Sin(phi), -u), k);
+                        sum += g * g * (2.0 / nU) * (2 * Math.PI / nPhi);
+                    }
+                }
+                q[k] = 4 * Math.PI / sum;
+            }
+            return q;
+        }
+
         public static double Sum(IEnumerable<double[]> bandPowers) => bandPowers.Sum(b => b.Sum());
 
-        /// <summary>Documented wall model: TL_k = max(0, ΣSTC + StcBandOffsets[k] − 5 dB field penalty).</summary>
+        /// <summary>Documented wall model, one wall: TL_k = max(0, STC + StcBandOffsets[k] − 5 dB field penalty).</summary>
         public static double[] WallTl(double stcSum) =>
             OctaveBands.StcBandOffsets.Select(o => stcSum > 0 ? Math.Max(0, stcSum + o - 5.0) : 0).ToArray();
     }
@@ -732,10 +762,10 @@ namespace SoundCalcs.Harness
                     // Reverberant level in the large room follows its own volume (Barron, V = 80·3 m³)
                     var env = run.Spec.Environment;
                     double c = 331.3 + 0.606 * env.TemperatureC;
-                    double q = new SimpleConeProvider(90, 60, -12).DirectivityFactor;
+                    double[] qk = Analytic.BandQ(new SimpleConeProvider(90, 60, -12), flush: true);  // speakers flush at 3.0 m
                     var src = run.Input.Sources[0].Position;
                     double Barron(ReceiverResult r, double vol) => Analytic.Db(Enumerable.Range(0, 7).Sum(k =>
-                        Math.Pow(10, 9) / 7 * 16 * Math.PI / (q * 0.161 * vol / env.RT60ByBand[k])
+                        Math.Pow(10, 9) / 7 * 16 * Math.PI / (qk[k] * 0.161 * vol / env.RT60ByBand[k])
                         * Math.Exp(-13.82 * Dist(r.Position, src) / (c * env.RT60ByBand[k]))));
                     var far = run.Nearest(1, 1);
                     ctx.Assert("far corner of the large room is not below its own Barron reverberant level",
@@ -757,16 +787,31 @@ namespace SoundCalcs.Harness
                     double gap = run.Output.Results.Where(r => r.Position.X < 9.5).Average(r => r.SplDb) - smallRoom.Average(r => r.SplDb);
                     ctx.Assert("small room is far quieter (only transmission through the concrete wall)", gap > 20,
                         $"{CheckContext.F(gap)} dB");
+                    // Small room: the large room's reverberant sound comes through the partition (EN ISO 12354-1):
+                    // L2 = L1 − R + 10·log(S/A2), L1 the large room's Barron level at the partition (5 m from the
+                    // speaker), R the concrete wall's in-situ TL, S = 8 × 3 m², A2 = 0.161·V2/T. Independent of
+                    // SPLCalculator; the direct ray through the wall only adds a little on top.
+                    double[] tlConcrete = Analytic.WallTl(55);
+                    double l2 = Analytic.Db(Enumerable.Range(0, 7).Sum(k =>
+                        Math.Pow(10, 9) / 7 * 16 * Math.PI / (qk[k] * 0.161 * 240 / env.RT60ByBand[k])
+                        * Math.Exp(-13.82 * 5.0 / (c * env.RT60ByBand[k]))
+                        * Math.Pow(10, -tlConcrete[k] / 10) * 24 / (0.161 * 144 / env.RT60ByBand[k])));
+                    double smallMean = Analytic.Db(smallRoom.Average(r => Math.Pow(10, r.SplDb / 10)));
+                    ctx.InRange("small room gets the large room's reverberant sound through the partition (L1 − R + 10·log S/A2)",
+                        smallMean - l2, -0.1, 3.0, " dB above the transmitted reverberant level");
+
                     var slowSpec = run.Spec.Clone("_rt60x3");
                     slowSpec.Environment.RT60ByBand = IecReference.Fill(2.4);
                     var slow = ScenarioRun.Execute(slowSpec);
-                    double smallShift = slow.Output.Results.Zip(run.Output.Results, (a2, b2) => (a2, b2))
-                        .Where(x => x.b2.Position.X > 10.5).Max(x => Math.Abs(x.a2.SplDb - x.b2.SplDb));
+                    double smallShift = slow.Output.Results.Zip(run.Output.Results, (a2, b2) => a2.SplDb - b2.SplDb)
+                        .Where((d, i) => run.Output.Results[i].Position.X > 10.5).Average();
                     double bigShift = slow.Output.Results.Zip(run.Output.Results, (a2, b2) => a2.SplDb - b2.SplDb)
                         .Where((d, i) => run.Output.Results[i].Position.X < 9.5).Average();
-                    ctx.Assert("source room's reverberant field stays in the source room (tripling RT60 changes only it)",
-                        smallShift < 0.01 && bigShift > 2,
-                        $"large room +{CheckContext.F(bigShift)} dB, small room max change {CheckContext.F(smallShift)} dB");
+                    // Tripling T raises the source room's reverberant level (≈ +4.8 dB less the Barron decay) and,
+                    // through a partition into a room that also absorbs a third as much, the transmitted level twice as much
+                    ctx.Assert("longer RT60 raises the source room's level, and the room behind the partition by more (both rooms reverberate)",
+                        bigShift > 2 && smallShift > bigShift && smallShift < 10,
+                        $"large room +{CheckContext.F(bigShift)} dB, small room +{CheckContext.F(smallShift)} dB");
 
                     // Per-room RT60 from each room's own geometry
                     var autoSpec = run.Spec.Clone("_auto_rt60");
@@ -1086,7 +1131,7 @@ namespace SoundCalcs.Harness
                     var env = run.Spec.Environment;
                     double c = 331.3 + 0.606 * env.TemperatureC;
                     double vol = run.Input.Rooms[0].Area * 3.0;
-                    double q = new SimpleConeProvider(90, 60, -12).DirectivityFactor;
+                    double[] qk = Analytic.BandQ(new SimpleConeProvider(90, 60, -12), flush: true);  // speakers flush at 3.0 m
                     double worstDeficit = double.MinValue; ReceiverResult worstR = null; double worstRev = 0;
                     foreach (var r in run.Output.Results)
                     {
@@ -1097,7 +1142,7 @@ namespace SoundCalcs.Harness
                             for (int k = 0; k < 7; k++)
                             {
                                 double sabineA = 0.161 * vol / env.RT60ByBand[k];
-                                rev += Math.Pow(10, 9) / 7 * 16 * Math.PI / (q * sabineA)
+                                rev += Math.Pow(10, 9) / 7 * 16 * Math.PI / (qk[k] * sabineA)
                                      * Math.Exp(-13.82 * dist / (c * env.RT60ByBand[k]));
                             }
                         }

@@ -100,12 +100,13 @@ namespace SoundCalcs.Domain
         }
 
         /// <summary>
-        /// Approximate STC-to-per-band transmission loss offsets in dB.
-        /// TL for band k ≈ max(0, fieldCorrectedSTC + StcBandOffsets[k]).
-        /// Based on mass-law frequency dependence (~6 dB/octave above reference).
+        /// Per-band transmission loss of a wall relative to its single-number rating, in dB: the reference
+        /// contour that defines the rating (ASTM E413 STC contour; the ISO 717-1 Rw reference curve has the same
+        /// octave values), 0 at 500 Hz, flat above 1.25 kHz; 8 kHz continues the flat top.
+        /// TL for band k ≈ max(0, rating + StcBandOffsets[k] − field penalty), per wall.
         /// </summary>
         public static readonly double[] StcBandOffsets =
-            { -16, -8, -3, 0, 3, 6, 9 };
+            { -16, -7, 0, 3, 4, 4, 4 };
 
         /// <summary>
         /// A-weighting correction values in dB per octave band (IEC 61672-1).

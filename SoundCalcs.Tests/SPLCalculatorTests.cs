@@ -259,6 +259,20 @@ namespace SoundCalcs.Tests
         }
 
         [Fact]
+        public void SPL_TwoWallsInSeries_EachOnItsOwnContour()
+        {
+            // Two STC-40 walls across the path: each loses max(0, 40 + offset − 5) per band; the dBs add.
+            // (Summing the ratings first and applying the contour once gave 75 − 16 = 59 dB at 125 Hz, not 38.)
+            Vec3 srcPos = new Vec3(0, 0, 0), recvPos = new Vec3(9, 0, 0);
+            ComputeWall W(double x) => new ComputeWall { Start = new Vec2(x, -1000), End = new Vec2(x, 1000), StcRating = 40, HalfThicknessM = 0.1 };
+            var (free, _) = new SPLCalculator().Calculate(BuildInput(srcPos, new Vec3(1, 0, 0), 90.0, new[] { recvPos }), CancellationToken.None, null);
+            var (two, _) = new SPLCalculator().Calculate(BuildInput(srcPos, new Vec3(1, 0, 0), 90.0, new[] { recvPos },
+                walls: new List<ComputeWall> { W(3), W(6) }), CancellationToken.None, null);
+            double tl125 = free[0].SplDbByBand[0] - two[0].SplDbByBand[0];
+            Assert.InRange(tl125, 37.0, 39.0);
+        }
+
+        [Fact]
         public void SPL_WallPerBandAttenuation_MatchesStcContour()
         {
             // For a STC-40 wall perpendicular to the direct path, the incremental
@@ -272,7 +286,8 @@ namespace SoundCalcs.Tests
             //   No-wall TL: 0 dB for all bands (wallStcSum=0 → no field penalty applied)
             //
             //   TL added by STC-40 wall = max(0, 40 + StcBandOffsets[k] - 5):
-            //   k=0 (125 Hz):19 | k=1:27 | k=2:32 | k=3:35 | k=4:38 | k=5:41 | k=6:44
+            //   (E413 / ISO 717-1 reference contour: −16, −7, 0, +3, +4, +4, +4)
+            //   k=0 (125 Hz):19 | k=1:28 | k=2:35 | k=3:38 | k=4:39 | k=5:39 | k=6:39
             Vec3 srcPos = new Vec3(0, 0, 0);
             Vec3 recvPos = new Vec3(5, 0, 0);
             var wall = new ComputeWall
@@ -292,7 +307,7 @@ namespace SoundCalcs.Tests
             // With the fix, no-wall TL = 0 for all bands.
             // Incremental TL equals the full STC-40 contour for every band:
             //   TL_k = max(0, 40 + StcBandOffsets[k] - FieldPenalty=5)
-            int[] expectedTL = { 19, 27, 32, 35, 38, 41, 44 };
+            int[] expectedTL = { 19, 28, 35, 38, 39, 39, 39 };
 
             for (int k = 0; k < OctaveBands.Count; k++)
             {
