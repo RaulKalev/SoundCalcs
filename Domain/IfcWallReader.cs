@@ -47,8 +47,19 @@ namespace SoundCalcs.Domain.Ifc
         public List<IfcFileWall> Walls { get; set; } = new List<IfcFileWall>();
         public List<string> Warnings { get; set; } = new List<string>();
 
-        public IfcFileWall Find(string globalId) =>
-            string.IsNullOrEmpty(globalId) ? null : Walls.FirstOrDefault(w => w.GlobalId == globalId);
+        private Dictionary<string, IfcFileWall> _byGuid;
+
+        public IfcFileWall Find(string globalId)
+        {
+            if (string.IsNullOrEmpty(globalId)) return null;
+            if (_byGuid == null || _byGuid.Count != Walls.Count)
+            {
+                _byGuid = new Dictionary<string, IfcFileWall>();
+                foreach (IfcFileWall w in Walls)
+                    if (!string.IsNullOrEmpty(w.GlobalId) && !_byGuid.ContainsKey(w.GlobalId)) _byGuid[w.GlobalId] = w;
+            }
+            return _byGuid.TryGetValue(globalId, out IfcFileWall found) ? found : null;
+        }
     }
 
     /// <summary>
@@ -60,6 +71,17 @@ namespace SoundCalcs.Domain.Ifc
     {
         static readonly HashSet<string> WallTypes = new HashSet<string>
             { "IFCWALL", "IFCWALLSTANDARDCASE", "IFCWALLELEMENTEDCASE" };
+
+        // Read first: what says which walls there are and what they are made of. Small even in large models.
+        static readonly HashSet<string> Structural = new HashSet<string>(WallTypes.Concat(new[]
+        {
+            "IFCLOCALPLACEMENT", "IFCGRIDPLACEMENT", "IFCPRODUCTDEFINITIONSHAPE", "IFCSHAPEREPRESENTATION",
+            "IFCRELASSOCIATESMATERIAL", "IFCMATERIALLAYERSETUSAGE", "IFCMATERIALLAYERSET", "IFCMATERIALLAYER",
+            "IFCMATERIAL", "IFCMATERIALLIST",
+            "IFCRELDEFINESBYPROPERTIES", "IFCPROPERTYSET", "IFCPROPERTYSINGLEVALUE",
+            "IFCRELDEFINESBYTYPE", "IFCWALLTYPE",
+            "IFCPROJECT", "IFCUNITASSIGNMENT", "IFCSIUNIT", "IFCCONVERSIONBASEDUNIT", "IFCMEASUREWITHUNIT"
+        }));
 
         static readonly HashSet<string> Kept = new HashSet<string>(WallTypes.Concat(new[]
         {
@@ -74,14 +96,48 @@ namespace SoundCalcs.Domain.Ifc
             "IFCPROJECT", "IFCUNITASSIGNMENT", "IFCSIUNIT", "IFCCONVERSIONBASEDUNIT", "IFCMEASUREWITHUNIT"
         }));
 
+        /// <summary>
+        /// Reads a file in passes so large models stay small in memory: first the structural entities, then only
+        /// the placements, points, directions and curves the walls' placements and axes refer to (most of a
+        /// model is body geometry that is never read).
+        /// </summary>
         public static IfcFileData Read(string path)
         {
-            using (var reader = new StreamReader(path, System.Text.Encoding.UTF8, true, 1 << 16))
+            StreamReader Open() => new StreamReader(path, System.Text.Encoding.UTF8, true, 1 << 16);
+            var file = new StepFile();
+            using (var r = Open()) file.ParseInto(r, (id, type) => Structural.Contains(type));
+
+            // What the walls' placements and axes refer to, followed until everything referred to is loaded
+            var visited = new HashSet<int>();
+            var stack = new Stack<int>();
+            foreach (StepEntity w in file.Entities.Values.Where(e => WallTypes.Contains(e.Type)))
             {
-                IfcFileData data = Read(reader);
-                data.Path = path;
-                return data;
+                foreach (int id in Context.RefsOf(w.Arg(5))) stack.Push(id);
+                StepEntity shape = file.Get(w.Arg(6));
+                if (shape == null) continue;
+                foreach (StepEntity rep in Context.RefsOf(shape.Arg(2)).Select(file.Get).Where(e => e != null))
+                    if ((rep.Arg(1) as string ?? "").Equals("Axis", StringComparison.OrdinalIgnoreCase))
+                        foreach (int id in Context.RefsOf(rep.Arg(3))) stack.Push(id);
             }
+            for (int pass = 0; pass < 12 && stack.Count > 0; pass++)
+            {
+                var missing = new HashSet<int>();
+                while (stack.Count > 0)
+                {
+                    int id = stack.Pop();
+                    if (!visited.Add(id)) continue;
+                    StepEntity e = file.Get(id);
+                    if (e == null) { missing.Add(id); continue; }
+                    foreach (int r in Context.AllRefs(e.Args)) stack.Push(r);
+                }
+                if (missing.Count == 0) break;
+                using (var r = Open()) file.ParseInto(r, (id, type) => missing.Contains(id));
+                foreach (int id in missing) { visited.Remove(id); if (file.Get(id) != null) stack.Push(id); }
+            }
+
+            IfcFileData data = new Context(file).Read();
+            data.Path = path;
+            return data;
         }
 
         public static IfcFileData Read(TextReader reader)
@@ -106,6 +162,21 @@ namespace SoundCalcs.Domain.Ifc
 
         private sealed class Context
         {
+            /// <summary>Ids referred to by a reference or a list of references.</summary>
+            internal static IEnumerable<int> RefsOf(object value) => Refs(value);
+
+            /// <summary>Every reference anywhere in an argument list (nested lists and typed values included).</summary>
+            internal static IEnumerable<int> AllRefs(IEnumerable<object> args)
+            {
+                foreach (object a in args)
+                {
+                    if (a is StepRef r) yield return r.Id;
+                    else if (a is List<object> list) foreach (int id in AllRefs(list)) yield return id;
+                    else if (a is StepTyped t && t.Value != null)
+                        foreach (int id in AllRefs(new[] { t.Value })) yield return id;
+                }
+            }
+
             private readonly StepFile _f;
             private readonly Dictionary<int, Frame> _placements = new Dictionary<int, Frame>();
             private double _len = 1.0, _angle = 1.0;
@@ -137,16 +208,17 @@ namespace SoundCalcs.Domain.Ifc
                 }
                 foreach (StepEntity rel in _f.OfType("IFCRELDEFINESBYPROPERTIES"))
                 {
-                    StepEntity p = _f.Get(rel.Arg(5));
-                    if (p == null || p.Type != "IFCPROPERTYSET") continue;
-                    foreach (int id in Refs(rel.Arg(4)))
-                    {
-                        if (!psets.TryGetValue(id, out var list)) psets[id] = list = new List<StepEntity>();
-                        list.Add(p);
-                    }
+                    // One property set, or (IFC4) an IfcPropertySetDefinitionSet of several
+                    object def = rel.Arg(5) is StepTyped set ? set.Value : rel.Arg(5);
+                    foreach (StepEntity p in Refs(def).Select(_f.Get).Where(e => e != null && e.Type == "IFCPROPERTYSET"))
+                        foreach (int id in Refs(rel.Arg(4)))
+                        {
+                            if (!psets.TryGetValue(id, out var list)) psets[id] = list = new List<StepEntity>();
+                            list.Add(p);
+                        }
                 }
 
-                int noAxis = 0;
+                int noAxis = 0, badPlacement = 0;
                 foreach (StepEntity w in _f.Entities.Values.Where(e => WallTypes.Contains(e.Type)).OrderBy(e => e.Id))
                 {
                     var wall = new IfcFileWall
@@ -176,9 +248,16 @@ namespace SoundCalcs.Domain.Ifc
 
                     try
                     {
+                        _placementProblem = null;
                         Frame frame = Placement(w.Arg(5), 0);
                         List<Vec3> axis = AxisCurve(w.Arg(6));
-                        if (axis.Count >= 2)
+                        if (_placementProblem != null)
+                        {
+                            // Not placed where its axis says (e.g. on a grid): leave it to the link's shape
+                            badPlacement++;
+                            data.Warnings.Add($"#{w.Id} {wall.GlobalId}: {_placementProblem}");
+                        }
+                        else if (axis.Count >= 2)
                         {
                             List<Vec2> local = axis.Select(p => new Vec2(p.X, p.Y)).ToList();
                             if (Math.Abs(centerShift) > 1e-9) local = OffsetLeft(local, centerShift);
@@ -195,6 +274,7 @@ namespace SoundCalcs.Domain.Ifc
                     data.Walls.Add(wall);
                 }
                 if (noAxis > 0) data.Warnings.Add($"{noAxis} wall(s) without a readable axis");
+                if (badPlacement > 0) data.Warnings.Add($"{badPlacement} wall(s) with a placement that can't be read (not used)");
                 return data;
             }
 
@@ -311,18 +391,36 @@ namespace SoundCalcs.Domain.Ifc
 
             // ---- placement ----
 
+            // Why the current wall's placement can't be trusted, or null
+            private string _placementProblem;
+
             private Frame Placement(object reference, int depth)
             {
                 StepEntity e = _f.Get(reference);
-                if (e == null || depth > 64) return Frame.Identity;
+                if (e == null)
+                {
+                    if (reference is StepRef missing) _placementProblem = $"placement #{missing.Id} not found";
+                    return Frame.Identity;
+                }
+                if (depth > 64) { _placementProblem = "placement chain too deep"; return Frame.Identity; }
                 if (_placements.TryGetValue(e.Id, out Frame cached)) return cached;
 
                 Frame result;
                 if (e.Type == "IFCLOCALPLACEMENT")
-                    result = Placement(e.Arg(0), depth + 1).Then(Axis2(_f.Get(e.Arg(1))));
-                else
+                {
+                    StepEntity rel = _f.Get(e.Arg(1));
+                    if (rel == null) _placementProblem = "local placement without its axes";
+                    result = Placement(e.Arg(0), depth + 1).Then(Axis2(rel));
+                }
+                else if (e.Type == "IFCAXIS2PLACEMENT3D" || e.Type == "IFCAXIS2PLACEMENT2D")
                     result = Axis2(e);
-                _placements[e.Id] = result;
+                else
+                {
+                    _placementProblem = $"{e.Type} is not supported";
+                    return Frame.Identity;
+                }
+                // A placement with a problem anywhere up its chain is not cached: every wall on it must report it
+                if (_placementProblem == null) _placements[e.Id] = result;
                 return result;
             }
 

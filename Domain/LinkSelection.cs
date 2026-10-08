@@ -30,6 +30,9 @@ namespace SoundCalcs.Domain
         /// <summary>The original .ifc file next to the converted copy, when the link is an IFC.</summary>
         public string IfcFilePath { get; set; } = "";
 
+        /// <summary>The original .ifc chosen by the user for this link; empty = <see cref="IfcFilePath"/>.</summary>
+        public string IfcFileOverride { get; set; } = "";
+
         /// <summary>"IFC" for IFC links (shown next to the name), else empty.</summary>
         public string KindLabel => IsIfc ? "IFC" : "";
 

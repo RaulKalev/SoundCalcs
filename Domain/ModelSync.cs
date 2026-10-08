@@ -29,9 +29,11 @@ namespace SoundCalcs.Domain
         public static Vec3 WithHorizontalAim(Vec3 facing, double aimDeg)
         {
             double rad = aimDeg * Math.PI / 180.0;
-            double fz = facing.Z;
+            Vec3 f = facing.Normalized();
+            double fz = f.Z;
             double hLen = Math.Sqrt(Math.Max(0.0, 1.0 - fz * fz));
-            if (hLen < 1e-6) hLen = 1.0;
+            // A family facing straight up or down: aiming it means pointing it horizontally
+            if (hLen < 1e-6) return new Vec3(Math.Cos(rad), Math.Sin(rad), 0);
             return new Vec3(Math.Cos(rad) * hLen, Math.Sin(rad) * hLen, fz);
         }
 
@@ -82,12 +84,13 @@ namespace SoundCalcs.Domain
         /// <summary>
         /// Rebuilds the speaker groups from <paramref name="fresh"/> (the speakers as read from the model now).
         /// Each type keeps the settings of its current group, else of <paramref name="savedMappings"/>, else
-        /// defaults. A speaker the model has no aim correction for keeps the one it had in the list.
+        /// defaults. A speaker the model has no aim correction for keeps the one it had in the list, and so do the
+        /// speakers in <paramref name="listAimWins"/> (aimed since the model was last written).
         /// <paramref name="wantedIds"/> are the speakers that should be there; those not in
         /// <paramref name="fresh"/> are reported missing.
         /// </summary>
         public static SpeakerSyncResult MergeSpeakers(IEnumerable<SpeakerTypeGroup> current, IEnumerable<SpeakerInstance> fresh,
-            IEnumerable<int> wantedIds, IEnumerable<SpeakerProfileMapping> savedMappings)
+            IEnumerable<int> wantedIds, IEnumerable<SpeakerProfileMapping> savedMappings, ICollection<int> listAimWins = null)
         {
             var currentGroups = (current ?? Enumerable.Empty<SpeakerTypeGroup>()).ToList();
             var oldById = new Dictionary<int, SpeakerInstance>();
@@ -115,9 +118,10 @@ namespace SoundCalcs.Domain
                 if (inst.TypeKey != old.TypeKey)
                     result.Retyped++;
 
-                // The model's stored correction wins; otherwise keep the one from the list
-                // (e.g. it could not be written to the model).
-                if (inst.AimOffsetDeg == null && old.AimOffsetDeg != null)
+                // The model's stored correction wins, unless the list's is newer than the model's (an aim that
+                // could not be stored yet: <paramref name="listAimWins"/>); a speaker without one keeps the list's.
+                bool listWins = listAimWins != null && listAimWins.Contains(inst.ElementId);
+                if (old.AimOffsetDeg != null && (inst.AimOffsetDeg == null || listWins))
                 {
                     inst.AimOffsetDeg = old.AimOffsetDeg;
                     SpeakerAim.ApplyOffset(inst);
@@ -161,7 +165,8 @@ namespace SoundCalcs.Domain
 
         /// <summary>
         /// Gives each re-read wall group the wall type and height the user set for the group of the same
-        /// line style (or wall type) name. Returns how many groups kept their settings.
+        /// line style (or wall type) name; guesses the user never changed are replaced by the new detection's.
+        /// Returns how many groups kept their settings.
         /// </summary>
         public static int KeepWallSettings(IEnumerable<WallLineGroup> previous, IEnumerable<WallLineGroup> fresh)
         {
@@ -174,8 +179,10 @@ namespace SoundCalcs.Domain
             foreach (var g in fresh ?? Enumerable.Empty<WallLineGroup>())
             {
                 if (g?.LineStyleName == null || !byName.TryGetValue(g.LineStyleName, out WallLineGroup old)) continue;
+                if (old.UserEdited == false) continue;   // the old values were only a guess: take the new one
                 g.WallType = old.WallType ?? g.WallType;
                 g.HeightM = old.HeightM;
+                g.UserEdited = true;
                 kept++;
             }
             return kept;

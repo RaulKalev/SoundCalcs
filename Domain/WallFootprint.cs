@@ -203,7 +203,9 @@ namespace SoundCalcs.Domain
         /// </summary>
         public static void JoinEnds(IList<WallPiece> pieces, double extraM = 0.05)
         {
-            double sinMin = Math.Sin(10 * Math.PI / 180);
+            // Only real corners and junctions: the pieces of a tessellated curved wall meet at a few degrees
+            // and already touch; stretching them over each other would count the wall twice
+            double sinMin = Math.Sin(30 * Math.PI / 180);
             var moves = new List<(WallPiece Piece, bool AtEnd, Vec2 To)>();
 
             foreach (WallPiece s in pieces)
@@ -213,6 +215,10 @@ namespace SoundCalcs.Domain
                 Vec2 dS = s.Direction;
                 foreach (bool atEnd in new[] { false, true })
                 {
+                    Vec2 endPt = atEnd ? s.End : s.Start;
+                    if (pieces.Any(o => !ReferenceEquals(o, s) &&
+                                        (Vec2.Distance(endPt, o.Start) < 0.01 || Vec2.Distance(endPt, o.End) < 0.01)))
+                        continue;   // already joined end to end
                     double bestExt = double.MaxValue;
                     Vec2 bestPt = default(Vec2);
                     foreach (WallPiece t in pieces)
@@ -246,6 +252,43 @@ namespace SoundCalcs.Domain
             {
                 if (m.AtEnd) m.Piece.End = m.To;
                 else m.Piece.Start = m.To;
+            }
+        }
+
+        /// <summary>
+        /// Merges pieces on the same line that overlap or meet end to end (the faces of one wall at several heights:
+        /// a stepped top, window sills) into one piece over their union, so the wall is counted once along its length.
+        /// </summary>
+        public static void MergeCollinear(List<WallPiece> pieces, double gapM = 0.05)
+        {
+            bool merged = true;
+            while (merged)
+            {
+                merged = false;
+                for (int i = 0; i < pieces.Count && !merged; i++)
+                    for (int j = i + 1; j < pieces.Count && !merged; j++)
+                    {
+                        WallPiece a = pieces[i], b = pieces[j];
+                        Vec2 d = a.Direction;
+                        if (a.Length < 1e-9 || b.Length < 1e-9 || Math.Abs(Vec2.Dot(d, b.Direction)) < Math.Cos(2 * Math.PI / 180)) continue;
+                        var n = new Vec2(-d.Y, d.X);
+                        double tol = 0.5 * Math.Min(a.ThicknessM, b.ThicknessM) + 0.01;
+                        if (Math.Abs(Vec2.Dot(n, b.Start - a.Start)) > tol || Math.Abs(Vec2.Dot(n, b.End - a.Start)) > tol) continue;
+                        double b0 = Vec2.Dot(d, b.Start - a.Start), b1 = Vec2.Dot(d, b.End - a.Start);
+                        double lo = Math.Min(b0, b1), hi = Math.Max(b0, b1);
+                        if (lo > a.Length + gapM || hi < -gapM) continue;   // apart along the line
+
+                        // The longer piece's line and the larger thickness
+                        WallPiece keep = a.Length >= b.Length ? a : b;
+                        Vec2 kd = keep.Direction;
+                        double s0 = Math.Min(Math.Min(Vec2.Dot(kd, a.Start - keep.Start), Vec2.Dot(kd, a.End - keep.Start)),
+                                             Math.Min(Vec2.Dot(kd, b.Start - keep.Start), Vec2.Dot(kd, b.End - keep.Start)));
+                        double s1 = Math.Max(Math.Max(Vec2.Dot(kd, a.Start - keep.Start), Vec2.Dot(kd, a.End - keep.Start)),
+                                             Math.Max(Vec2.Dot(kd, b.Start - keep.Start), Vec2.Dot(kd, b.End - keep.Start)));
+                        pieces[i] = new WallPiece { Start = keep.Start + kd * s0, End = keep.Start + kd * s1, ThicknessM = Math.Max(a.ThicknessM, b.ThicknessM) };
+                        pieces.RemoveAt(j);
+                        merged = true;
+                    }
             }
         }
 

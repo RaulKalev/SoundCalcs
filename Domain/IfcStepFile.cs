@@ -93,6 +93,17 @@ namespace SoundCalcs.Domain.Ifc
         public static StepFile Parse(TextReader reader, Func<string, bool> keepType = null)
         {
             var file = new StepFile();
+            file.ParseInto(reader, keepType == null ? (Func<int, string, bool>)null : (id, type) => keepType(type));
+            return file;
+        }
+
+        /// <summary>
+        /// Adds the entities of another read of the same file for which <paramref name="keep"/>(id, type) is true:
+        /// lets a large file be read in passes, keeping only what the previous pass showed to be needed.
+        /// </summary>
+        public void ParseInto(TextReader reader, Func<int, string, bool> keep)
+        {
+            var file = this;
             var sb = new StringBuilder(256);
             bool inString = false, inComment = false;
             int c, prev = -1;
@@ -116,7 +127,7 @@ namespace SoundCalcs.Domain.Ifc
                 if (ch == '\'') { inString = true; sb.Append(ch); prev = c; continue; }
                 if (ch == ';')
                 {
-                    file.Statement(sb.ToString(), keepType);
+                    file.Statement(sb.ToString(), keep);
                     sb.Clear();
                     prev = c;
                     continue;
@@ -125,10 +136,9 @@ namespace SoundCalcs.Domain.Ifc
                 sb.Append(ch);
                 prev = c;
             }
-            return file;
         }
 
-        private void Statement(string text, Func<string, bool> keepType)
+        private void Statement(string text, Func<int, string, bool> keep)
         {
             string s = text.Trim();
             if (s.Length == 0) return;
@@ -149,7 +159,7 @@ namespace SoundCalcs.Domain.Ifc
             int close = s.LastIndexOf(')');
             if (open < 0 || close < open) return;
             string type = s.Substring(eq + 1, open - eq - 1).Trim().ToUpperInvariant();
-            if (keepType != null && !keepType(type)) return;
+            if (keep != null && !keep(id, type)) return;
             Entities[id] = new StepEntity(id, type, s.Substring(open + 1, close - open - 1));
         }
     }
@@ -275,6 +285,15 @@ namespace SoundCalcs.Domain.Ifc
                     string hex = s.Substring(i + 4, end - i - 4);
                     for (int k = 0; k + 4 <= hex.Length; k += 4)
                         sb.Append((char)Convert.ToInt32(hex.Substring(k, 4), 16));
+                    i = end + 3;
+                }
+                else if (string.CompareOrdinal(s, i, "\\X4\\", 0, 4) == 0)
+                {
+                    int end = s.IndexOf("\\X0\\", i + 4, StringComparison.Ordinal);
+                    if (end < 0) break;
+                    string hex = s.Substring(i + 4, end - i - 4);
+                    for (int k = 0; k + 8 <= hex.Length; k += 8)
+                        sb.Append(char.ConvertFromUtf32(Convert.ToInt32(hex.Substring(k, 8), 16)));
                     i = end + 3;
                 }
                 else if (string.CompareOrdinal(s, i, "\\X\\", 0, 3) == 0 && i + 5 <= s.Length)

@@ -117,6 +117,13 @@ namespace SoundCalcs.Domain
         /// <summary>Assigned acoustic wall type.</summary>
         public WallTypeInfo WallType { get; set; } = WallTypeCatalog.Default;
 
+        /// <summary>
+        /// True once the user set the wall type or height; false while they are the detection's guess (detecting
+        /// again may replace them, e.g. with an IFC file's rating). Null in settings saved by older versions:
+        /// treated as the user's.
+        /// </summary>
+        public bool? UserEdited { get; set; }
+
         /// <summary>The wall segments belonging to this group.</summary>
         public List<WallSegment2D> Segments { get; set; } = new List<WallSegment2D>();
     }

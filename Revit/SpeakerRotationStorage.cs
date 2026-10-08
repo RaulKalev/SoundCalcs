@@ -33,23 +33,34 @@ namespace SoundCalcs.Revit
             builder.SetSchemaName(SchemaName);
             builder.SetReadAccessLevel(AccessLevel.Public);
             builder.SetWriteAccessLevel(AccessLevel.Public);
-            builder.AddSimpleField(FieldName, typeof(double));
+            // Floating-point fields need a spec; values are set and read in degrees
+            builder.AddSimpleField(FieldName, typeof(double)).SetSpec(SpecTypeId.Angle);
             return builder.Finish();
         }
 
         /// <summary>
         /// Store the correction that aims the speaker at <paramref name="aimDeg"/> (absolute, degrees) in a
         /// new transaction. Must be called on the Revit API thread inside an active document context.
+        /// Returns false (with the reason) when it could not be stored: read-only document, element missing,
+        /// borrowed by someone else in a workshared model, or the transaction failed.
         /// </summary>
-        public static void Write(Document doc, int elementId, double aimDeg)
+        public static bool Write(Document doc, int elementId, double aimDeg, out string error)
         {
+            error = null;
+            if (doc.IsReadOnly) { error = "the document is read-only"; return false; }
             Element elem = doc.GetElement(RevitCompat.ToElementId(elementId));
-            if (elem == null) return;
+            if (elem == null) { error = "the speaker is not in the model"; return false; }
+            if (doc.IsWorkshared &&
+                WorksharingUtils.GetCheckoutStatus(doc, elem.Id) == CheckoutStatus.OwnedByOtherUser)
+            {
+                error = "the speaker is borrowed by another user";
+                return false;
+            }
 
             double? modelAim = ModelAimDeg(elem);
             Schema schema  = GetOrCreateSchema();
             Entity entity  = new Entity(schema);
-            entity.Set(FieldName, SpeakerAim.OffsetFor(aimDeg, modelAim));
+            entity.Set(FieldName, SpeakerAim.OffsetFor(aimDeg, modelAim), UnitTypeId.Degrees);
 
             using (var tx = new Transaction(doc, "Set Speaker Aim Angle"))
             {
@@ -59,8 +70,9 @@ namespace SoundCalcs.Revit
                 Schema legacy = Schema.Lookup(LegacySchemaGuid);
                 if (legacy != null && elem.GetEntity(legacy)?.IsValid() == true)
                     elem.DeleteEntity(legacy);
-                tx.Commit();
+                if (tx.Commit() != TransactionStatus.Committed) { error = "the change could not be saved"; return false; }
             }
+            return true;
         }
 
         /// <summary>
@@ -76,7 +88,7 @@ namespace SoundCalcs.Revit
             Entity entity = schema != null ? elem.GetEntity(schema) : null;
             if (entity != null && entity.IsValid())
             {
-                offsetDeg = entity.Get<double>(FieldName);
+                offsetDeg = entity.Get<double>(FieldName, UnitTypeId.Degrees);
                 return true;
             }
 
@@ -84,7 +96,10 @@ namespace SoundCalcs.Revit
             Entity legacyEntity = legacy != null ? elem.GetEntity(legacy) : null;
             if (legacyEntity != null && legacyEntity.IsValid())
             {
-                offsetDeg = SpeakerAim.OffsetFor(legacyEntity.Get<double>(LegacyFieldName), modelAimDeg);
+                double legacyDeg;
+                try { legacyDeg = legacyEntity.Get<double>(LegacyFieldName); }
+                catch (Exception) { legacyDeg = legacyEntity.Get<double>(LegacyFieldName, UnitTypeId.Degrees); }
+                offsetDeg = SpeakerAim.OffsetFor(legacyDeg, modelAimDeg);
                 return true;
             }
             return false;

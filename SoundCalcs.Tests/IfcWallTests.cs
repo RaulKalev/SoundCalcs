@@ -287,6 +287,42 @@ END-ISO-10303-21;";
         }
 
         [Fact]
+        public void CurvedWall_PiecesAreNotStretchedOverEachOther()
+        {
+            // Quarter circle R = 5 m in 5° pieces, 0.2 m thick: joining pieces 10° apart used to stretch them over
+            // their neighbours (7.85 m of wall became 11.7 m, half of it counted twice)
+            var pieces = new List<WallPiece>();
+            for (int i = 0; i < 18; i++)
+            {
+                double a0 = i * 5 * Math.PI / 180, a1 = (i + 1) * 5 * Math.PI / 180;
+                pieces.Add(new WallPiece { Start = new Vec2(5 * Math.Cos(a0), 5 * Math.Sin(a0)), End = new Vec2(5 * Math.Cos(a1), 5 * Math.Sin(a1)), ThicknessM = 0.2 });
+            }
+            double before = pieces.Sum(p => p.Length);
+            WallFootprint.JoinEnds(pieces);
+            Assert.Equal(before, pieces.Sum(p => p.Length), 9);
+        }
+
+        [Fact]
+        public void SteppedTopAndSill_GiveOneWallOverTheWholeLength()
+        {
+            // 10 m wall: 6 m at full height, 4 m lower (two top faces), and a window sill face inside the first part
+            var builder = new IfcLinkWall
+            {
+                ElementId = 1, GroupName = "W", BaseZ = 0, TopZ = 3,
+                Outlines =
+                {
+                    Poly(0, -0.1, 6, -0.1, 6, 0.1, 0, 0.1),
+                    Poly(6, -0.1, 10, -0.1, 10, 0.1, 6, 0.1),
+                    Poly(2, -0.1, 3.5, -0.1, 3.5, 0.1, 2, 0.1)
+                }
+            };
+            var r = IfcWallBuilder.Build(new[] { builder });
+            var seg = Assert.Single(r.Groups.Single().Segments);
+            Assert.Equal(10, seg.Length, 6);
+            Assert.Equal(0.2, seg.ThicknessM, 6);
+        }
+
+        [Fact]
         public void MergeTouching_JoinsLayerSolids()
         {
             var pieces = new List<WallPiece>
@@ -310,6 +346,7 @@ END-ISO-10303-21;";
         [InlineData("Rw (C;Ctr) = 48 (-1;-4) dB", 48)]
         [InlineData("45", 45)]
         [InlineData("44,5 dB", 45)]
+        [InlineData("STC-50", 50)]
         public void Rating_IsRead(string value, int expected)
         {
             Assert.True(WallTypeEstimator.TryParseRating(value, out int r));
@@ -321,7 +358,22 @@ END-ISO-10303-21;";
         [InlineData("")]
         [InlineData("good")]
         [InlineData("5")]
+        [InlineData("EI 60")]
+        [InlineData("-45")]
         public void Rating_Unreadable(string value) => Assert.False(WallTypeEstimator.TryParseRating(value, out _));
+
+        [Theory]
+        [InlineData("Wall", true)]
+        [InlineData("Partition Wall 100", true)]
+        [InlineData("Precast wall panel", true)]
+        [InlineData("Walls:Basic Wall:Generic - 200mm", true)]
+        [InlineData("Wall cabinet 600", false)]
+        [InlineData("Wall-mounted TV", false)]
+        [InlineData("Drywall ceiling", false)]
+        [InlineData("Wall light", false)]
+        [InlineData("Door", false)]
+        public void ObjectTypeNamesAWall(string objectType, bool isWall) =>
+            Assert.Equal(isWall, WallTypeEstimator.NamesAWall(objectType));
 
         [Fact]
         public void Rating_SetsStc_NameKeepsTheMaterial()
@@ -329,6 +381,15 @@ END-ISO-10303-21;";
             WallTypeInfo t = WallTypeEstimator.Estimate("Ext Concrete 300", 0.3, "Rw 50 dB");
             Assert.Equal(WallAbsorptionPreset.Concrete, t.Surface);
             Assert.Equal(50, t.StcRating);
+        }
+
+        [Fact]
+        public void NamedMaterial_OnlyWhenItHasATypeNearTheEstimate()
+        {
+            // A 90 mm brick wall estimates STC 45; the nearest brick type is 50: the rating wins (old behaviour)
+            Assert.Equal(45, WallTypeEstimator.Estimate("Generic - 90mm Brick", 0.09).StcRating);
+            // 300 mm concrete estimates 57: concrete 55 is within 3 dB
+            Assert.Equal("concrete_200", WallTypeEstimator.Estimate("Concrete 300", 0.3).Key);
         }
 
         [Fact]
@@ -405,6 +466,27 @@ END-ISO-10303-21;";
             Assert.Contains(g.Segments, s => Vec2.Distance(s.Start, new Vec2(0, 0)) < 1e-6 && Vec2.Distance(s.End, new Vec2(10, 0)) < 1e-6);
             Assert.Equal(WallAbsorptionPreset.Concrete, g.WallType.Surface);
             Assert.Equal(55, g.WallType.StcRating);
+        }
+
+        [Fact]
+        public void File_OneMisplacedWall_DoesNotDragTheOthers()
+        {
+            // 24 straight walls in two directions; one wall's file axis is 4 m off (e.g. on a grid placement)
+            var link = new List<IfcLinkWall>();
+            var walls = new List<IfcFileWall>();
+            for (int i = 0; i < 12; i++)
+            {
+                link.Add(Box(i + 1, "h" + i, 0, 3 * i - 0.15, 8, 3 * i + 0.15));
+                walls.Add(new IfcFileWall { GlobalId = "h" + i, Centerline = { new Vec2(100, 50 + 3 * i + (i == 5 ? 4 : 0)), new Vec2(108, 50 + 3 * i + (i == 5 ? 4 : 0)) }, ThicknessM = 0.3 });
+                link.Add(Box(i + 101, "v" + i, 20 + 3 * i - 0.15, 0, 20 + 3 * i + 0.15, 8));
+                walls.Add(new IfcFileWall { GlobalId = "v" + i, Centerline = { new Vec2(120 + 3 * i, 50), new Vec2(120 + 3 * i, 58) }, ThicknessM = 0.3 });
+            }
+            IfcWallBuildResult r = IfcWallBuilder.Build(link, new IfcWallBuildOptions { File = new IfcFileData { Walls = walls } });
+
+            Assert.Equal(-100, r.FileToModel.Offset.X, 6);
+            Assert.Equal(-50, r.FileToModel.Offset.Y, 6);
+            Assert.Equal(23, r.FromFile);
+            Assert.Equal(1, r.FromOutline);
         }
 
         [Fact]

@@ -84,7 +84,8 @@ namespace SoundCalcs.UI.ViewModels
                 DetectedRooms.Add(room);
             _boundaryLineIds = settings.BoundaryLineIds ?? new List<int>();
             _wallsDetected = settings.WallsDetected;
-            _ifcFileOverride = settings.IfcFileOverride ?? "";
+            if (string.IsNullOrEmpty(_selectedLink.IfcFileOverride) && !string.IsNullOrEmpty(settings.IfcFileOverride))
+                _selectedLink.IfcFileOverride = settings.IfcFileOverride;   // written by the first IFC version
 
             // Every change is saved shortly after it is made; the checklist follows the inputs.
             _speakerGroups.CollectionChanged += OnInputCollectionChanged;
@@ -95,6 +96,7 @@ namespace SoundCalcs.UI.ViewModels
             SelectedSpeakerGroup = _speakerGroups.FirstOrDefault();
 
             _loading = false;
+            PreloadIfcFile();
             ValidateStoredValues();
             RefreshPreflight();
         }
@@ -372,7 +374,9 @@ namespace SoundCalcs.UI.ViewModels
                 _selectedLink = value ?? new LinkSelection();
                 OnPropertyChanged(nameof(SelectedLink));
                 OnPropertyChanged(nameof(SelectedLinkIsIfc));
+                OnPropertyChanged(nameof(IfcFileOverride));
                 OnPropertyChanged(nameof(IfcFileStatus));
+                PreloadIfcFile();
             }
         }
 
@@ -381,23 +385,28 @@ namespace SoundCalcs.UI.ViewModels
         /// <summary>True when the selected link is an IFC: Detect walls rebuilds its walls from their shapes.</summary>
         public bool SelectedLinkIsIfc => _selectedLink != null && _selectedLink.IsValid && _selectedLink.IsIfc;
 
-        private string _ifcFileOverride = "";
-        /// <summary>The original .ifc chosen by the user; empty = the one next to the link's converted copy.</summary>
+        /// <summary>
+        /// The original .ifc chosen by the user for the selected link; empty = the one next to the link's converted
+        /// copy. Stored with the link, so another link (or project) doesn't inherit it.
+        /// </summary>
         public string IfcFileOverride
         {
-            get => _ifcFileOverride;
+            get => _selectedLink?.IfcFileOverride ?? "";
             set
             {
-                _ifcFileOverride = value?.Trim().Trim('"') ?? "";
+                if (_selectedLink == null) return;
+                _selectedLink.IfcFileOverride = value?.Trim().Trim('"') ?? "";
                 OnPropertyChanged(nameof(IfcFileOverride));
                 OnPropertyChanged(nameof(IfcFileStatus));
+                PreloadIfcFile();
             }
         }
+
 
         /// <summary>The original IFC file Detect walls reads axes and layers from, or null when there is none.</summary>
         private string IfcFilePath()
         {
-            string path = _ifcFileOverride.Length > 0 ? _ifcFileOverride : _selectedLink?.IfcFilePath ?? "";
+            string path = IfcFileOverride.Length > 0 ? IfcFileOverride : _selectedLink?.IfcFilePath ?? "";
             return path.Length > 0 && System.IO.File.Exists(path) ? path : null;
         }
 
@@ -410,9 +419,9 @@ namespace SoundCalcs.UI.ViewModels
                 string path = IfcFilePath();
                 if (path != null)
                     return $"Wall axes and layers from {System.IO.Path.GetFileName(path)}" +
-                        (_ifcFileOverride.Length > 0 ? " (chosen)" : "") + ".";
-                return _ifcFileOverride.Length > 0
-                    ? $"{System.IO.Path.GetFileName(_ifcFileOverride)} was not found. Walls come from the link's shapes only."
+                        (IfcFileOverride.Length > 0 ? " (chosen)" : "") + ".";
+                return IfcFileOverride.Length > 0
+                    ? $"{System.IO.Path.GetFileName(IfcFileOverride)} was not found. Walls come from the link's shapes only."
                     : "Original .ifc not found next to the link. Walls come from the link's shapes only; choose the file for exact wall lines.";
             }
         }
@@ -421,15 +430,16 @@ namespace SoundCalcs.UI.ViewModels
         private static readonly Dictionary<string, (DateTime Written, Domain.Ifc.IfcFileData Data)> IfcFileCache =
             new Dictionary<string, (DateTime, Domain.Ifc.IfcFileData)>(StringComparer.OrdinalIgnoreCase);
 
-        private Domain.Ifc.IfcFileData LoadIfcFile(string path, out string error)
+        private static Domain.Ifc.IfcFileData LoadIfcFile(string path, out string error)
         {
             error = null;
             try
             {
                 DateTime written = System.IO.File.GetLastWriteTimeUtc(path);
-                if (IfcFileCache.TryGetValue(path, out var cached) && cached.Written == written) return cached.Data;
+                lock (IfcFileCache)
+                    if (IfcFileCache.TryGetValue(path, out var cached) && cached.Written == written) return cached.Data;
                 var data = Domain.Ifc.IfcWallReader.Read(path);
-                IfcFileCache[path] = (written, data);
+                lock (IfcFileCache) IfcFileCache[path] = (written, data);
                 return data;
             }
             catch (Exception ex)
@@ -438,6 +448,24 @@ namespace SoundCalcs.UI.ViewModels
                 FileLogger.Log($"IFC file '{path}' could not be read: {ex}");
                 return null;
             }
+        }
+
+        // The IFC file being read in the background since the link (or file) was chosen
+        private System.Threading.Tasks.Task<(Domain.Ifc.IfcFileData Data, string Error)> _ifcPreload;
+        private string _ifcPreloadPath;
+
+        /// <summary>Starts reading the selected IFC link's original file in the background, so Detect walls finds it ready.</summary>
+        private void PreloadIfcFile()
+        {
+            if (_loading || !SelectedLinkIsIfc) return;
+            string path = IfcFilePath();
+            if (path == null || path == _ifcPreloadPath) return;
+            _ifcPreloadPath = path;
+            _ifcPreload = System.Threading.Tasks.Task.Run(() =>
+            {
+                var data = LoadIfcFile(path, out string error);
+                return (data, error);
+            });
         }
 
         // What the last wall detection did with the IFC link, for the status line
@@ -453,6 +481,9 @@ namespace SoundCalcs.UI.ViewModels
 
             string fileError = null;
             string path = IfcFilePath();
+            // Wait for the background read (usually finished long ago), then take it from the cache, which
+            // reads the file again if it changed since
+            if (path != null && _ifcPreload != null && _ifcPreloadPath == path) _ifcPreload.Wait();
             Domain.Ifc.IfcFileData file = path != null ? LoadIfcFile(path, out fileError) : null;
 
             var options = new IfcWallBuildOptions { LevelElevationM = AnalysisLevelElevation(), File = file };
@@ -704,14 +735,22 @@ namespace SoundCalcs.UI.ViewModels
                 List<WallLineGroup> groups = new RevitDataCollector(doc).ReadBoundaryLines(_boundaryLineIds, out List<int> found, out double lineZ);
                 if (groups.Count == 0)
                 {
-                    StatusMessage = "None of the boundary lines are in the model any more. Select the boundary again.";
-                    return;
+                    // Keep the last boundary; the detected walls can still be refreshed
+                    if (!_wallsDetected)
+                    {
+                        StatusMessage = "None of the boundary lines are in the model any more. Select the boundary again.";
+                        return;
+                    }
+                    parts.Add("boundary lines deleted (boundary kept; select it again)");
                 }
-                int lost = _boundaryLineIds.Count - found.Count;
-                if (!_wallsDetected) ModelSync.KeepWallSettings(previous, groups);
-                ApplyBoundaryLines(groups, lineZ, found, replaceWalls: !_wallsDetected);
-                parts.Add($"boundary {DetectedRooms[0].Area:F0} m² from {found.Count} line(s)" +
-                    (lost > 0 ? $", {lost} deleted line(s) dropped" : ""));
+                else
+                {
+                    int lost = _boundaryLineIds.Count - found.Count;
+                    if (!_wallsDetected) ModelSync.KeepWallSettings(previous, groups);
+                    ApplyBoundaryLines(groups, lineZ, found, replaceWalls: !_wallsDetected);
+                    parts.Add($"boundary {DetectedRooms[0].Area:F0} m² from {found.Count} line(s)" +
+                        (lost > 0 ? $", {lost} deleted line(s) dropped" : ""));
+                }
             }
 
             if (_wallsDetected)
@@ -864,12 +903,20 @@ namespace SoundCalcs.UI.ViewModels
             }
 
             var pickedIds = pickedRefs.Select(r => RevitCompat.GetIdValue(r.ElementId)).Distinct().ToList();
-            var wanted = _pickedSpeakerIds.Union(pickedIds).ToList();
+
+            // The speakers already in the list are read again too: they keep their settings and aims. A list
+            // from another project is replaced (its element ids mean other elements here); only the type
+            // settings carry over.
+            bool sameProject = FromCurrentProject(_speakersProjectKey, _speakersProjectName, "speaker list", out _);
+            List<SpeakerTypeGroup> current = sameProject
+                ? SpeakerGroups.Select(g => g.GetGroup()).ToList()
+                : SpeakerGroups.Select(g => new SpeakerTypeGroup { TypeKey = g.TypeKey, Mapping = g.GetMapping() }).ToList();
+            var wanted = (sameProject ? _pickedSpeakerIds.Union(pickedIds) : pickedIds).ToList();
             List<SpeakerInstance> fresh = new RevitDataCollector(doc).CollectSpeakersById(wanted, AbLineParameterName);
             var freshIds = new HashSet<int>(fresh.Select(f => f.ElementId));
 
-            // The speakers already in the list are read again too: they keep their settings and aims.
-            SpeakerSyncResult result = ModelSync.MergeSpeakers(SpeakerGroups.Select(g => g.GetGroup()), fresh, wanted, _savedMappings);
+            SpeakerSyncResult result = ModelSync.MergeSpeakers(current, fresh, wanted, _savedMappings, sameProject ? _unsavedAims : null);
+            if (!sameProject) _unsavedAims.Clear();
             ApplySpeakerGroups(result.Groups);
 
             int skipped = pickedIds.Count(id => !freshIds.Contains(id));
@@ -910,7 +957,7 @@ namespace SoundCalcs.UI.ViewModels
             var ids = _pickedSpeakerIds.ToList();
 
             List<SpeakerInstance> fresh = new RevitDataCollector(doc).CollectSpeakersById(ids, AbLineParameterName);
-            SpeakerSyncResult result = ModelSync.MergeSpeakers(groups.Select(g => g.GetGroup()), fresh, ids, _savedMappings);
+            SpeakerSyncResult result = ModelSync.MergeSpeakers(groups.Select(g => g.GetGroup()), fresh, ids, _savedMappings, _unsavedAims);
             ApplySpeakerGroups(result.Groups);
             SaveSettingsCore();
             RefreshPreflight();
@@ -935,9 +982,24 @@ namespace SoundCalcs.UI.ViewModels
             });
         }
 
+        /// <summary>
+        /// Keeps the settings of every type in the list, so a type that leaves it (all its speakers deleted,
+        /// retyped or cleared) gets them back when it returns.
+        /// </summary>
+        private void RememberMappings()
+        {
+            foreach (SpeakerGroupViewModel g in SpeakerGroups)
+            {
+                SpeakerProfileMapping m = g.GetMapping();
+                _savedMappings.RemoveAll(x => x.TypeKey == m.TypeKey);
+                _savedMappings.Add(m);
+            }
+        }
+
         /// <summary>Shows <paramref name="groups"/> as the speaker list; the selected type stays selected.</summary>
         private void ApplySpeakerGroups(List<SpeakerTypeGroup> groups)
         {
+            RememberMappings();
             string selectedType = SelectedSpeakerGroup?.TypeKey;
             SpeakerGroups.Clear();
             _pickedSpeakerIds.Clear();
@@ -961,6 +1023,7 @@ namespace SoundCalcs.UI.ViewModels
             var ids = _pickedSpeakerIds.ToList();
             string key = _speakersProjectKey, name = _speakersProjectName;
 
+            RememberMappings();
             _pickedSpeakerIds.Clear();
             SpeakerGroups.Clear();
             _speakersProjectKey = _speakersProjectName = null;
@@ -1454,7 +1517,11 @@ namespace SoundCalcs.UI.ViewModels
             foreach (LinkSelection link in links)
                 AvailableLinks.Add(link);
             LinkSelection same = links.FirstOrDefault(l => l.LinkInstanceId == selectedId);
-            if (same != null) SelectedLink = same;
+            if (same != null)
+            {
+                same.IfcFileOverride = SelectedLink.IfcFileOverride;   // the file chosen for this link stays
+                SelectedLink = same;
+            }
 
             StatusMessage = $"Found {links.Count} linked model(s).";
         }
@@ -1485,7 +1552,9 @@ namespace SoundCalcs.UI.ViewModels
                     FloorSurface = FloorSurface.Preset,
                     CeilingSurface = CeilingSurface.Preset
                 },
-                SpeakerMappings    = SpeakerGroups.Select(g => g.GetMapping()).ToList(),
+                // Every type's settings, also of types not in the list now
+                SpeakerMappings    = SpeakerGroups.Select(g => g.GetMapping())
+                    .Concat(_savedMappings.Where(m => SpeakerGroups.All(g => g.TypeKey != m.TypeKey))).ToList(),
                 WallGroups         = WallLineGroups.Select(vm => vm.GetGroup()).ToList(),
                 BoundaryRooms      = DetectedRooms.ToList(),
                 SavedSpeakerGroups = SpeakerGroups.Select(vm => vm.GetGroup()).ToList(),
@@ -1493,7 +1562,6 @@ namespace SoundCalcs.UI.ViewModels
                 LayoutProjectName   = _layoutProjectName,
                 SpeakersProjectKey  = _speakersProjectKey,
                 SpeakersProjectName = _speakersProjectName,
-                IfcFileOverride     = _ifcFileOverride,
                 BoundaryLineIds     = _boundaryLineIds.ToList(),
                 WallsDetected       = _wallsDetected
             };
@@ -1509,21 +1577,43 @@ namespace SoundCalcs.UI.ViewModels
         /// </summary>
         public void SetSpeakerAimAngle(int elementId, double angleDeg)
         {
-            // Kept as a correction to the family's facing, so it survives a refresh after the speaker moves
-            foreach (SpeakerInstance inst in SpeakerGroups.SelectMany(g => g.GetGroup().Instances))
-                if (inst.ElementId == elementId)
-                    inst.AimOffsetDeg = SpeakerAim.OffsetFor(angleDeg, inst.ModelAimDeg);
+            // Kept as a correction to the family's facing, so it survives a refresh after the speaker moves.
+            // Until the model has it, a refresh keeps this one instead of the model's older value.
+            var aimed = SpeakerGroups.SelectMany(g => g.GetGroup().Instances).Where(i => i.ElementId == elementId).ToList();
+            foreach (SpeakerInstance inst in aimed)
+                inst.AimOffsetDeg = SpeakerAim.OffsetFor(angleDeg, inst.ModelAimDeg);
+            _unsavedAims.Add(elementId);
 
             _dispatcher.Enqueue(uiApp =>
             {
                 Document doc = uiApp.ActiveUIDocument?.Document;
                 if (doc == null) return;
-                SpeakerRotationStorage.Write(doc, elementId, angleDeg);
-                FileLogger.Log($"SetSpeakerAimAngle: id={elementId}, angle={angleDeg:F1}°");
+                Element elem = doc.GetElement(RevitCompat.ToElementId(elementId));
+                if (SpeakerRotationStorage.Write(doc, elementId, angleDeg, out string error))
+                {
+                    _unsavedAims.Remove(elementId);
+                    // The family's real facing (unknown for speakers saved by older versions)
+                    double? modelAim = elem != null ? SpeakerRotationStorage.ModelAimDeg(elem) : null;
+                    foreach (SpeakerInstance inst in aimed)
+                    {
+                        inst.ModelAimDeg = modelAim;
+                        inst.AimOffsetDeg = SpeakerAim.OffsetFor(angleDeg, modelAim);
+                    }
+                    ScheduleSave();
+                    FileLogger.Log($"SetSpeakerAimAngle: id={elementId}, angle={angleDeg:F1}°");
+                }
+                else
+                {
+                    FileLogger.Log($"SetSpeakerAimAngle: id={elementId} not stored in the model: {error}");
+                    SetStatusFromRevitThread($"The aim could not be stored in the model ({error}). SoundCalcs keeps it.");
+                }
             });
             SaveSettingsCore();
             StatusMessage = $"Speaker aim set to {angleDeg:F0}°. Re-run the analysis to update the heatmap.";
         }
+
+        // Speakers aimed in the viewer whose aim is not (yet) stored in the model
+        private readonly HashSet<int> _unsavedAims = new HashSet<int>();
 
         /// <summary>
         /// Start the SPL computation job.
@@ -1998,6 +2088,7 @@ namespace SoundCalcs.UI.ViewModels
                 if (_group.WallType != value)
                 {
                     _group.WallType = value;
+                    _group.UserEdited = true;
                     PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(WallType)));
                 }
             }
@@ -2013,6 +2104,7 @@ namespace SoundCalcs.UI.ViewModels
                 if (Math.Abs(_group.HeightM - v) > 1e-9)
                 {
                     _group.HeightM = v;
+                    _group.UserEdited = true;
                     PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(HeightM)));
                 }
             }

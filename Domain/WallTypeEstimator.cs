@@ -20,9 +20,15 @@ namespace SoundCalcs.Domain
             // Measured thicknesses (IFC shapes) come with rounding noise: 0.0999999 m is a 100 mm wall
             thicknessM = Math.Round(thicknessM, 3);
             int stc = TryParseRating(acousticRating, out int rated) ? rated : EstimateStc(typeName, thicknessM);
-            // Keep the material the name gives (a concrete wall stays concrete, not the brick type nearest in STC)
+            // Keep the material the name gives (a concrete wall stays concrete, not the brick type nearest in STC),
+            // as long as that material has a type within 3 dB of the rating; else the rating decides
             WallAbsorptionPreset? surface = SurfaceFromName(typeName);
-            return surface.HasValue ? FindClosest(stc, surface.Value) : WallTypeCatalog.FindClosestByStc(stc);
+            if (surface.HasValue)
+            {
+                WallTypeInfo same = FindClosest(stc, surface.Value);
+                if (same.Surface == surface.Value && Math.Abs(same.StcRating - stc) <= 3) return same;
+            }
+            return WallTypeCatalog.FindClosestByStc(stc);
         }
 
         /// <summary>
@@ -33,12 +39,26 @@ namespace SoundCalcs.Domain
         {
             rating = 0;
             if (string.IsNullOrWhiteSpace(value)) return false;
-            foreach (Match m in Regex.Matches(value, @"(?<![\d.\-])\d{2}(?:[.,]\d+)?(?![\d])"))
+            // Fire classes ("EI 60", "REI 90") are not sound insulation
+            if (Regex.IsMatch(value, @"(?i)(^|[^a-z])(R?EI|EW)\s*\d")) return false;
+            // A number not part of a longer one or negative ("STC-50" is fine: the dash follows letters)
+            foreach (Match m in Regex.Matches(value, @"(?<![\d.])(?<![^A-Za-z]-)(?<!^-)\d{2}(?:[.,]\d+)?(?![\d])"))
             {
                 double v = double.Parse(m.Value.Replace(',', '.'), CultureInfo.InvariantCulture);
                 if (v >= 10 && v <= 90) { rating = (int)Math.Round(v, MidpointRounding.AwayFromZero); return true; }
             }
             return false;
+        }
+
+        /// <summary>
+        /// Whether an object type names a wall (an IfcBuildingElementProxy exported for a wall), not something on
+        /// one: "Wall", "Partition wall", but not "Wall cabinet", "Wall-mounted TV" or "Drywall ceiling".
+        /// </summary>
+        public static bool NamesAWall(string objectType)
+        {
+            string n = (objectType ?? "").ToLowerInvariant();
+            if (!Regex.IsMatch(n, @"(?<![a-z])walls?(?![a-z\-])")) return false;
+            return !Regex.IsMatch(n, @"mount|cabinet|\btv\b|lamp|light|luminaire|socket|outlet|switch|shelf|hung|sconce|clock|heater|radiator|ceiling|floor");
         }
 
         /// <summary>Surface material named in a wall type / material name, if any.</summary>

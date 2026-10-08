@@ -132,8 +132,13 @@ namespace SoundCalcs.Domain
                     if (box != null) { pieces.Add(box); method = WallFootprintMethod.Rectangle; }
                 }
                 pieces.RemoveAll(p => p.Length < 0.05 || p.ThicknessM > WallFootprint.MaxThicknessM);
-                // A wall modelled as one solid per layer: the touching layers are one wall, not several
-                if (w.Outlines.Count > 1) WallFootprint.MergeTouching(pieces);
+                // Faces at several heights (stepped top, sills) are one wall along its length; a wall modelled as
+                // one solid per layer: the touching layers are one wall, not several
+                if (w.Outlines.Count > 1)
+                {
+                    WallFootprint.MergeCollinear(pieces);
+                    WallFootprint.MergeTouching(pieces);
+                }
                 fromShape[w] = (pieces, pieces.Count > 0 ? method : WallFootprintMethod.None);
             }
 
@@ -166,7 +171,7 @@ namespace SoundCalcs.Domain
                 string name = (string.IsNullOrWhiteSpace(w.GroupName) ? (fw?.TypeName ?? fw?.ObjectType ?? "Wall") : w.GroupName) + GroupSuffix;
                 if (!groups.TryGetValue(name, out var g))
                 {
-                    g = (new WallLineGroup { LineStyleName = name }, new List<double>(), new List<double>(), null, new List<string>());
+                    g = (new WallLineGroup { LineStyleName = name, UserEdited = false }, new List<double>(), new List<double>(), null, new List<string>());
                     groups[name] = g;
                 }
                 string rating = w.AcousticRating ?? fw?.AcousticRating;
@@ -277,22 +282,37 @@ namespace SoundCalcs.Domain
             // Along a wall the two midpoints can disagree (a corner shortens the shape's midline); across it they
             // must not. Refine the offset from the across-wall distances (least squares), when walls run in at
             // least two directions, and measure the fit by them.
-            double a11 = 0, a12 = 0, a22 = 0, b1 = 0, b2 = 0;
             var normals = new List<(Vec2 N, Vec2 Model, Vec2 File)>();
             foreach (var pr in pairs)
             {
                 var n = new Vec2(-Math.Sin(pr.ModelAngle), Math.Cos(pr.ModelAngle));
                 Vec2 rf = new PlanTransform { AngleRad = best.AngleRad }.Apply(pr.FileMid);
-                double rhs = Vec2.Dot(n, pr.ModelMid - rf);
-                a11 += n.X * n.X; a12 += n.X * n.Y; a22 += n.Y * n.Y;
-                b1 += n.X * rhs; b2 += n.Y * rhs;
                 normals.Add((n, pr.ModelMid, rf));
             }
-            double det = a11 * a22 - a12 * a12;
-            if (det > 0.05 * pairs.Count * pairs.Count * 0.25)
+            Vec2? Solve(List<(Vec2 N, Vec2 Model, Vec2 File)> use)
             {
-                best.Offset = new Vec2((a22 * b1 - a12 * b2) / det, (a11 * b2 - a12 * b1) / det);
-                bestResidual = Median(normals.Select(x => Math.Abs(Vec2.Dot(x.N, x.File + best.Offset - x.Model))));
+                double s11 = 0, s12 = 0, s22 = 0, r1 = 0, r2 = 0;
+                foreach (var x in use)
+                {
+                    double rhs = Vec2.Dot(x.N, x.Model - x.File);
+                    s11 += x.N.X * x.N.X; s12 += x.N.X * x.N.Y; s22 += x.N.Y * x.N.Y;
+                    r1 += x.N.X * rhs; r2 += x.N.Y * rhs;
+                }
+                double dt = s11 * s22 - s12 * s12;
+                if (dt <= 0.05 * use.Count * use.Count * 0.25) return null;   // walls in one direction only
+                return new Vec2((s22 * r1 - s12 * r2) / dt, (s11 * r2 - s12 * r1) / dt);
+            }
+            double Across((Vec2 N, Vec2 Model, Vec2 File) x, Vec2 off) => Math.Abs(Vec2.Dot(x.N, x.File + off - x.Model));
+            Vec2? solved = Solve(normals);
+            if (solved.HasValue)
+            {
+                // A wall that is far off (moved in one model but not the other, unreadable placement) must not drag
+                // the others: solve again without the outliers
+                double med = Median(normals.Select(x => Across(x, solved.Value)));
+                var inliers = normals.Where(x => Across(x, solved.Value) <= Math.Max(0.1, 3 * med)).ToList();
+                Vec2? again = inliers.Count >= 2 && inliers.Count < normals.Count ? Solve(inliers) : null;
+                best.Offset = again ?? solved.Value;
+                bestResidual = Median(normals.Select(x => Across(x, best.Offset)));
             }
 
             result.FitResidualM = bestResidual;

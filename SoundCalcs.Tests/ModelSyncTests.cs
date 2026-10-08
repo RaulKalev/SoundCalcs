@@ -149,6 +149,28 @@ namespace SoundCalcs.Tests
         }
 
         [Fact]
+        public void WallSettings_GuessesAreReplaced_UserChoicesKept()
+        {
+            var glass = WallTypeCatalog.FindByKey("glass_single");
+            var concrete = WallTypeCatalog.FindByKey("concrete_200");
+            var previous = new[]
+            {
+                new WallLineGroup { LineStyleName = "Guess", WallType = glass, UserEdited = false },
+                new WallLineGroup { LineStyleName = "Chosen", WallType = glass, UserEdited = true }
+            };
+            var fresh = new List<WallLineGroup>
+            {
+                new WallLineGroup { LineStyleName = "Guess", WallType = concrete, UserEdited = false },
+                new WallLineGroup { LineStyleName = "Chosen", WallType = concrete, UserEdited = false }
+            };
+            Assert.Equal(1, ModelSync.KeepWallSettings(previous, fresh));
+            Assert.Same(concrete, fresh[0].WallType);
+            Assert.False(fresh[0].UserEdited);
+            Assert.Same(glass, fresh[1].WallType);
+            Assert.True(fresh[1].UserEdited);
+        }
+
+        [Fact]
         public void WallSettings_KeptByLineStyle_NewStylesUntouched()
         {
             var concrete = WallTypeCatalog.FindByKey("concrete_200");

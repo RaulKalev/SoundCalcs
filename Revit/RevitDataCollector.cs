@@ -163,7 +163,7 @@ namespace SoundCalcs.Revit
                 catch { }
 
                 if (!groups.TryGetValue(styleName, out WallLineGroup grp))
-                    groups[styleName] = grp = new WallLineGroup { LineStyleName = styleName };
+                    groups[styleName] = grp = new WallLineGroup { LineStyleName = styleName, UserEdited = false };
 
                 IList<XYZ> pts = curve.Tessellate();
                 for (int i = 0; i < pts.Count - 1; i++)
@@ -569,7 +569,7 @@ namespace SoundCalcs.Revit
                     return true;
             }
             foreach (string name in ObjectTypeParams)
-                if (ParamString(elem, name).IndexOf("wall", StringComparison.OrdinalIgnoreCase) >= 0) return true;
+                if (WallTypeEstimator.NamesAWall(ParamString(elem, name))) return true;
             return false;
         }
 
@@ -636,21 +636,22 @@ namespace SoundCalcs.Revit
                 MaxZ = Math.Max(MaxZ, z);
             }
 
-            /// <summary>The highest upward faces of each solid / mesh, as outlines.</summary>
+            /// <summary>
+            /// Every upward face of each solid, and of each mesh per height, as outlines: a stepped or partly sloped
+            /// top has faces at several heights, and only all of them cover the wall's length. Overlaps (window
+            /// sills under the top) are merged by <see cref="IfcWallBuilder"/>.
+            /// </summary>
             public List<List<Vec2>> Outlines()
             {
                 var result = new List<List<Vec2>>();
-                foreach (var tops in SolidTops.Where(t => t.Count > 0))
-                {
-                    double top = tops.Max(t => t.Z);
-                    result.AddRange(tops.Where(t => t.Z > top - 0.001).Select(t => t.Loop));
-                }
+                foreach (var tops in SolidTops)
+                    result.AddRange(tops.Select(t => t.Loop));
                 foreach (var tris in MeshTops.Where(t => t.Count > 0))
-                {
-                    double top = tris.Max(t => t.Z);
-                    List<Vec2> loop = WallFootprint.OutlineFromTriangles(tris.Where(t => t.Z > top - 0.001).Select(t => (t.A, t.B, t.C)));
-                    if (loop.Count >= 3) result.Add(loop);
-                }
+                    foreach (var level in tris.GroupBy(t => Math.Round(t.Z, 2)))
+                    {
+                        List<Vec2> loop = WallFootprint.OutlineFromTriangles(level.Select(t => (t.A, t.B, t.C)));
+                        if (loop.Count >= 3) result.Add(loop);
+                    }
                 return result;
             }
         }
@@ -701,13 +702,13 @@ namespace SoundCalcs.Revit
                         XYZ a = xform.OfPoint(t.get_Vertex(0)), b = xform.OfPoint(t.get_Vertex(1)), c = xform.OfPoint(t.get_Vertex(2));
                         XYZ n = (b - a).CrossProduct(c - a);
                         if (n.GetLength() < 1e-12 || Math.Abs(n.Normalize().Z) < 0.99) continue;
-                        // Upward in either winding: meshes are not reliably oriented
+                        // Horizontal in either winding (meshes are not reliably oriented): the bottom gives the same
+                        // plan outline as the top, and is merged with it
                         Vec2 A = new Vec2(UnitConversion.FtToM(a.X), UnitConversion.FtToM(a.Y));
                         Vec2 B = new Vec2(UnitConversion.FtToM(b.X), UnitConversion.FtToM(b.Y));
                         Vec2 C = new Vec2(UnitConversion.FtToM(c.X), UnitConversion.FtToM(c.Y));
                         tris.Add((UnitConversion.FtToM((a.Z + b.Z + c.Z) / 3), A, B, C));
                     }
-                    // Horizontal triangles at the very top only (the bottom is horizontal too)
                     geom.MeshTops.Add(tris);
                 }
                 else if (obj is GeometryInstance gi)
@@ -790,7 +791,8 @@ namespace SoundCalcs.Revit
                         grp = new Domain.WallLineGroup
                         {
                             LineStyleName = typeName,
-                            WallType = WallTypeEstimator.Estimate(typeName, thicknessM)
+                            WallType = WallTypeEstimator.Estimate(typeName, thicknessM),
+                            UserEdited = false
                         };
                         groups[typeName] = grp;
                     }
