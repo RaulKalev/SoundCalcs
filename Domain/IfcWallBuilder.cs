@@ -5,12 +5,20 @@ using SoundCalcs.Domain.Ifc;
 
 namespace SoundCalcs.Domain
 {
+    /// <summary>What became of a column: see <see cref="IfcWallBuilder.PlaceColumn"/>.</summary>
+    public enum ColumnPlacement { Placed, InsideWall, TooSmall, Unusable }
+
+    /// <summary>What an <see cref="IfcLinkWall"/> is: a wall, a door / window standing in or for one, or a column.</summary>
+    public enum IfcElementKind { Wall, Door, Window, Column }
+
     /// <summary>
     /// One wall of a linked IFC as Revit rebuilt it: shapes only (DirectShape), plus the IFC data Revit kept as
-    /// parameters. Coordinates in metres, in the host model.
+    /// parameters. Coordinates in metres, in the host model. Doors and windows (curtain wall panels among them)
+    /// come the same way with their <see cref="Kind"/>.
     /// </summary>
     public class IfcLinkWall
     {
+        public IfcElementKind Kind { get; set; } = IfcElementKind.Wall;
         public int ElementId { get; set; }
         /// <summary>IfcGUID parameter: matches the wall in the original file.</summary>
         public string IfcGuid { get; set; } = "";
@@ -72,6 +80,13 @@ namespace SoundCalcs.Domain
         public int FromRectangle { get; set; }
         public int OtherLevel { get; set; }
         public int Unusable { get; set; }
+        /// <summary>Doors and windows set into a wall (the wall cut around them), and standing on their own.</summary>
+        public int OpeningsInWalls { get; set; }
+        public int OpeningsFree { get; set; }
+        /// <summary>Columns standing free, and those inside a wall (left to the wall).</summary>
+        public int Columns { get; set; }
+        public int ColumnsInWalls { get; set; }
+        public int ColumnsSmall { get; set; }
         /// <summary>How the file was used, for the status line and the log.</summary>
         public string FileStatus { get; set; } = "";
         public PlanTransform FileToModel { get; set; }
@@ -83,6 +98,11 @@ namespace SoundCalcs.Domain
             if (FromFile > 0) parts.Add($"{FromFile} from the IFC file");
             if (FromOutline > 0) parts.Add($"{FromOutline} from shapes");
             if (FromRectangle > 0) parts.Add($"{FromRectangle} approximated");
+            if (OpeningsInWalls + OpeningsFree > 0)
+                parts.Add($"{OpeningsInWalls + OpeningsFree} door(s)/window(s), {OpeningsFree} standing free (glazing, curtain panels)");
+            if (Columns + ColumnsInWalls + ColumnsSmall > 0)
+                parts.Add($"{Columns} column(s)" + (ColumnsInWalls > 0 ? $" ({ColumnsInWalls} more inside walls)" : "") +
+                    (ColumnsSmall > 0 ? $", {ColumnsSmall} thinner than {IfcWallBuilder.MinColumnSizeM * 1000:F0} mm left out" : ""));
             if (OtherLevel > 0) parts.Add($"{OtherLevel} on other levels skipped");
             if (Unusable > 0) parts.Add($"{Unusable} unreadable");
             return string.Join(", ", parts);
@@ -112,6 +132,19 @@ namespace SoundCalcs.Domain
                     if (w.TopZ < probe || w.BaseZ > probe) { result.OtherLevel++; continue; }
                 }
                 walls.Add(w);
+            }
+            var openings = walls.Where(w => w.Kind == IfcElementKind.Door || w.Kind == IfcElementKind.Window).ToList();
+            var columns = walls.Where(w => w.Kind == IfcElementKind.Column).ToList();
+            walls = walls.Where(w => w.Kind == IfcElementKind.Wall).ToList();
+
+            // Doors and windows: the long axis of their plan footprint (a leaf, a glass pane, a frame)
+            var openingPieces = new Dictionary<IfcLinkWall, WallPiece>();
+            foreach (IfcLinkWall o in openings)
+            {
+                WallPiece p = o.Points.Count >= 3 ? WallFootprint.FromPoints(o.Points) : null;
+                if (p == null || p.Length < 0.1 || p.ThicknessM > WallFootprint.MaxThicknessM) { result.Unusable++; continue; }
+                p.ThicknessM = Math.Max(p.ThicknessM, 0.02);
+                openingPieces[o] = p;
             }
 
             // Centerlines from the shapes
@@ -159,29 +192,43 @@ namespace SoundCalcs.Domain
             }
             result.WallCount = walls.Count;
 
+            // A door or window in a wall replaces that stretch of it; the others (curtain panels, glazed
+            // partitions) stand on their own
+            foreach (WallPiece o in openingPieces.Values)
+            {
+                if (SetIntoWall(o, piecesOf.Values.ToList())) result.OpeningsInWalls++;
+                else result.OpeningsFree++;
+            }
+
             // Close the corners and T junctions between all walls
-            WallFootprint.JoinEnds(piecesOf.Values.SelectMany(p => p).ToList());
+            WallFootprint.JoinEnds(piecesOf.Values.SelectMany(p => p).Concat(openingPieces.Values).ToList());
+
+            // Columns: their plan outline, unless they stand inside a wall (the wall already blocks there)
+            var allWallPieces = piecesOf.Values.SelectMany(p => p).Concat(openingPieces.Values).ToList();
+            var columnPieces = new Dictionary<IfcLinkWall, List<WallPiece>>();
+            foreach (IfcLinkWall c in columns)
+            {
+                List<WallPiece> pieces = PlaceColumn(c.Points, allWallPieces, out ColumnPlacement how);
+                if (how == ColumnPlacement.Placed) { columnPieces[c] = pieces; result.Columns++; }
+                else if (how == ColumnPlacement.InsideWall) result.ColumnsInWalls++;
+                else if (how == ColumnPlacement.TooSmall) result.ColumnsSmall++;
+                else result.Unusable++;
+            }
 
             // One row per IFC type
-            var groups = new Dictionary<string, (WallLineGroup Group, List<double> Thickness, List<double> Height, string Rating, List<string> Materials)>();
-            foreach (var kv in piecesOf)
+            var groups = new Dictionary<string, GroupAcc>();
+            void Add(IfcLinkWall w, IfcFileWall fw, string name, IEnumerable<WallPiece> pieces)
             {
-                IfcLinkWall w = kv.Key;
-                IfcFileWall fw = fromFile.TryGetValue(w, out var f) ? f.Wall : options.File?.Find(w.IfcGuid);
-                string name = (string.IsNullOrWhiteSpace(w.GroupName) ? (fw?.TypeName ?? fw?.ObjectType ?? "Wall") : w.GroupName) + GroupSuffix;
-                if (!groups.TryGetValue(name, out var g))
-                {
-                    g = (new WallLineGroup { LineStyleName = name, UserEdited = false }, new List<double>(), new List<double>(), null, new List<string>());
-                    groups[name] = g;
-                }
+                if (!groups.TryGetValue(name, out GroupAcc g))
+                    groups[name] = g = new GroupAcc { Kind = w.Kind, Group = new WallLineGroup { LineStyleName = name, UserEdited = false } };
                 string rating = w.AcousticRating ?? fw?.AcousticRating;
-                if (g.Rating == null && rating != null) { g.Rating = rating; groups[name] = g; }
+                if (g.Rating == null && rating != null) g.Rating = rating;
                 foreach (string m in w.Materials.Concat(fw?.Materials ?? new List<string>()))
                     if (!g.Materials.Contains(m)) g.Materials.Add(m);
 
                 double height = Math.Max(0, w.TopZ - w.BaseZ);
                 g.Height.Add(height);
-                foreach (WallPiece p in kv.Value)
+                foreach (WallPiece p in pieces)
                 {
                     var seg = new WallSegment2D
                     {
@@ -197,18 +244,227 @@ namespace SoundCalcs.Domain
                     g.Thickness.Add(p.ThicknessM);
                 }
             }
+            foreach (var kv in piecesOf)
+            {
+                IfcLinkWall w = kv.Key;
+                IfcFileWall fw = fromFile.TryGetValue(w, out var f) ? f.Wall : options.File?.Find(w.IfcGuid);
+                string name = (string.IsNullOrWhiteSpace(w.GroupName) ? (fw?.TypeName ?? fw?.ObjectType ?? "Wall") : w.GroupName) + GroupSuffix;
+                Add(w, fw, name, kv.Value);
+            }
+            foreach (var kv in openingPieces)
+            {
+                string name = (string.IsNullOrWhiteSpace(kv.Key.GroupName) ? OpeningGroupName(kv.Key.Kind, "") : kv.Key.GroupName) + GroupSuffix;
+                Add(kv.Key, null, name, new[] { kv.Value });
+            }
+            foreach (var kv in columnPieces)
+                Add(kv.Key, null, "Column " + (string.IsNullOrWhiteSpace(kv.Key.GroupName) ? "" : kv.Key.GroupName).Trim() + GroupSuffix, kv.Value);
 
-            foreach (var g in groups.Values.OrderBy(v => v.Group.LineStyleName, StringComparer.Ordinal))
+            foreach (GroupAcc g in groups.Values.OrderBy(v => v.Group.LineStyleName, StringComparer.Ordinal))
             {
                 double thickness = Median(g.Thickness);
-                string names = g.Group.LineStyleName + " " + string.Join(" ", g.Materials);
-                g.Group.WallType = WallTypeEstimator.Estimate(names, thickness, g.Rating);
-                // Low walls (screens, parapets) as tall as modelled; others full height
-                double h = Median(g.Height);
-                g.Group.HeightM = h > 0.1 && h < JobInputBuilder.EnclosingHeightM ? Math.Round(h, 2) : 0;
+                // A wall measured implausibly thin (a layer of it, an unreadable shape): the type name's thickness
+                if (g.Kind == IfcElementKind.Wall && thickness < 0.08 &&
+                    WallTypeEstimator.NominalThicknessM(g.Group.LineStyleName) is double nominal)
+                    thickness = nominal;
+                // Insulation layers say nothing about what the wall is ("Insulation - Fiberglass" is no glass wall)
+                string names = g.Group.LineStyleName + " " + string.Join(" ", g.Materials.Where(m => !WallTypeEstimator.IsInsulation(m)));
+                if (g.Kind == IfcElementKind.Column)
+                {
+                    // Solid (concrete, steel): rated as a thick wall of its material
+                    g.Group.WallType = WallTypeEstimator.Estimate(names, 0.3, g.Rating);
+                    g.Group.HeightM = 0;
+                    g.Group.IsObstacle = true;
+                }
+                else if (g.Kind == IfcElementKind.Wall)
+                {
+                    g.Group.WallType = WallTypeEstimator.Estimate(names, thickness, g.Rating);
+                    // Low walls (screens, parapets) as tall as modelled; others full height
+                    double h = Median(g.Height);
+                    g.Group.HeightM = h > 0.1 && h < JobInputBuilder.EnclosingHeightM ? Math.Round(h, 2) : 0;
+                }
+                else
+                {
+                    g.Group.WallType = WallTypeEstimator.EstimateOpening(names, g.Kind == IfcElementKind.Door, g.Rating);
+                    // The wall above a door or window closes the rest: full height, encloses the room
+                    g.Group.HeightM = 0;
+                }
                 result.Groups.Add(g.Group);
             }
             return result;
+        }
+
+        private class GroupAcc
+        {
+            public IfcElementKind Kind;
+            public WallLineGroup Group;
+            public readonly List<double> Thickness = new List<double>();
+            public readonly List<double> Height = new List<double>();
+            public string Rating;
+            public readonly List<string> Materials = new List<string>();
+        }
+
+        /// <summary>
+        /// Columns thinner than this (steel tubes, posts) are left out: sound bends round them at speech
+        /// wavelengths, and their faces would only slow the run.
+        /// </summary>
+        public const double MinColumnSizeM = 0.15;
+
+        /// <summary>
+        /// Wall pieces for a column with plan vertices <paramref name="points"/>: its outline (<see cref="ColumnOutline"/>)
+        /// plus ties to the walls near it (<see cref="TiesToWalls"/>). Null, with the reason, when it stands inside
+        /// one of <paramref name="walls"/>, is too small or unreadable.
+        /// </summary>
+        public static List<WallPiece> PlaceColumn(IList<Vec2> points, IList<WallPiece> walls, out ColumnPlacement how)
+        {
+            List<Vec2> outline = ColumnOutline(points);
+            if (outline == null) { how = ColumnPlacement.Unusable; return null; }
+            if (MinSide(outline) < MinColumnSizeM) { how = ColumnPlacement.TooSmall; return null; }
+            Vec2 centre = new Vec2(outline.Average(v => v.X), outline.Average(v => v.Y));
+            if (walls.Any(p => DistanceToSegment(centre, p.Start, p.End) <= p.ThicknessM / 2 + 0.01)) { how = ColumnPlacement.InsideWall; return null; }
+            var pieces = new List<WallPiece>();
+            for (int i = 0; i < outline.Count; i++)
+                pieces.Add(new WallPiece { Start = outline[i], End = outline[(i + 1) % outline.Count], ThicknessM = 0.02 });
+            pieces.AddRange(TiesToWalls(outline, walls));
+            how = ColumnPlacement.Placed;
+            return pieces;
+        }
+
+        // Width of a convex outline across its narrowest direction (a rotated column's true size)
+        private static double MinSide(List<Vec2> hull)
+        {
+            double best = double.MaxValue;
+            for (int i = 0; i < hull.Count; i++)
+            {
+                Vec2 a = hull[i], b = hull[(i + 1) % hull.Count];
+                Vec2 d = b - a;
+                double len = d.Length;
+                if (len < 1e-9) continue;
+                double far = hull.Max(p => Math.Abs(Vec2.Cross(d, p - a)) / len);
+                best = Math.Min(best, far);
+            }
+            return best == double.MaxValue ? 0 : best;
+        }
+
+        /// <summary>Gaps up to this wide between a column and a wall are closed by a tie piece.</summary>
+        public const double ColumnTieM = 0.3;
+
+        /// <summary>
+        /// Short pieces joining a column to each wall that passes within <see cref="ColumnTieM"/> of it without
+        /// touching: a facade or partition fixed to the column, so the room it closes is closed.
+        /// </summary>
+        public static List<WallPiece> TiesToWalls(List<Vec2> outline, IEnumerable<WallPiece> walls)
+        {
+            var ties = new List<WallPiece>();
+            foreach (WallPiece w in walls)
+            {
+                if (w.Length < 1e-6) continue;
+                // Closest pair: a column vertex to the wall's centerline, or a wall end to a column edge
+                double best = double.MaxValue;
+                Vec2 a = default(Vec2), b = default(Vec2);
+                foreach (Vec2 v in outline)
+                {
+                    Vec2 q = ClosestOnSegment(v, w.Start, w.End);
+                    double d = Vec2.Distance(v, q);
+                    if (d < best) { best = d; a = v; b = q; }
+                }
+                for (int i = 0; i < outline.Count; i++)
+                    foreach (Vec2 e in new[] { w.Start, w.End })
+                    {
+                        Vec2 q = ClosestOnSegment(e, outline[i], outline[(i + 1) % outline.Count]);
+                        double d = Vec2.Distance(e, q);
+                        if (d < best) { best = d; a = q; b = e; }
+                    }
+                if (best > 0.005 && best <= ColumnTieM)
+                    ties.Add(new WallPiece { Start = a, End = b, ThicknessM = 0.02 });
+            }
+            return ties;
+        }
+
+        private static Vec2 ClosestOnSegment(Vec2 p, Vec2 a, Vec2 b)
+        {
+            Vec2 ab = b - a;
+            double len2 = ab.LengthSquared;
+            double t = len2 < 1e-12 ? 0 : Math.Max(0, Math.Min(1, Vec2.Dot(p - a, ab) / len2));
+            return a + ab * t;
+        }
+
+        /// <summary>
+        /// Plan outline of a column from its vertices: their convex hull (columns are rectangles, circles,
+        /// polygons), a round one reduced to 8 sides. Null when it is too small or not column-like.
+        /// </summary>
+        public static List<Vec2> ColumnOutline(IList<Vec2> points)
+        {
+            if (points == null || points.Count < 3) return null;
+            List<Vec2> hull = JobInputBuilder.ConvexHull(points.ToList());
+            if (hull.Count < 3) return null;
+            if (hull.Count > 8)
+            {
+                var reduced = new List<Vec2>();
+                for (int i = 0; i < 8; i++) reduced.Add(hull[(int)Math.Round(i * hull.Count / 8.0) % hull.Count]);
+                hull = reduced;
+            }
+            double minX = hull.Min(p => p.X), maxX = hull.Max(p => p.X), minY = hull.Min(p => p.Y), maxY = hull.Max(p => p.Y);
+            double size = Math.Max(maxX - minX, maxY - minY);
+            if (size < 0.05 || size > 3.0) return null;
+            return hull;
+        }
+
+        /// <summary>
+        /// Walls-table row for a door or window: its kind and the letters of its mark ("KFA-04" → "Window KFA",
+        /// "VU-01-3" → "Door VU"), so a facade's panels or a door family share a row instead of one per size.
+        /// </summary>
+        public static string OpeningGroupName(IfcElementKind kind, string mark)
+        {
+            string label = kind == IfcElementKind.Door ? "Door" : "Window";
+            string m = (mark ?? "").Trim();
+            int n = 0;
+            while (n < m.Length && char.IsLetter(m[n])) n++;
+            return n > 0 && n <= 8 ? $"{label} {m.Substring(0, n).ToUpperInvariant()}" : label + "s";
+        }
+
+        /// <summary>
+        /// Sets an opening into the wall piece it stands in (parallel, within both half thicknesses of its
+        /// centerline, along at least half of the opening): that stretch of the wall is cut out and the opening
+        /// snapped onto the wall's centerline, so a ray through the door pays the door only. False (opening left
+        /// as is) when no wall holds it. <paramref name="walls"/> are the pieces per wall; split pieces replace
+        /// the original in its list.
+        /// </summary>
+        public static bool SetIntoWall(WallPiece opening, IList<List<WallPiece>> walls)
+        {
+            double lenO = opening.Length;
+            if (lenO < 1e-6) return false;
+            Vec2 dO = opening.Direction;
+            Vec2 mid = (opening.Start + opening.End) * 0.5;
+            double sinTol = Math.Sin(10 * Math.PI / 180);
+
+            List<WallPiece> owner = null;
+            WallPiece best = null;
+            double bestLateral = double.MaxValue, bestT0 = 0, bestT1 = 0;
+            foreach (List<WallPiece> list in walls)
+                foreach (WallPiece p in list)
+                {
+                    double lenP = p.Length;
+                    if (lenP < 1e-6) continue;
+                    Vec2 dP = p.Direction;
+                    if (Math.Abs(Vec2.Cross(dP, dO)) > sinTol) continue;
+                    double lateral = Math.Abs(Vec2.Cross(dP, mid - p.Start));
+                    if (lateral > (p.ThicknessM + opening.ThicknessM) / 2 + 0.05 || lateral >= bestLateral) continue;
+                    double a = Vec2.Dot(opening.Start - p.Start, dP), b = Vec2.Dot(opening.End - p.Start, dP);
+                    double t0 = Math.Max(0, Math.Min(a, b)), t1 = Math.Min(lenP, Math.Max(a, b));
+                    if (t1 - t0 < 0.5 * lenO) continue;
+                    owner = list; best = p; bestLateral = lateral; bestT0 = t0; bestT1 = t1;
+                }
+            if (best == null) return false;
+
+            Vec2 d = best.Direction;
+            double len = best.Length;
+            opening.Start = best.Start + d * bestT0;
+            opening.End = best.Start + d * bestT1;
+            int at = owner.IndexOf(best);
+            owner.RemoveAt(at);
+            if (len - bestT1 > 0.02) owner.Insert(at, new WallPiece { Start = opening.End, End = best.End, ThicknessM = best.ThicknessM });
+            if (bestT0 > 0.02) owner.Insert(at, new WallPiece { Start = best.Start, End = opening.Start, ThicknessM = best.ThicknessM });
+            return true;
         }
 
         /// <summary>

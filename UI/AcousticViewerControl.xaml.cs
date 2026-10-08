@@ -54,6 +54,7 @@ namespace SoundCalcs.UI
         SKColor TextBright   = new SKColor(0xF2, 0xF2, 0xF5);
         SKColor TextMid      = new SKColor(0xA8, 0xA8, 0xB0);
         SKColor TextDim      = new SKColor(0x6A, 0x6A, 0x72);
+        SKColor AccentColor  = new SKColor(0x0A, 0x84, 0xFF);
 
         // ── View transform ─────────────────────────────────────────────────
         float _panX, _panY;
@@ -103,6 +104,17 @@ namespace SoundCalcs.UI
         // ── Speaker rotation drag ──────────────────────────────────────────
         SpeakerInstance _rotatingSpk;
 
+        // ── Wall info card ─────────────────────────────────────────────────
+        // A click (press and release without moving) on a wall line opens the card; it stays anchored to the
+        // clicked world point while the plan pans and zooms. Esc, the close button or a click elsewhere close it.
+        const float ClickSlopDip = 4f;     // pointer travel (DIP) that still counts as a click, not a pan
+        const float WallHitDip   = 6f;     // pick tolerance around a wall line (DIP)
+        WallLineGroupViewModel _selWall;   // group shown in the card (null = closed)
+        WallSegment2D          _selSeg;    // clicked segment
+        float                  _selWx, _selWy;   // clicked point, world metres
+        SKPoint                _pressPos;  // where the current pan started, device pixels
+        readonly TranslateTransform _wallCardShift = new TranslateTransform();
+
         /// <summary>
         /// Called when the user finishes dragging a speaker's aim direction.
         /// Arguments: (ElementId, newAngleDegrees).
@@ -118,6 +130,8 @@ namespace SoundCalcs.UI
 
         // ── Flattened geometry caches ──────────────────────────────────────
         readonly List<WallSegment2D>   _walls    = new List<WallSegment2D>();
+        // Group of each entry in _walls (same index), for the wall info card
+        readonly List<WallLineGroupViewModel> _wallOwners = new List<WallLineGroupViewModel>();
         readonly List<SpeakerInstance> _speakers = new List<SpeakerInstance>();
 
         // Speakers whose horizontal aim affects the calculation (wall-mounted only):
@@ -230,6 +244,9 @@ namespace SoundCalcs.UI
         {
             InitializeComponent();
             SkCanvas.LostMouseCapture += Canvas_LostMouseCapture;
+            // The card moves with a render transform, so following the plan never re-runs layout
+            WallCard.RenderTransform = _wallCardShift;
+            WallCard.SizeChanged += (s, e) => PositionWallCard();
             Loaded += (s, e) => ApplyAppearance();
             Unloaded += (s, e) => StopMotion();
         }
@@ -246,6 +263,7 @@ namespace SoundCalcs.UI
             TextBright = ResourceColor("Viewer.Text", TextBright);
             TextMid    = ResourceColor("Viewer.TextSecondary", TextMid);
             TextDim    = ResourceColor("Viewer.TextTertiary", TextDim);
+            AccentColor = ResourceColor("Accent", AccentColor);
             UpdateProbeBtn();
             Refresh();
         }
@@ -269,6 +287,7 @@ namespace SoundCalcs.UI
         void RebuildGeometry()
         {
             _walls.Clear();
+            _wallOwners.Clear();
             _speakers.Clear();
             _aimableSpeakers.Clear();
             foreach (var svm in _speakerGroupSubscriptions)
@@ -277,7 +296,11 @@ namespace SoundCalcs.UI
 
             if (WallGroupsSource != null)
                 foreach (WallLineGroupViewModel wvm in WallGroupsSource.OfType<WallLineGroupViewModel>())
-                    _walls.AddRange(wvm.GetGroup().Segments);
+                    foreach (var seg in wvm.GetGroup().Segments)
+                    {
+                        _walls.Add(seg);
+                        _wallOwners.Add(wvm);
+                    }
 
             if (SpeakerGroupsSource != null)
                 foreach (SpeakerGroupViewModel svm in SpeakerGroupsSource.OfType<SpeakerGroupViewModel>())
@@ -289,6 +312,17 @@ namespace SoundCalcs.UI
                     svm.PropertyChanged += OnSpeakerGroupPropertyChanged;
                     _speakerGroupSubscriptions.Add(svm);
                 }
+
+            // The wall shown in the card may have gone (walls detected again, group removed)
+            if (_selWall != null)
+            {
+                if (!_wallOwners.Contains(_selWall)) CloseWallCard();
+                else
+                {
+                    if (!_selWall.GetGroup().Segments.Contains(_selSeg)) _selSeg = null;
+                    UpdateWallCardText();
+                }
+            }
         }
 
         // Profile changes (e.g. Conical → Wall Mounted) change which speakers can be aimed
@@ -530,6 +564,7 @@ namespace SoundCalcs.UI
             DrawScaleBar(canvas, w, h);
             DrawPinLabels(canvas, w, h);
             DrawAimHint(canvas);
+            PositionWallCard();
         }
 
         // ── Heatmap ────────────────────────────────────────────────────────
@@ -615,6 +650,24 @@ namespace SoundCalcs.UI
                     (float)w.Start.X, (float)w.Start.Y,
                     (float)w.End.X,   (float)w.End.Y,
                     paint);
+
+            // Wall shown in the info card: its whole group in the accent colour, the clicked segment stronger
+            if (_selWall == null) return;
+            paint.Color       = AccentColor.WithAlpha(0xB0);
+            paint.StrokeWidth = 3f * PixelScale / _zoom;
+            for (int i = 0; i < _walls.Count; i++)
+            {
+                if (_wallOwners[i] != _selWall) continue;
+                var w = _walls[i];
+                canvas.DrawLine((float)w.Start.X, (float)w.Start.Y, (float)w.End.X, (float)w.End.Y, paint);
+            }
+            if (_selSeg != null)
+            {
+                paint.Color       = AccentColor;
+                paint.StrokeWidth = 5f * PixelScale / _zoom;
+                canvas.DrawLine((float)_selSeg.Start.X, (float)_selSeg.Start.Y,
+                                (float)_selSeg.End.X,   (float)_selSeg.End.Y, paint);
+            }
         }
 
         // ── Speaker symbols ────────────────────────────────────────────────
@@ -882,6 +935,7 @@ namespace SoundCalcs.UI
 
                 _isPanning  = true;
                 _lastMouse  = mpos;
+                _pressPos   = mpos;
                 _panHistory.Clear();
                 _panHistory.Add((Now, mpos.X, mpos.Y));
                 SkCanvas.CaptureMouse();
@@ -980,6 +1034,16 @@ namespace SoundCalcs.UI
             if (!_isPanning) return;
             _isPanning = false;
             SkCanvas.ReleaseMouseCapture();
+
+            // Press and release in (about) the same place: a click, which picks a wall or closes the card
+            var up = ToCanvas(e.GetPosition(SkCanvas));
+            float slop = ClickSlopDip * PixelScale;
+            float mdx = up.X - _pressPos.X, mdy = up.Y - _pressPos.Y;
+            if (mdx * mdx + mdy * mdy <= slop * slop)
+            {
+                SelectWallAt(up.X, up.Y);
+                return;
+            }
             StartGlide();
         }
 
@@ -1108,6 +1172,128 @@ namespace SoundCalcs.UI
                 if (d < bestD) { bestD = d; best = s; }
             }
             return best;
+        }
+
+        // True when (screenX, screenY) is on any speaker symbol (aimable or not): speakers win over walls.
+        bool IsOnSpeaker(float screenX, float screenY)
+        {
+            if (_speakers.Count == 0) return false;
+            float wx   = (screenX - _panX) / _zoom;
+            float wy   = -(screenY - _panY) / _zoom;
+            float hitR = Math.Max(0.25f, 10f * PixelScale / _zoom);   // the drawn symbol, at least 10 DIP
+            foreach (var s in _speakers)
+            {
+                double dx = s.Position.X - wx;
+                double dy = s.Position.Y - wy;
+                if (dx * dx + dy * dy <= hitR * hitR) return true;
+            }
+            return false;
+        }
+
+        // ── Wall info card ─────────────────────────────────────────────────
+
+        // Click on the plan (not a pan): opens the card for the wall line under the pointer, or closes it.
+        void SelectWallAt(float screenX, float screenY)
+        {
+            int idx = -1;
+            float wx = (screenX - _panX) / _zoom;
+            float wy = -(screenY - _panY) / _zoom;
+            if (!IsOnSpeaker(screenX, screenY))
+                idx = HeatmapMath.NearestWallSegment(_walls, wx, wy, WallHitDip * PixelScale / _zoom);
+
+            if (idx < 0)
+            {
+                CloseWallCard();
+                return;
+            }
+
+            var group = _wallOwners[idx];
+            if (group != _selWall)
+            {
+                if (_selWall != null) _selWall.PropertyChanged -= OnSelectedWallChanged;
+                _selWall = group;
+                _selWall.PropertyChanged += OnSelectedWallChanged;
+            }
+            _selSeg = _walls[idx];
+            _selWx = wx;
+            _selWy = wy;
+            UpdateWallCardText();
+            WallCard.Visibility = Visibility.Visible;
+            SkCanvas.Focus();   // so Esc reaches Viewer_KeyDown
+            Refresh();          // highlight + position the card
+        }
+
+        void CloseWallCard()
+        {
+            if (_selWall == null && WallCard.Visibility != Visibility.Visible) return;
+            if (_selWall != null) _selWall.PropertyChanged -= OnSelectedWallChanged;
+            _selWall = null;
+            _selSeg = null;
+            WallCard.Visibility = Visibility.Collapsed;
+            Refresh();
+        }
+
+        // Wall type or height edited on the Model page while the card is open
+        void OnSelectedWallChanged(object sender, System.ComponentModel.PropertyChangedEventArgs e) => UpdateWallCardText();
+
+        void UpdateWallCardText()
+        {
+            if (_selWall == null) return;
+            WallLineGroup g = _selWall.GetGroup();
+            WallTypeInfo type = g.WallType ?? WallTypeCatalog.Default;
+
+            WallCardTitle.Text = string.IsNullOrWhiteSpace(g.LineStyleName) ? "Wall" : g.LineStyleName;
+            WallCardTitle.ToolTip = WallCardTitle.Text;
+            WallCardSubtitle.Text = g.UserEdited == false ? "Wall group · type estimated" : "Wall group";
+            WallCardType.Text = type.DisplayName;
+            WallCardStc.Text = type.StcRating.ToString();
+            WallCardSurface.Text = HeatmapMath.WallSurfaceLabel(type.Surface);
+            WallCardHeight.Text = g.HeightM > 0 ? $"{g.HeightM:F2} m (low wall)" : "Full height";
+
+            if (_selSeg != null)
+            {
+                string thick = _selSeg.ThicknessM > 0 ? $"{_selSeg.ThicknessM * 1000.0:F0} mm thick" : "thickness not set";
+                WallCardSegment.Text = $"{_selSeg.Length:F2} m long · {thick}";
+            }
+            else WallCardSegment.Text = "—";
+
+            int count = g.Segments.Count > 0 ? g.Segments.Count : g.SegmentCount;
+            double total = g.TotalLengthM > 0 ? g.TotalLengthM : g.Segments.Sum(s => s.Length);
+            WallCardGroup.Text = $"{count} segment{(count == 1 ? "" : "s")} · {total:F1} m";
+        }
+
+        // Keeps the card beside the clicked point (flipped to stay inside the viewer); hidden while that point is
+        // off screen. Called after every paint, so it follows panning, zooming, glides and animated fits.
+        void PositionWallCard()
+        {
+            if (_selWall == null || WallCard.Visibility != Visibility.Visible) return;
+            float scale = PixelScale;
+            double ax = ( _selWx * _zoom + _panX) / scale;
+            double ay = (-_selWy * _zoom + _panY) / scale;
+            double vw = ActualWidth, vh = ActualHeight;
+
+            bool onScreen = ax >= 0 && ay >= 0 && ax <= vw && ay <= vh;
+            WallCard.Opacity = onScreen ? 1.0 : 0.0;
+            WallCard.IsHitTestVisible = onScreen;
+            if (!onScreen) return;
+
+            double cw = WallCard.ActualWidth > 0 ? WallCard.ActualWidth : WallCard.Width;
+            double ch = WallCard.ActualHeight > 0 ? WallCard.ActualHeight : 180;
+            const double gap = 14, edge = 8;
+            double x = ax + gap, y = ay + gap;
+            if (x + cw > vw - edge) x = ax - gap - cw;
+            if (y + ch > vh - edge) y = ay - gap - ch;
+            _wallCardShift.X = Math.Max(edge, Math.Min(x, vw - edge - cw));
+            _wallCardShift.Y = Math.Max(edge, Math.Min(y, vh - edge - ch));
+        }
+
+        void WallCardCloseBtn_Click(object sender, RoutedEventArgs e) => CloseWallCard();
+
+        void Viewer_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.Key != Key.Escape || _selWall == null) return;
+            CloseWallCard();
+            e.Handled = true;
         }
 
         ReceiverResult FindNearestResult(float wx, float wy)

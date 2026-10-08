@@ -235,6 +235,52 @@ namespace SoundCalcs.Visualization
         /// </summary>
         public static double ViewerGridSpacing(List<ReceiverResult> results) => EstimateGridSpacing(results);
 
+        // ── Plan viewer: wall picking ──────────────────────────────────────
+
+        /// <summary>Distance from (px, py) to the segment (ax, ay)–(bx, by); a zero-length segment is a point.</summary>
+        public static double DistanceToSegment(double px, double py, double ax, double ay, double bx, double by)
+        {
+            double dx = bx - ax, dy = by - ay;
+            double len2 = dx * dx + dy * dy;
+            double t = len2 > 1e-18 ? ((px - ax) * dx + (py - ay) * dy) / len2 : 0.0;
+            t = Math.Max(0.0, Math.Min(1.0, t));
+            double cx = ax + t * dx - px, cy = ay + t * dy - py;
+            return Math.Sqrt(cx * cx + cy * cy);
+        }
+
+        /// <summary>
+        /// Index of the wall segment nearest to the world point (wx, wy) that lies within
+        /// <paramref name="maxDist"/> (world units), or -1 when none does. Ties keep the first segment.
+        /// </summary>
+        public static int NearestWallSegment(IList<WallSegment2D> segments, double wx, double wy, double maxDist)
+        {
+            if (segments == null) return -1;
+            int best = -1;
+            double bestD = maxDist;
+            for (int i = 0; i < segments.Count; i++)
+            {
+                var s = segments[i];
+                if (s == null) continue;
+                double d = DistanceToSegment(wx, wy, s.Start.X, s.Start.Y, s.End.X, s.End.Y);
+                if (d <= bestD && (best < 0 || d < bestD)) { bestD = d; best = i; }
+            }
+            return best;
+        }
+
+        /// <summary>Readable name of a wall surface material ("AcousticPanel" → "Acoustic panel").</summary>
+        public static string WallSurfaceLabel(WallAbsorptionPreset preset)
+        {
+            string name = preset.ToString();
+            var sb = new System.Text.StringBuilder(name.Length + 4);
+            for (int i = 0; i < name.Length; i++)
+            {
+                char ch = name[i];
+                if (i > 0 && char.IsUpper(ch)) { sb.Append(' '); sb.Append(char.ToLowerInvariant(ch)); }
+                else sb.Append(ch);
+            }
+            return sb.ToString();
+        }
+
         /// <summary>
         /// Place each receiver on a one-pixel-per-cell grid and colour it.
         /// Returns null when there are no results.

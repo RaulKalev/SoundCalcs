@@ -523,17 +523,44 @@ namespace SoundCalcs.Revit
             using (var generic = new FilteredElementCollector(linkDoc))
                 elements.AddRange(generic.OfCategory(BuiltInCategory.OST_GenericModel).WhereElementIsNotElementType()
                     .ToElements().Where(IsIfcWallProxy));
+            // Doors and windows: the glass of a curtain wall comes as window / door panels, and a door fills its
+            // wall's gap (without it the rooms either side are one)
+            var kinds = new Dictionary<ElementId, IfcElementKind>();
+            foreach (var (cat, kind) in new[]
+            {
+                (BuiltInCategory.OST_Doors, IfcElementKind.Door), (BuiltInCategory.OST_Windows, IfcElementKind.Window),
+                (BuiltInCategory.OST_Columns, IfcElementKind.Column), (BuiltInCategory.OST_StructuralColumns, IfcElementKind.Column)
+            })
+                using (var openings = new FilteredElementCollector(linkDoc))
+                    foreach (Element e in openings.OfCategory(cat).WhereElementIsNotElementType().ToElements())
+                    {
+                        elements.Add(e);
+                        kinds[e.Id] = kind;
+                    }
+            // Curtain wall glass exported as IfcPlate comes in as Structural Framing (with the mullions, which
+            // are left out)
+            using (var framing = new FilteredElementCollector(linkDoc))
+                foreach (Element e in framing.OfCategory(BuiltInCategory.OST_StructuralFraming).WhereElementIsNotElementType().ToElements())
+                    if (IsIfcPlate(linkDoc, e))
+                    {
+                        elements.Add(e);
+                        kinds[e.Id] = IfcElementKind.Window;
+                    }
 
             var options = new Options { ComputeReferences = false, DetailLevel = ViewDetailLevel.Fine };
             foreach (Element elem in elements)
             {
                 try
                 {
+                    IfcElementKind kind = kinds.TryGetValue(elem.Id, out IfcElementKind k) ? k : IfcElementKind.Wall;
+                    string mark = ParamString(elem, "IfcName");
                     var wall = new IfcLinkWall
                     {
+                        Kind = kind,
                         ElementId = RevitCompat.GetIdValue(elem.Id),
                         IfcGuid = IfcGuid(elem),
-                        GroupName = IfcGroupName(linkDoc, elem),
+                        GroupName = kind == IfcElementKind.Wall || kind == IfcElementKind.Column ? IfcGroupName(linkDoc, elem)
+                            : IfcWallBuilder.OpeningGroupName(kind, mark.Length > 0 ? mark : elem.Name),
                         AcousticRating = ParamStartingWith(elem, "AcousticRating")
                             ?? ParamStartingWith(linkDoc.GetElement(elem.GetTypeId()), "AcousticRating")
                     };
@@ -557,6 +584,20 @@ namespace SoundCalcs.Revit
                 }
             }
             return result;
+        }
+
+        /// <summary>An IfcPlate (a curtain wall panel), by its IFC entity or its type name ("Distinct Panel …").</summary>
+        private static bool IsIfcPlate(Document linkDoc, Element elem)
+        {
+            foreach (string name in IfcEntityParams)
+            {
+                string v = ParamString(elem, name);
+                if (v.StartsWith("IfcPlate", StringComparison.OrdinalIgnoreCase)) return true;
+                if (v.StartsWith("IfcMember", StringComparison.OrdinalIgnoreCase)) return false;
+            }
+            string type = linkDoc.GetElement(elem.GetTypeId())?.Name ?? "";
+            return type.IndexOf("panel", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   type.IndexOf("plate", StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
         private static bool IsIfcWallProxy(Element elem)
@@ -735,18 +776,46 @@ namespace SoundCalcs.Revit
         // -----------------------------------------------------------------
 
         /// <summary>
-        /// Collect all Wall elements from the host document, grouped by wall type name.
-        /// Each group gets an STC rating estimated from the wall type name and thickness.
+        /// The floor a plan view shows: its level (name, elevation in metres) and the absolute elevation of its
+        /// view range's cut plane (metres). False for any other kind of view.
         /// </summary>
-        public List<Domain.WallLineGroup> GetHostWallGroups()
+        public static bool TryGetPlanCut(View view, out string levelName, out double levelElevM, out double cutElevM)
         {
-            return BuildWallGroupsFromDoc(_doc, pt => pt);
+            levelName = null;
+            levelElevM = cutElevM = 0;
+            if (!(view is ViewPlan plan) || plan.GenLevel == null) return false;
+            Level level = plan.GenLevel;
+            levelName = level.Name;
+            levelElevM = UnitConversion.FtToM(level.ProjectElevation);
+            cutElevM = levelElevM + 1.2;
+            try
+            {
+                PlanViewRange range = plan.GetViewRange();
+                // The cut plane's offset is from its own level (usually the view's, but it can be set to another)
+                Level cutLevel = plan.Document.GetElement(range.GetLevelId(PlanViewPlane.CutPlane)) as Level ?? level;
+                cutElevM = UnitConversion.FtToM(cutLevel.ProjectElevation + range.GetOffset(PlanViewPlane.CutPlane));
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[SoundCalcs] View range of '{plan.Name}' unreadable: {ex.Message}");
+            }
+            return true;
         }
 
         /// <summary>
-        /// Collect all Wall elements from the specified linked model, grouped by wall type name.
+        /// Collect the Wall elements of the host document, grouped by wall type name. Each group gets an STC
+        /// rating estimated from the wall type name and thickness. With <paramref name="cutElevM"/>, only the
+        /// walls that elevation (metres) passes through: those a plan cut there shows.
         /// </summary>
-        public List<Domain.WallLineGroup> GetLinkWallGroups(int linkInstanceId)
+        public List<Domain.WallLineGroup> GetHostWallGroups(double? cutElevM = null)
+        {
+            return BuildWallGroupsFromDoc(_doc, Transform.Identity, cutElevM);
+        }
+
+        /// <summary>
+        /// Collect the Wall elements of the specified linked model, grouped by wall type name.
+        /// </summary>
+        public List<Domain.WallLineGroup> GetLinkWallGroups(int linkInstanceId, double? cutElevM = null)
         {
             Element linkElem = _doc.GetElement(RevitCompat.ToElementId(linkInstanceId));
             RevitLinkInstance linkInstance = linkElem as RevitLinkInstance;
@@ -756,12 +825,13 @@ namespace SoundCalcs.Revit
             if (linkDoc == null) return new List<Domain.WallLineGroup>();
 
             Transform xform = linkInstance.GetTotalTransform();
-            return BuildWallGroupsFromDoc(linkDoc, xform.OfPoint);
+            return BuildWallGroupsFromDoc(linkDoc, xform, cutElevM);
         }
 
         private static List<Domain.WallLineGroup> BuildWallGroupsFromDoc(
-            Document doc, Func<XYZ, XYZ> transformPt)
+            Document doc, Transform xform, double? cutElevM)
         {
+            Func<XYZ, XYZ> transformPt = xform.OfPoint;
             var groups = new Dictionary<string, Domain.WallLineGroup>();
 
             using (var collector = new FilteredElementCollector(doc))
@@ -783,6 +853,17 @@ namespace SoundCalcs.Revit
                     XYZ s = transformPt(curve.GetEndPoint(0));
                     XYZ e = transformPt(curve.GetEndPoint(1));
 
+                    // Vertical extent from the bounding box (base offset, top constraint, attached tops)
+                    double baseM = UnitConversion.FtToM(s.Z), heightM = 3.0;
+                    BoundingBoxXYZ bb = wall.get_BoundingBox(null);
+                    if (bb != null)
+                    {
+                        double z0 = transformPt(bb.Min).Z, z1 = transformPt(bb.Max).Z;
+                        baseM = UnitConversion.FtToM(Math.Min(z0, z1));
+                        heightM = UnitConversion.FtToM(Math.Abs(z1 - z0));
+                    }
+                    if (cutElevM is double cut && !JobInputBuilder.StandsAt(baseM, baseM + heightM, cut)) continue;
+
                     string typeName = wall.WallType?.Name ?? "Unknown";
                     double thicknessM = UnitConversion.FtToM(wall.Width);
 
@@ -801,8 +882,8 @@ namespace SoundCalcs.Revit
                     {
                         Start = new Domain.Vec2(UnitConversion.FtToM(s.X), UnitConversion.FtToM(s.Y)),
                         End   = new Domain.Vec2(UnitConversion.FtToM(e.X), UnitConversion.FtToM(e.Y)),
-                        BaseElevationM = UnitConversion.FtToM(s.Z),
-                        HeightM = 3.0,
+                        BaseElevationM = baseM,
+                        HeightM = heightM > 0.01 ? heightM : 3.0,
                         ThicknessM = thicknessM
                     };
                     grp.Segments.Add(seg);
@@ -811,7 +892,70 @@ namespace SoundCalcs.Revit
                 }
             }
 
+            AddColumns(doc, xform, cutElevM, groups);
             return new List<Domain.WallLineGroup>(groups.Values);
+        }
+
+        /// <summary>
+        /// The columns (architectural and structural) of <paramref name="doc"/> that the cut plane passes
+        /// through, one obstacle group per column type, placed and tied to the walls already in
+        /// <paramref name="groups"/> like an IFC link's (<see cref="IfcWallBuilder.PlaceColumn"/>).
+        /// </summary>
+        private static void AddColumns(Document doc, Transform xform, double? cutElevM, Dictionary<string, Domain.WallLineGroup> groups)
+        {
+            var walls = groups.Values.SelectMany(g => g.Segments)
+                .Select(sg => new WallPiece { Start = sg.Start, End = sg.End, ThicknessM = sg.ThicknessM }).ToList();
+            var options = new Options { ComputeReferences = false, DetailLevel = ViewDetailLevel.Coarse };
+            foreach (BuiltInCategory cat in new[] { BuiltInCategory.OST_Columns, BuiltInCategory.OST_StructuralColumns })
+                using (var collector = new FilteredElementCollector(doc))
+                    foreach (Element col in collector.OfCategory(cat).WhereElementIsNotElementType().ToElements())
+                    {
+                        try
+                        {
+                            BoundingBoxXYZ bb = col.get_BoundingBox(null);
+                            if (bb == null) continue;
+                            double za = xform.OfPoint(bb.Min).Z, zb = xform.OfPoint(bb.Max).Z;
+                            double baseM = UnitConversion.FtToM(Math.Min(za, zb)), topM = UnitConversion.FtToM(Math.Max(za, zb));
+                            if (cutElevM is double cut && !JobInputBuilder.StandsAt(baseM, topM, cut)) continue;
+
+                            var geom = new IfcGeometry();
+                            GeometryElement ge = col.get_Geometry(options);
+                            if (ge != null) CollectIfcGeometry(ge, xform, geom);
+                            List<WallPiece> pieces = IfcWallBuilder.PlaceColumn(geom.Points, walls, out ColumnPlacement how);
+                            if (how != ColumnPlacement.Placed) continue;
+
+                            string typeName = doc.GetElement(col.GetTypeId())?.Name ?? "Column";
+                            string name = "Column " + typeName;
+                            if (!groups.TryGetValue(name, out Domain.WallLineGroup grp))
+                            {
+                                var materials = col.GetMaterialIds(false).Select(id => (doc.GetElement(id) as Material)?.Name)
+                                    .Where(m => m != null && !WallTypeEstimator.IsInsulation(m));
+                                grp = new Domain.WallLineGroup
+                                {
+                                    LineStyleName = name,
+                                    WallType = WallTypeEstimator.Estimate(typeName + " " + string.Join(" ", materials), 0.3),
+                                    IsObstacle = true,
+                                    UserEdited = false
+                                };
+                                groups[name] = grp;
+                            }
+                            foreach (WallPiece p in pieces)
+                            {
+                                var seg = new Domain.WallSegment2D
+                                {
+                                    Start = p.Start, End = p.End, BaseElevationM = baseM,
+                                    HeightM = topM - baseM > 0.01 ? topM - baseM : 3.0, ThicknessM = p.ThicknessM
+                                };
+                                grp.Segments.Add(seg);
+                                grp.SegmentCount++;
+                                grp.TotalLengthM += seg.Length;
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Debug.WriteLine($"[SoundCalcs] Column {col.Id} skipped: {ex.Message}");
+                        }
+                    }
         }
     }
 

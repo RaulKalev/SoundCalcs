@@ -125,6 +125,13 @@ namespace SoundCalcs.Domain
             !IsOpening(wallType) && (heightM <= 0 || heightM >= EnclosingHeightM);
 
         /// <summary>
+        /// Whether a wall group closes off rooms (<see cref="IsEnclosing(WallTypeInfo, double)"/>). Columns do: a
+        /// partition that stops at a column is closed by it. A column's own outline is too small to be a room
+        /// (<see cref="BuildRoomsAndReceivers"/> drops rooms under 1 m²).
+        /// </summary>
+        public static bool IsEnclosing(WallLineGroup group) => IsEnclosing(group.WallType, group.HeightM);
+
+        /// <summary>
         /// Convert a detail-line wall segment into a compute wall with the given STC,
         /// extending both ends by <see cref="WallEndExtensionM"/>.
         /// </summary>
@@ -329,6 +336,26 @@ namespace SoundCalcs.Domain
             var pts = new List<Vec2>();
             foreach (WallSegment2D w in walls) { pts.Add(w.Start); pts.Add(w.End); }
             return ConvexHull(pts);
+        }
+
+        /// <summary>
+        /// True when a wall from <paramref name="baseM"/> to <paramref name="topM"/> passes through
+        /// <paramref name="elevationM"/> (a plan's cut plane): the walls of that floor, not the ones above or below.
+        /// </summary>
+        public static bool StandsAt(double baseM, double topM, double elevationM) =>
+            baseM <= elevationM + 1e-3 && topM >= elevationM - 1e-3;
+
+        /// <summary>
+        /// The analysis boundary traced by detected walls, at <paramref name="floorElevationM"/>; null when there
+        /// are no walls. Openings ("Open (No Wall)") don't count.
+        /// </summary>
+        public static RoomPolygon BoundaryFromWallGroups(IEnumerable<WallLineGroup> groups, double floorElevationM)
+        {
+            var segs = groups.Where(g => !IsOpening(g.WallType) && !g.IsObstacle).SelectMany(g => g.Segments).ToList();
+            if (segs.Count == 0) return null;
+            List<Vec2> outline = BoundaryFromWalls(segs);
+            if (outline.Count < 3) return null;
+            return new RoomPolygon { Vertices = outline, FloorElevationM = floorElevationM, Name = "Boundary" };
         }
 
         /// <summary>

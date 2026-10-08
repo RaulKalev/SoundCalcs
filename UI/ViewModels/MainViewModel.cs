@@ -490,7 +490,14 @@ namespace SoundCalcs.UI.ViewModels
             if (path != null && _ifcPreload != null && _ifcPreloadPath == path) _ifcPreload.Wait();
             Domain.Ifc.IfcFileData file = path != null ? LoadIfcFile(path, out fileError) : null;
 
-            var options = new IfcWallBuildOptions { LevelElevationM = AnalysisLevelElevation(), File = file };
+            var options = new IfcWallBuildOptions { File = file };
+            if (_wallCutElevM is double cut)
+            {
+                // Keep the walls the floor's cut plane passes through
+                double level = _wallLevelElevM ?? cut - options.ProbeHeightM;
+                options.LevelElevationM = level;
+                options.ProbeHeightM = cut - level;
+            }
             IfcWallBuildResult built = IfcWallBuilder.Build(linkWalls, options);
 
             string fileNote = fileError != null ? $"IFC file unreadable ({fileError})"
@@ -501,6 +508,53 @@ namespace SoundCalcs.UI.ViewModels
                 (file != null ? $"; file {file.Schema}, {file.Walls.Count} walls, unit {file.LengthUnitM} m" +
                     (file.Warnings.Count > 0 ? ", " + string.Join("; ", file.Warnings) : "") : ""));
             return built.Groups;
+        }
+
+        // The floor walls are detected on: the cut plane elevation they must pass through, and the floor's level
+        // (metres). Taken from the active plan view by Detect walls and kept for Refresh; null = every storey.
+        private double? _wallCutElevM;
+        private double? _wallLevelElevM;
+        private string _wallLevelName;
+
+        /// <summary>
+        /// Sets the floor walls are detected on: the active plan view's level and view-range cut plane, else
+        /// <see cref="AnalysisLevelElevation"/> cut at listener height, else every storey.
+        /// </summary>
+        private void ResolveWallFloor()
+        {
+            Autodesk.Revit.DB.View view = _uiApp.ActiveUIDocument?.ActiveView;
+            if (RevitDataCollector.TryGetPlanCut(view, out string name, out double levelM, out double cutM))
+            {
+                _wallLevelName = name;
+                _wallLevelElevM = levelM;
+                _wallCutElevM = cutM;
+                return;
+            }
+            _wallLevelName = null;
+            _wallLevelElevM = AnalysisLevelElevation();
+            _wallCutElevM = _wallLevelElevM + 1.2;
+        }
+
+        /// <summary>"on 10. korrus (cut at 31.20 m)" for the status line; empty when every storey is read.</summary>
+        private string WallFloorNote() =>
+            _wallCutElevM is double cut
+                ? $" on {(_wallLevelName ?? $"the floor at {_wallLevelElevM:F2} m")} (cut at {cut:F2} m)"
+                : "";
+
+        /// <summary>
+        /// Without picked boundary lines, the boundary is the outline of the detected walls, on their floor.
+        /// </summary>
+        private bool ApplyWallBoundary(List<WallLineGroup> groups)
+        {
+            if (_boundaryLineIds.Count > 0) return false;
+            double floor = _wallLevelElevM
+                ?? groups.SelectMany(g => g.Segments).Select(s => s.BaseElevationM).DefaultIfEmpty(0).Min();
+            RoomPolygon boundary = JobInputBuilder.BoundaryFromWallGroups(groups, floor);
+            if (boundary == null) return false;
+            DetectedRooms.Clear();
+            DetectedRooms.Add(boundary);
+            FileLogger.Log($"Boundary from walls: {boundary.Vertices.Count} pts, area={boundary.Area:F1}m², floorElev={floor:F3}m");
+            return true;
         }
 
         /// <summary>
@@ -652,10 +706,11 @@ namespace SoundCalcs.UI.ViewModels
             Document doc = _uiApp.ActiveUIDocument?.Document;
             if (doc == null) { StatusMessage = "No active document."; return; }
 
+            ResolveWallFloor();
             List<WallLineGroup> allGroups = DetectWallGroups(doc);
             if (allGroups.Count == 0)
             {
-                StatusMessage = "No wall elements found in the model." + (_lastIfcReport != null ? $" IFC link: {_lastIfcReport}." : "");
+                StatusMessage = $"No wall elements found{WallFloorNote()}." + (_lastIfcReport != null ? $" IFC link: {_lastIfcReport}." : "");
                 return;
             }
 
@@ -665,16 +720,19 @@ namespace SoundCalcs.UI.ViewModels
             foreach (var grp in allGroups)
                 WallLineGroups.Add(new WallLineGroupViewModel(grp));
             _wallsDetected = true;
+            bool boundaryFromWalls = ApplyWallBoundary(allGroups);
             MarkLayoutFromCurrentProject();
 
             int totalSegs = allGroups.Sum(g => g.SegmentCount);
-            FileLogger.Log($"AutoDetectWalls: {WallLineGroups.Count} types, {totalSegs} segments");
+            FileLogger.Log($"AutoDetectWalls: {WallLineGroups.Count} types, {totalSegs} segments{WallFloorNote()}");
 
             // Auto-persist so walls survive window close/reopen
             SaveSettingsCore();
             RefreshPreflight();
-            StatusMessage = $"Detected {WallLineGroups.Count} wall type(s), {totalSegs} segment(s)" +
-                (_lastIfcReport != null ? $" ({_lastIfcReport})" : "") + ". Check the wall types in the table.";
+            StatusMessage = $"Detected {WallLineGroups.Count} wall type(s), {totalSegs} segment(s){WallFloorNote()}" +
+                (_lastIfcReport != null ? $" ({_lastIfcReport})" : "") +
+                (boundaryFromWalls ? $"; boundary {DetectedRooms[0].Area:F0} m² from the walls" : "") +
+                ". Check the wall types in the table.";
         }
 
         /// <summary>The Wall elements of the host and the selected linked model, one group per wall type.</summary>
@@ -683,11 +741,12 @@ namespace SoundCalcs.UI.ViewModels
             var collector = new RevitDataCollector(doc);
             var allGroups = new List<WallLineGroup>();
             _lastIfcReport = null;
-            allGroups.AddRange(collector.GetHostWallGroups());
+            allGroups.AddRange(collector.GetHostWallGroups(_wallCutElevM));
             if (SelectedLink != null && SelectedLink.IsValid)
             {
-                allGroups.AddRange(collector.GetLinkWallGroups(SelectedLink.LinkInstanceId));
+                // An IFC link's walls are shapes, read by the IFC path (with its doors, windows and columns)
                 if (SelectedLink.IsIfc) allGroups.AddRange(DetectIfcWallGroups(collector));
+                else allGroups.AddRange(collector.GetLinkWallGroups(SelectedLink.LinkInstanceId, _wallCutElevM));
             }
             return allGroups;
         }
@@ -751,13 +810,16 @@ namespace SoundCalcs.UI.ViewModels
 
             if (_wallsDetected)
             {
+                // The floor the walls were detected on (after a window reopen: the active plan's)
+                if (_wallCutElevM == null) ResolveWallFloor();
                 List<WallLineGroup> groups = DetectWallGroups(doc);
                 ModelSync.KeepWallSettings(previous, groups);
                 WallLineGroups.Clear();
                 foreach (var grp in groups)
                     WallLineGroups.Add(new WallLineGroupViewModel(grp));
-                parts.Add($"{groups.Count} wall type(s), {groups.Sum(g => g.SegmentCount)} segment(s)" +
+                parts.Add($"{groups.Count} wall type(s), {groups.Sum(g => g.SegmentCount)} segment(s){WallFloorNote()}" +
                     (_lastIfcReport != null ? $" ({_lastIfcReport})" : ""));
+                if (ApplyWallBoundary(groups)) parts.Add($"boundary {DetectedRooms[0].Area:F0} m² from the walls");
             }
 
             SaveSettingsCore();
@@ -1195,7 +1257,7 @@ namespace SoundCalcs.UI.ViewModels
                     .Where(g => g.GetMapping().ProfileSource != ProfileSourceType.WallMounted)
                     .SelectMany(g => g.GetGroup().Instances));
             var enclosingSegs = WallLineGroups
-                .Where(w => JobInputBuilder.IsEnclosing(w.GetGroup().WallType, w.GetGroup().HeightM))
+                .Where(w => JobInputBuilder.IsEnclosing(w.GetGroup()))
                 .SelectMany(w => w.GetGroup().Segments)
                 .ToList();
             RoomDetector.ComputeEnclosureRatios(rooms, enclosingSegs);
@@ -1707,7 +1769,7 @@ namespace SoundCalcs.UI.ViewModels
                 // Openings ("Open (No Wall)") and low screens don't enclose a room.
                 var allWallSegs = new List<WallSegment2D>();
                 foreach (var wvm in WallLineGroups)
-                    if (JobInputBuilder.IsEnclosing(wvm.GetGroup().WallType, wvm.GetGroup().HeightM))
+                    if (JobInputBuilder.IsEnclosing(wvm.GetGroup()))
                         allWallSegs.AddRange(wvm.GetGroup().Segments);
 
                 // Split the boundary into the rooms its walls form (plus the open remainder),
@@ -1734,7 +1796,7 @@ namespace SoundCalcs.UI.ViewModels
                         {
                             Segments = g.Segments,
                             Absorption = (g.WallType ?? WallTypeCatalog.Default).AbsorptionByBand,
-                            Enclosing = JobInputBuilder.IsEnclosing(g.WallType, g.HeightM)
+                            Enclosing = JobInputBuilder.IsEnclosing(g)
                         }).ToList(),
                         FloorSurface.AbsorptionByBand, CeilingSurface.AbsorptionByBand, Occupants, 20.0, Humidity);
                 }
@@ -1767,7 +1829,11 @@ namespace SoundCalcs.UI.ViewModels
                     // Each segment is extended 0.10 m at both ends to bridge
                     // small gaps at corners and T-junctions.
                     foreach (WallSegment2D seg in grp.Segments)
-                        computeWalls.Add(JobInputBuilder.ToComputeWall(seg, grp.WallType, grp.HeightM));
+                    {
+                        ComputeWall cw = JobInputBuilder.ToComputeWall(seg, grp.WallType, grp.HeightM);
+                        cw.IsObstacle = grp.IsObstacle;
+                        computeWalls.Add(cw);
+                    }
                 }
                 FileLogger.Log($"Wall segments for calc: {computeWalls.Count} " +
                     $"(groups: {WallLineGroups.Count})");

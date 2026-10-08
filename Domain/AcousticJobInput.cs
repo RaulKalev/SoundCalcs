@@ -42,6 +42,12 @@ namespace SoundCalcs.Domain
         public double BaseElevationM { get; set; }
 
         /// <summary>
+        /// A face of a column or other small solid: blocks sound but is no mirror (a surface this small scatters
+        /// speech wavelengths instead of reflecting them), so it makes no image sources.
+        /// </summary>
+        public bool IsObstacle { get; set; }
+
+        /// <summary>
         /// Per-octave-band absorption coefficients for reflection calculations.
         /// Null = use global default (backward compatible).
         /// </summary>

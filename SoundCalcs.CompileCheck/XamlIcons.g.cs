@@ -15,6 +15,7 @@ namespace SoundCalcs.CompileCheck
             MaterialDesignThemes.Wpf.PackIconKind.CheckCircleOutline,
             MaterialDesignThemes.Wpf.PackIconKind.ChevronDown,
             MaterialDesignThemes.Wpf.PackIconKind.ChevronRight,
+            MaterialDesignThemes.Wpf.PackIconKind.Close,
             MaterialDesignThemes.Wpf.PackIconKind.CloseCircle,
             MaterialDesignThemes.Wpf.PackIconKind.CrosshairsGps,
             MaterialDesignThemes.Wpf.PackIconKind.CursorDefaultClickOutline,

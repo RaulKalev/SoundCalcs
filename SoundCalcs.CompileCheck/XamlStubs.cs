@@ -9,7 +9,10 @@ namespace SoundCalcs.UI
     public partial class AcousticViewerControl
     {
         internal SkiaSharp.Views.WPF.SKElement SkCanvas = null;
-        internal Button ClearPinsBtn = null, ProbeBtn = null, FitBtn = null;
+        internal Button ClearPinsBtn = null, ProbeBtn = null, FitBtn = null, WallCardCloseBtn = null;
+        internal System.Windows.Controls.Border WallCard = null;
+        internal TextBlock WallCardTitle = null, WallCardSubtitle = null, WallCardType = null, WallCardStc = null,
+            WallCardSurface = null, WallCardHeight = null, WallCardSegment = null, WallCardGroup = null;
         public void InitializeComponent() { }
     }
     public partial class MainWindow

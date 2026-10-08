@@ -118,6 +118,12 @@ namespace SoundCalcs.Domain
         public WallTypeInfo WallType { get; set; } = WallTypeCatalog.Default;
 
         /// <summary>
+        /// Columns and other small free-standing solids: their outlines block sound and close the gaps partitions
+        /// leave at them, but they are no mirrors (no image sources) and don't shape the analysis boundary.
+        /// </summary>
+        public bool IsObstacle { get; set; }
+
+        /// <summary>
         /// True once the user set the wall type or height; false while they are the detection's guess (detecting
         /// again may replace them, e.g. with an IFC file's rating). Null in settings saved by older versions:
         /// treated as the user's.

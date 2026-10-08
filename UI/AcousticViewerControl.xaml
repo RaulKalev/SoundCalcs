@@ -2,7 +2,8 @@
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes"
-             xmlns:skia="clr-namespace:SkiaSharp.Views.WPF;assembly=SkiaSharp.Views.WPF">
+             xmlns:skia="clr-namespace:SkiaSharp.Views.WPF;assembly=SkiaSharp.Views.WPF"
+             KeyDown="Viewer_KeyDown">
     <!--  Styles and palette come from the window (SoundCalcsStyles + the active theme).  -->
     <Grid Background="{DynamicResource Viewer.CanvasBrush}">
 
@@ -50,6 +51,65 @@
                         Visibility="Collapsed">
                     <materialDesign:PackIcon Width="16" Height="16" Kind="PinOffOutline" />
                 </Button>
+            </StackPanel>
+        </Border>
+
+        <!--  Wall info card: opens on a click on a wall line, follows that point while the plan moves  -->
+        <Border x:Name="WallCard"
+                Width="260"
+                Padding="12,10,8,12"
+                HorizontalAlignment="Left"
+                VerticalAlignment="Top"
+                AutomationProperties.Name="Wall info"
+                Cursor="Arrow"
+                Style="{DynamicResource Floating}"
+                Visibility="Collapsed">
+            <StackPanel>
+                <DockPanel Margin="{DynamicResource Gap.Bottom.S}">
+                    <Button x:Name="WallCardCloseBtn"
+                            Width="24"
+                            Height="24"
+                            VerticalAlignment="Top"
+                            AutomationProperties.Name="Close wall info"
+                            Click="WallCardCloseBtn_Click"
+                            DockPanel.Dock="Right"
+                            Style="{DynamicResource Button.Icon}"
+                            ToolTip="Close (Esc)">
+                        <materialDesign:PackIcon Width="14" Height="14" Kind="Close" />
+                    </Button>
+                    <StackPanel Margin="0,2,8,0">
+                        <TextBlock x:Name="WallCardTitle"
+                                   Style="{DynamicResource Type.Heading}"
+                                   TextTrimming="CharacterEllipsis" />
+                        <TextBlock x:Name="WallCardSubtitle" Style="{DynamicResource Type.Caption}" />
+                    </StackPanel>
+                </DockPanel>
+                <Grid Margin="0,0,4,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <TextBlock Grid.Row="0" Style="{DynamicResource Type.Label}" Text="Wall type" VerticalAlignment="Top" Margin="0,0,12,4" />
+                    <TextBlock x:Name="WallCardType" Grid.Row="0" Grid.Column="1" Margin="{DynamicResource Gap.Bottom.XS}" Style="{DynamicResource Type.Body}" />
+                    <TextBlock Grid.Row="1" Style="{DynamicResource Type.Label}" Text="STC" VerticalAlignment="Top" Margin="0,0,12,4" />
+                    <TextBlock x:Name="WallCardStc" Grid.Row="1" Grid.Column="1" Margin="{DynamicResource Gap.Bottom.XS}" Style="{DynamicResource Type.Body}" />
+                    <TextBlock Grid.Row="2" Style="{DynamicResource Type.Label}" Text="Surface" VerticalAlignment="Top" Margin="0,0,12,4" />
+                    <TextBlock x:Name="WallCardSurface" Grid.Row="2" Grid.Column="1" Margin="{DynamicResource Gap.Bottom.XS}" Style="{DynamicResource Type.Body}" />
+                    <TextBlock Grid.Row="3" Style="{DynamicResource Type.Label}" Text="Height" VerticalAlignment="Top" Margin="0,0,12,4" />
+                    <TextBlock x:Name="WallCardHeight" Grid.Row="3" Grid.Column="1" Margin="{DynamicResource Gap.Bottom.XS}" Style="{DynamicResource Type.Body}" />
+                    <TextBlock Grid.Row="4" Style="{DynamicResource Type.Label}" Text="Segment" VerticalAlignment="Top" Margin="0,0,12,4" />
+                    <TextBlock x:Name="WallCardSegment" Grid.Row="4" Grid.Column="1" Margin="{DynamicResource Gap.Bottom.XS}" Style="{DynamicResource Type.Body}" />
+                    <TextBlock Grid.Row="5" Style="{DynamicResource Type.Label}" Text="Group" VerticalAlignment="Top" Margin="0,0,12,0" />
+                    <TextBlock x:Name="WallCardGroup" Grid.Row="5" Grid.Column="1" Style="{DynamicResource Type.Body}" />
+                </Grid>
             </StackPanel>
         </Border>
 

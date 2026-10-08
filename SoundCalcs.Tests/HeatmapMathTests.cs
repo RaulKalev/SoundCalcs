@@ -408,5 +408,48 @@ namespace SoundCalcs.Tests
             Assert.Equal(4, hull.Count);
             Assert.Equal(12, new RoomPolygon { Vertices = hull }.Area, 9);
         }
+
+        // ── Plan viewer wall picking ─────────────────────────────────────
+
+        [Fact]
+        public void DistanceToSegment_PerpendicularEndsAndDegenerate()
+        {
+            // Perpendicular foot inside the segment
+            Assert.Equal(2.0, HeatmapMath.DistanceToSegment(5, 2, 0, 0, 10, 0), 9);
+            // Beyond the end: distance to the end point
+            Assert.Equal(5.0, HeatmapMath.DistanceToSegment(13, 4, 0, 0, 10, 0), 9);
+            // Before the start
+            Assert.Equal(1.0, HeatmapMath.DistanceToSegment(-1, 0, 0, 0, 10, 0), 9);
+            // Zero-length segment is a point
+            Assert.Equal(5.0, HeatmapMath.DistanceToSegment(3, 4, 0, 0, 0, 0), 9);
+        }
+
+        [Fact]
+        public void NearestWallSegment_PicksClosestWithinTolerance()
+        {
+            var segs = new List<WallSegment2D>
+            {
+                new WallSegment2D { Start = new Vec2(0, 0), End = new Vec2(10, 0) },   // horizontal at y=0
+                new WallSegment2D { Start = new Vec2(0, 1), End = new Vec2(10, 1) },   // horizontal at y=1
+                new WallSegment2D { Start = new Vec2(20, 0), End = new Vec2(20, 10) }, // vertical at x=20
+            };
+
+            Assert.Equal(0, HeatmapMath.NearestWallSegment(segs, 5, 0.3, 0.4));
+            Assert.Equal(1, HeatmapMath.NearestWallSegment(segs, 5, 0.7, 0.4));
+            Assert.Equal(2, HeatmapMath.NearestWallSegment(segs, 19.8, 5, 0.4));
+            // Too far from everything
+            Assert.Equal(-1, HeatmapMath.NearestWallSegment(segs, 15, 5, 0.4));
+            // Past a segment's end counts the distance to the end point
+            Assert.Equal(-1, HeatmapMath.NearestWallSegment(segs, 10.5, 0, 0.4));
+            Assert.Equal(-1, HeatmapMath.NearestWallSegment(new List<WallSegment2D>(), 0, 0, 1));
+            Assert.Equal(-1, HeatmapMath.NearestWallSegment(null, 0, 0, 1));
+        }
+
+        [Fact]
+        public void WallSurfaceLabel_SplitsWords()
+        {
+            Assert.Equal("Acoustic panel", HeatmapMath.WallSurfaceLabel(WallAbsorptionPreset.AcousticPanel));
+            Assert.Equal("Concrete", HeatmapMath.WallSurfaceLabel(WallAbsorptionPreset.Concrete));
+        }
     }
 }

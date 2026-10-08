@@ -282,6 +282,7 @@ namespace SoundCalcs.Compute
                 Vec2 srcXY = new Vec2(input.Sources[s].Position.X, input.Sources[s].Position.Y);
                 for (int w = 0; w < walls.Count; w++)
                 {
+                    if (walls[w].IsObstacle) continue;   // column faces block but don't mirror
                     Vec2 mirrored = ReflectPointAcrossSegment(srcXY, walls[w].Start, walls[w].End);
                     if (double.IsNaN(mirrored.X)) continue; // degenerate wall
 
@@ -307,9 +308,17 @@ namespace SoundCalcs.Compute
                 for (int i = 0; i < firstOrderCount; i++)
                 {
                     ImageSource img1 = imageSources[i];
+                    ComputeWall w1 = walls[img1.WallIndex];
+                    Vec2 d1 = w1.End - w1.Start;
+                    double imageSide = Vec2.Cross(d1, img1.ImagePos - w1.Start);
                     for (int w = 0; w < walls.Count; w++)
                     {
-                        if (w == img1.WallIndex) continue;
+                        if (w == img1.WallIndex || walls[w].IsObstacle) continue;
+                        // The second bounce comes after the first, so its wall must reach the source's side of
+                        // the first wall: one lying wholly on the image side can't be hit (the path check
+                        // would reject every receiver anyway)
+                        if (Vec2.Cross(d1, walls[w].Start - w1.Start) * imageSide > 1e-9 &&
+                            Vec2.Cross(d1, walls[w].End - w1.Start) * imageSide > 1e-9) continue;
 
                         Vec2 mirrored2 = ReflectPointAcrossSegment(img1.ImagePos, walls[w].Start, walls[w].End);
                         if (double.IsNaN(mirrored2.X)) continue;

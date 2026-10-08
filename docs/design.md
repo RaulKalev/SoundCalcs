@@ -67,6 +67,11 @@ Apple-style clarity and hierarchy, built from native WPF so it behaves like a Wi
   the fitted view (0.32 s ease-out, zoom in log space). Any new input stops a motion where it is. With reduced
   motion the view jumps and does not glide. Hovering an aimable speaker shows a halo and *Drag to aim*; while
   dragging, the live angle.
+- **Wall info**: clicking a wall line (within 6 DIP, a click rather than a drag; speakers win) opens a floating card
+  beside the point with the group's name, wall type, STC, surface, height, the clicked segment's length and
+  thickness, and the group's segment count and total length. The group is drawn in the accent colour, the clicked
+  segment stronger. The card follows the plan while it pans or zooms; Esc, its close button or a click on empty
+  plan closes it.
 
 ## Verification
 

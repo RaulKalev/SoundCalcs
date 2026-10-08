@@ -393,6 +393,56 @@ END-ISO-10303-21;";
         }
 
         [Fact]
+        public void InsulationNamedFiberglass_DoesNotMakeAGlassWall()
+        {
+            // An interior wall whose IFC surface styles include "Insulation - Fiberglass" was taken for glazing
+            Assert.True(WallTypeEstimator.IsInsulation("Insulation - Fiberglass"));
+            Assert.True(WallTypeEstimator.IsInsulation("Soojustus - Mineraalvill pehme"));
+            Assert.False(WallTypeEstimator.IsInsulation("Kipsplaat"));
+            Assert.False(WallTypeEstimator.IsInsulation("Glass"));
+            Assert.NotEqual(WallAbsorptionPreset.Glass, WallTypeEstimator.Estimate("SS-01 150 Paint - Light Gray Fiberglass", 0.15).Surface);
+            Assert.Equal(WallAbsorptionPreset.Glass, WallTypeEstimator.Estimate("SS-11 klaassein", 0.1).Surface);
+        }
+
+        [Fact]
+        public void EstonianMaterialNames_PickTheMaterial()
+        {
+            Assert.Equal(WallAbsorptionPreset.Concrete, WallTypeEstimator.Estimate("Betoon ol.ol 250", 0.25).Surface);
+            Assert.Equal(45, WallTypeEstimator.EstimateStc("kahekordne kipssein", 0.15));
+            Assert.Equal(50, WallTypeEstimator.EstimateStc("Kergplokk 200", 0.2));
+        }
+
+        [Theory]
+        [InlineData("Door 27", true, "door_solid")]
+        [InlineData("Curtain Wall Panel - Door 930 x 2288", true, "glass_double")]
+        [InlineData("Window KFA Distinct Panel", false, "glass_curtain")]
+        [InlineData("Window", false, "glass_double")]
+        public void Openings_AreDoorsOrGlass(string name, bool isDoor, string key)
+        {
+            Assert.Equal(key, WallTypeEstimator.EstimateOpening(name, isDoor).Key);
+        }
+
+        [Theory]
+        [InlineData("VS-01 150", 0.15)]
+        [InlineData("VS-01-VÄLINE OSA 313 (IFC)", 0.313)]
+        [InlineData("SS-06 175 (IFC)", 0.175)]
+        [InlineData("_SS-14 35", null)]          // under 50 mm: not a wall thickness
+        [InlineData("Wall", null)]
+        public void NominalThickness_IsTheTypeNamesLastNumber(string name, double? expected)
+        {
+            Assert.Equal(expected, WallTypeEstimator.NominalThicknessM(name));
+        }
+
+        [Fact]
+        public void ThinOrWoodWalls_AreNeverGuessedAsDoors()
+        {
+            // A wall measured 5 cm thin (or named timber) once came out as "Solid Core Door — STC 30"
+            Assert.False(WallTypeEstimator.Estimate("VS-01 150", 0.05).Key.StartsWith("door_"));
+            Assert.False(WallTypeEstimator.Estimate("Timber partition", 0.1).Key.StartsWith("door_"));
+            Assert.NotEqual(WallAbsorptionPreset.Open, WallTypeEstimator.FindClosestWall(0).Surface);
+        }
+
+        [Fact]
         public void ThicknessNoise_DoesNotDropAClass()
         {
             Assert.Equal(WallTypeEstimator.Estimate("Gypsum partition", 0.1).Key,
@@ -418,6 +468,165 @@ END-ISO-10303-21;";
             Box(3, "n", -0.1, 5.9, 10.1, 6.1),
             Box(4, "w", -0.1, 0.1, 0.1, 5.9),
         };
+
+        static IfcLinkWall Opening(IfcElementKind kind, string mark, double x0, double y0, double x1, double y1,
+            double baseZ = 0, double topZ = 2.1)
+            => new IfcLinkWall
+            {
+                Kind = kind, GroupName = IfcWallBuilder.OpeningGroupName(kind, mark), BaseZ = baseZ, TopZ = topZ,
+                Points = { new Vec2(x0, y0), new Vec2(x1, y0), new Vec2(x1, y1), new Vec2(x0, y1) }
+            };
+
+        [Fact]
+        public void DoorInAPartition_IsCutIntoIt_AndClosesTheRoom()
+        {
+            // The room split at x = 6 by a partition with a 1 m gap (the door's opening in the IFC wall shapes)
+            var walls = Room();
+            walls.Add(Box(5, "p1", 5.95, 0.1, 6.05, 2.0, "Partition 100"));
+            walls.Add(Box(6, "p2", 5.95, 3.0, 6.05, 5.9, "Partition 100"));
+            walls.Add(Opening(IfcElementKind.Door, "SU-01", 5.97, 2.0, 6.03, 3.0));
+
+            IfcWallBuildResult r = IfcWallBuilder.Build(walls, new IfcWallBuildOptions { LevelElevationM = 0 });
+            WallLineGroup door = r.Groups.Single(g => g.LineStyleName == "Door SU" + IfcWallBuilder.GroupSuffix);
+            Assert.Equal("door_solid", door.WallType.Key);
+            Assert.Equal(0, door.HeightM);   // full height: encloses the room
+            WallSegment2D d = Assert.Single(door.Segments);
+            Assert.Equal(1.0, d.Length, 6);
+            Assert.Equal(6.0, d.Start.X, 6);
+
+            // The door closes the partition: two rooms, not one
+            var rooms = RoomDetector.DetectRooms(r.Groups.SelectMany(g => g.Segments).ToList(), 0);
+            Assert.Equal(2, rooms.Count);
+            Assert.Equal(1, r.OpeningsFree);   // in the gap between the wall pieces, not inside one
+        }
+
+        [Fact]
+        public void DoorInsideAWall_ReplacesThatStretchOfIt()
+        {
+            // A door modelled inside a continuous wall (the wall's top runs over it): the wall is cut around it,
+            // so the line there is the door only, once
+            var walls = Room();
+            walls.Add(Opening(IfcElementKind.Door, "VU-01", 4.0, -0.08, 5.0, 0.06));
+            IfcWallBuildResult r = IfcWallBuilder.Build(walls);
+            Assert.Equal(1, r.OpeningsInWalls);
+            var wallSegs = r.Groups.Single(g => g.LineStyleName.StartsWith("Wall 200")).Segments;
+            Assert.DoesNotContain(wallSegs, s => Math.Abs(s.Start.Y) < 0.01 && Math.Abs(s.End.Y) < 0.01 &&
+                Math.Min(s.Start.X, s.End.X) < 4.5 && Math.Max(s.Start.X, s.End.X) > 4.5);
+            WallSegment2D d = r.Groups.Single(g => g.LineStyleName.StartsWith("Door VU")).Segments.Single();
+            Assert.Equal(0, d.Start.Y, 6);   // snapped onto the wall's centerline
+            Assert.Equal(1.0, d.Length, 6);
+            // Wall + door still cover the south side end to end
+            double south = wallSegs.Concat(new[] { d }).Where(s => Math.Abs(s.Start.Y) < 0.01 && Math.Abs(s.End.Y) < 0.01).Sum(s => s.Length);
+            Assert.Equal(10.0, south, 3);
+        }
+
+        [Fact]
+        public void CurtainPanels_WithoutAWall_StandOnTheirOwn_OtherStoreysSkipped()
+        {
+            var walls = new List<IfcLinkWall>
+            {
+                Opening(IfcElementKind.Window, "KFA-04", 0, -0.01, 2, 0.01, 0, 3),
+                Opening(IfcElementKind.Window, "KFA-04", 2, -0.01, 4, 0.01, 0, 3),
+                Opening(IfcElementKind.Window, "KFA-10", 0, -0.01, 2, 0.01, 2.5, 3),   // spandrel above the cut
+                Opening(IfcElementKind.Window, "KFA-04", 0, -0.01, 2, 0.01, 3, 6),     // the floor above
+            };
+            IfcWallBuildResult r = IfcWallBuilder.Build(walls, new IfcWallBuildOptions { LevelElevationM = 0 });
+            WallLineGroup g = Assert.Single(r.Groups);
+            Assert.Equal("Window KFA" + IfcWallBuilder.GroupSuffix, g.LineStyleName);
+            Assert.Equal(WallAbsorptionPreset.Glass, g.WallType.Surface);
+            Assert.Equal(2, g.SegmentCount);
+            Assert.Equal(2, r.OpeningsFree);
+            Assert.Equal(2, r.OtherLevel);
+        }
+
+        static IfcLinkWall Column(string type, IEnumerable<Vec2> pts, double baseZ = 0, double topZ = 3)
+        {
+            var c = new IfcLinkWall { Kind = IfcElementKind.Column, GroupName = type, BaseZ = baseZ, TopZ = topZ };
+            c.Points.AddRange(pts);
+            return c;
+        }
+
+        static IEnumerable<Vec2> Square(double cx, double cy, double half) => new[]
+        {
+            new Vec2(cx - half, cy - half), new Vec2(cx + half, cy - half), new Vec2(cx + half, cy + half), new Vec2(cx - half, cy + half)
+        };
+
+        [Fact]
+        public void Columns_AreObstacles_ThatDoNotMakeRooms()
+        {
+            var walls = Room();
+            walls.Add(Column("Betoon ol.ol 500 x 500", Square(5, 3, 0.25)));                  // free in the room
+            walls.Add(Column("Betoon ol.ol 500 x 500", Square(3, 0, 0.1)));                   // inside the south wall
+            walls.Add(Column("Betoon ol.ol D500", Enumerable.Range(0, 32).Select(i =>      // round, tessellated
+                new Vec2(7 + 0.25 * Math.Cos(i * Math.PI / 16), 3 + 0.25 * Math.Sin(i * Math.PI / 16)))));
+            walls.Add(Column("Betoon ol.ol 500 x 500", Square(2, 3, 0.25), 3, 6));            // the floor above
+
+            IfcWallBuildResult r = IfcWallBuilder.Build(walls, new IfcWallBuildOptions { LevelElevationM = 0 });
+            Assert.Equal(2, r.Columns);
+            Assert.Equal(1, r.ColumnsInWalls);
+            WallLineGroup square = r.Groups.Single(g => g.LineStyleName == "Column Betoon ol.ol 500 x 500" + IfcWallBuilder.GroupSuffix);
+            WallLineGroup round = r.Groups.Single(g => g.LineStyleName == "Column Betoon ol.ol D500" + IfcWallBuilder.GroupSuffix);
+            Assert.True(square.IsObstacle);
+            Assert.Equal(4, square.SegmentCount);
+            Assert.Equal(8, round.SegmentCount);
+            Assert.Equal(WallAbsorptionPreset.Concrete, square.WallType.Surface);
+
+            // A column's outline is no room: still the one room; the boundary ignores columns
+            RoomPolygon boundary = JobInputBuilder.BoundaryFromWallGroups(r.Groups, 0);
+            Assert.Equal(60, boundary.Area, 1);
+            var enclosing = r.Groups.Where(JobInputBuilder.IsEnclosing).SelectMany(g => g.Segments).ToList();
+            var built = JobInputBuilder.BuildRoomsAndReceivers(new List<RoomPolygon> { boundary }, enclosing,
+                new AnalysisSettings { GridSpacingM = 1, BoundaryOffsetM = 0.3, ReceiverHeightM = 1.2 });
+            Assert.Single(built.Rooms);
+        }
+
+        [Fact]
+        public void ThinSteelPosts_AreLeftOut()
+        {
+            var walls = Room();
+            walls.Add(Column("CFRHS100X100X6 100 x 100", Square(5, 3, 0.05)));
+            IfcWallBuildResult r = IfcWallBuilder.Build(walls, new IfcWallBuildOptions { LevelElevationM = 0 });
+            Assert.Equal(1, r.ColumnsSmall);
+            Assert.DoesNotContain(r.Groups, g => g.IsObstacle);
+        }
+
+        [Fact]
+        public void ThinWallPiece_TakesTheNameThickness()
+        {
+            // Shapes 4 cm thick (one layer of the wall), type "VS-01 150": rated as 150 mm
+            var walls = new List<IfcLinkWall> { Box(1, "s", 0, -0.02, 10, 0.02, "VS-01 150") };
+            WallLineGroup g = Assert.Single(IfcWallBuilder.Build(walls).Groups);
+            Assert.False(g.WallType.Key.StartsWith("door_"));
+            Assert.Equal(WallTypeEstimator.Estimate("VS-01 150 (IFC)", 0.15).Key, g.WallType.Key);
+        }
+
+        [Fact]
+        public void PartitionEndingAtAColumn_StillSplitsTheRooms()
+        {
+            // A partition from the south wall stops at a 500 mm column standing just inside the north wall: the
+            // column closes the gap, so the offices either side are two rooms, not one with the corridor
+            var walls = Room();
+            walls.Add(Box(5, "p", 4.95, 0.1, 5.05, 5.4, "Partition 100"));
+            walls.Add(Column("Betoon ol.ol 500 x 500", Square(5, 5.65, 0.25)));
+            IfcWallBuildResult r = IfcWallBuilder.Build(walls, new IfcWallBuildOptions { LevelElevationM = 0 });
+            RoomPolygon boundary = JobInputBuilder.BoundaryFromWallGroups(r.Groups, 0);
+            var enclosing = r.Groups.Where(JobInputBuilder.IsEnclosing).SelectMany(g => g.Segments).ToList();
+            var built = JobInputBuilder.BuildRoomsAndReceivers(new List<RoomPolygon> { boundary }, enclosing,
+                new AnalysisSettings { GridSpacingM = 1, BoundaryOffsetM = 0.3, ReceiverHeightM = 1.2 });
+            Assert.Equal(2, built.Rooms.Count);
+            Assert.All(built.Rooms, room => Assert.InRange(room.Area, 28, 30.5));
+        }
+
+        [Theory]
+        [InlineData(IfcElementKind.Window, "KFA-04", "Window KFA")]
+        [InlineData(IfcElementKind.Door, "VU-01-3", "Door VU")]
+        [InlineData(IfcElementKind.Door, "MTU2_18", "Door MTU")]
+        [InlineData(IfcElementKind.Door, "", "Doors")]
+        [InlineData(IfcElementKind.Window, "12", "Windows")]
+        public void OpeningGroupName_IsKindAndMarkLetters(IfcElementKind kind, string mark, string expected)
+        {
+            Assert.Equal(expected, IfcWallBuilder.OpeningGroupName(kind, mark));
+        }
 
         [Fact]
         public void Shapes_GiveAClosedRoomOfCenterlines()

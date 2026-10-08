@@ -25,11 +25,62 @@ namespace SoundCalcs.Domain
             WallAbsorptionPreset? surface = SurfaceFromName(typeName);
             if (surface.HasValue)
             {
-                WallTypeInfo same = FindClosest(stc, surface.Value);
+                WallTypeInfo same = surface.Value == WallAbsorptionPreset.Wood
+                    ? FindClosestWall(stc)
+                    : FindClosest(stc, surface.Value);
                 if (same.Surface == surface.Value && Math.Abs(same.StcRating - stc) <= 3) return same;
             }
-            return WallTypeCatalog.FindClosestByStc(stc);
+            return FindClosestWall(stc);
         }
+
+        /// <summary>The wall construction closest to <paramref name="stc"/>: never a door, opening or curtain.</summary>
+        public static WallTypeInfo FindClosestWall(int stc) =>
+            WallTypeCatalog.All
+                .Where(w => !w.Key.StartsWith("door_") && w.Surface != WallAbsorptionPreset.Open && w.Surface != WallAbsorptionPreset.Curtain)
+                .OrderBy(w => Math.Abs(w.StcRating - stc)).First();
+
+        /// <summary>
+        /// The thickness a wall type name states as its last number in millimetres, as Revit writes them
+        /// ("SS-01 150", "VS-01-VÄLINE OSA 313 (IFC)"); null when there is none between 50 and 1000 mm.
+        /// </summary>
+        public static double? NominalThicknessM(string typeName)
+        {
+            Match m = Regex.Match(typeName ?? "", @"(?<![\d.,x×*])(\d{2,4})\s*(mm)?\s*(\(IFC\))?\s*$", RegexOptions.IgnoreCase);
+            if (!m.Success) return null;
+            double mm = double.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture);
+            return mm >= 50 && mm <= 1000 ? mm / 1000 : (double?)null;
+        }
+
+        /// <summary>
+        /// Type for a door (<paramref name="isDoor"/>) or window named <paramref name="name"/>: a readable
+        /// <paramref name="acousticRating"/> sets the rating; else glazed doors and curtain panels count as glass,
+        /// other doors as solid core doors, windows as double glazing.
+        /// </summary>
+        public static WallTypeInfo EstimateOpening(string name, bool isDoor, string acousticRating = null)
+        {
+            string n = Clean(name);
+            bool glass = n.Contains("glass") || n.Contains("glaz") || n.Contains("klaas") || n.Contains("curtain") || n.Contains("panel");
+            if (TryParseRating(acousticRating, out int rated))
+                return FindClosest(rated, isDoor && !glass ? WallAbsorptionPreset.Wood : WallAbsorptionPreset.Glass);
+            // A glass door seals worse than the glazing around it
+            if (isDoor) return WallTypeCatalog.FindByKey(glass ? "glass_double" : "door_solid");
+            if (n.Contains("curtain") || n.Contains("panel") || n.Contains("fassaad") || n.Contains("facade")) return WallTypeCatalog.FindByKey("glass_curtain");
+            return WallTypeCatalog.FindByKey("glass_double");
+        }
+
+        /// <summary>
+        /// Whether a material is an insulation, membrane or air layer: it says nothing about what the wall is made
+        /// of ("Insulation - Fiberglass", "Soojustus - Mineraalvill", "Air Space").
+        /// </summary>
+        public static bool IsInsulation(string material)
+        {
+            string n = (material ?? "").ToLowerInvariant();
+            return Regex.IsMatch(n, @"insulat|soojustus|isolatsioon|wool|vill\b|mineraal|fib(er|re)\s*glass|membra|vapou?r|aurut|tuulet|air\s*space|õhkvahe|\bxps\b|\beps\b|\bpir\b|vahtpol");
+        }
+
+        // Lower case, without the words that name glass but mean insulation ("fiberglass", "glass wool")
+        private static string Clean(string name) =>
+            Regex.Replace((name ?? "").ToLowerInvariant(), @"fib(er|re)\s*glass|glass\s*wool|klaasvill", " ");
 
         /// <summary>
         /// The sound insulation number in an AcousticRating value: "STC 50", "Rw 52 dB", "Rw (C;Ctr) = 48 (-1;-4)", "45".
@@ -64,9 +115,9 @@ namespace SoundCalcs.Domain
         /// <summary>Surface material named in a wall type / material name, if any.</summary>
         public static WallAbsorptionPreset? SurfaceFromName(string name)
         {
-            string n = (name ?? "").ToLowerInvariant();
+            string n = Clean(name);
             if (n.Contains("glass") || n.Contains("glaz") || n.Contains("curtain") || n.Contains("klaas")) return WallAbsorptionPreset.Glass;
-            if (n.Contains("concrete") || n.Contains("beton")) return WallAbsorptionPreset.Concrete;
+            if (n.Contains("concrete") || n.Contains("beton") || n.Contains("betoon")) return WallAbsorptionPreset.Concrete;
             if (n.Contains("brick") || n.Contains("masonry") || n.Contains("cmu") || n.Contains("block") || n.Contains("tellis") || n.Contains("plokk"))
                 return WallAbsorptionPreset.Brick;
             if (n.Contains("stud") || n.Contains("gypsum") || n.Contains("drywall") || n.Contains("plasterboard") || n.Contains("kips"))
@@ -88,16 +139,17 @@ namespace SoundCalcs.Domain
         /// </summary>
         public static int EstimateStc(string typeName, double thicknessM)
         {
-            string n = (typeName ?? "").ToLowerInvariant();
+            string n = Clean(typeName);
 
-            bool isConcrete = n.Contains("concrete") || n.Contains("beton");
+            bool isConcrete = n.Contains("concrete") || n.Contains("beton") || n.Contains("betoon");
             bool isMasonry  = n.Contains("brick") || n.Contains("masonry") ||
-                              n.Contains("cmu")   || n.Contains("block");
+                              n.Contains("cmu")   || n.Contains("block") ||
+                              n.Contains("plokk") || n.Contains("tellis");
             bool isStud     = n.Contains("stud")  || n.Contains("timber") ||
                               n.Contains("gypsum")|| n.Contains("drywall") ||
-                              n.Contains("plasterboard");
+                              n.Contains("plasterboard") || n.Contains("kips");
             bool isGlass    = n.Contains("glass") || n.Contains("glaz") ||
-                              n.Contains("curtain");
+                              n.Contains("curtain") || n.Contains("klaas");
 
             if (isGlass)    return 32;
 

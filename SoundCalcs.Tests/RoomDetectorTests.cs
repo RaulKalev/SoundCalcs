@@ -152,6 +152,32 @@ namespace SoundCalcs.Tests
         }
 
         [Fact]
+        public void BoundaryFromWallGroups_IsTheWallsOutline_OnTheirFloor_IgnoringOpenings()
+        {
+            var walls = new WallLineGroup { LineStyleName = "Concrete" };
+            walls.Segments.AddRange(Rect(0, 0, 20, 10));
+            // An "Open (No Wall)" line sticking out of the building doesn't widen the boundary
+            var open = new WallLineGroup { LineStyleName = "Door", WallType = WallTypeCatalog.FindByKey("open") };
+            open.Segments.Add(W(20, 5, 30, 5));
+
+            RoomPolygon b = JobInputBuilder.BoundaryFromWallGroups(new[] { walls, open }, 31.2);
+            Assert.Equal(200, b.Area, 6);
+            Assert.Equal(31.2, b.FloorElevationM);
+            Assert.Null(JobInputBuilder.BoundaryFromWallGroups(new[] { open }, 0));
+        }
+
+        [Theory]
+        [InlineData(0.0, 3.0, 1.2, true)]     // a wall of the floor
+        [InlineData(3.0, 6.0, 1.2, false)]    // the floor above
+        [InlineData(-3.0, 0.0, 1.2, false)]   // the floor below
+        [InlineData(0.0, 30.0, 16.2, true)]   // a curtain wall through every storey
+        [InlineData(1.2, 3.0, 1.2, true)]     // starting right at the cut plane
+        public void StandsAt_KeepsTheWallsTheCutPlanePassesThrough(double baseM, double topM, double cutM, bool expected)
+        {
+            Assert.Equal(expected, JobInputBuilder.StandsAt(baseM, topM, cutM));
+        }
+
+        [Fact]
         public void OpenArea_HasTheRoomsCutOut()
         {
             // 20 × 10 boundary, one closed 5 × 4 room in a corner, the rest open
