@@ -73,6 +73,21 @@ namespace SoundCalcs.Tests
             Assert.Equal(new[] { 200.0 }, Areas(rooms));
         }
 
+        [Theory]
+        [InlineData(0.01)]
+        [InlineData(0.05)]
+        [InlineData(0.1)]
+        public void JointBetweenCollinearPanels_DoesNotOpenTheRoom(double joint)
+        {
+            // The facade of the 80 m² room is two glass panels with a joint between them (an IFC curtain wall)
+            var w = Rect(0, 0, 20, 10);
+            w.RemoveAt(2);                                   // north side
+            w.Add(W(20, 10, 13 + joint, 10));
+            w.Add(W(13, 10, 0, 10));
+            w.Add(W(12, 0, 12, 10));
+            Assert.Equal(new[] { 80.0, 120.0 }, Areas(RoomDetector.DetectRooms(w, 0)));
+        }
+
         [Fact]
         public void CornersThatDoNotQuiteMeet_AreClosed()
         {

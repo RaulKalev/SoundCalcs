@@ -7,7 +7,8 @@ namespace SoundCalcs.Domain
 {
     /// <summary>
     /// Detects closed room polygons from a set of 2D wall segments, as the faces of the planar graph they form:
-    ///   1. Merge duplicated (overlapping collinear) walls: shared walls drawn once per room
+    ///   1. Merge duplicated (overlapping collinear) walls: shared walls drawn once per room; bridge joints up to
+    ///      <see cref="SlotGapM"/> between collinear walls (panel joints)
     ///   2. Close corners and T junctions: a wall end that stops short of (or overshoots) a crossing wall by up
     ///      to <see cref="CornerReachM"/> is moved onto it. Never toward a parallel wall, so door gaps stay open
     ///   3. Split the walls where they cross, merge coincident nodes (exact coordinates are kept)
@@ -23,6 +24,9 @@ namespace SoundCalcs.Domain
 
         /// <summary>Walls closer than this are the same wall (duplicates); nodes closer than this are one node.</summary>
         private const double MergeToleranceM = 0.005;
+
+        /// <summary>Gaps up to this wide between collinear walls are joints, not openings, and are closed.</summary>
+        public const double SlotGapM = 0.1;
 
         private const double MinRoomAreaM2 = 1.0;     // Ignore tiny slivers
 
@@ -219,7 +223,10 @@ namespace SoundCalcs.Domain
                         if (Math.Abs(Vec2.Cross(d, b.A - a.A)) > MergeToleranceM || Math.Abs(Vec2.Cross(d, b.B - a.A)) > MergeToleranceM) continue;
                         double b0 = Vec2.Dot(b.A - a.A, d), b1 = Vec2.Dot(b.B - a.A, d);
                         double lo = Math.Min(b0, b1), hi = Math.Max(b0, b1);
-                        if (hi <= MergeToleranceM || lo >= a.Length - MergeToleranceM) continue;   // touching end to end is fine
+                        // Touching end to end is fine; a joint a few cm wide between collinear pieces (glass panels,
+                        // a wall drawn in parts) is bridged: it would join the rooms either side. Door gaps are wider.
+                        double gap = Math.Max(lo - a.Length, -hi);
+                        if (gap > SlotGapM || (gap > -MergeToleranceM && gap <= MergeToleranceM)) continue;
                         double s0 = Math.Min(0, lo), s1 = Math.Max(a.Length, hi);
                         segs[i] = new Seg { A = a.A + d * s0, B = a.A + d * s1 };
                         segs.RemoveAt(j);
