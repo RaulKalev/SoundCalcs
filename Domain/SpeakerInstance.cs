@@ -47,6 +47,19 @@ namespace SoundCalcs.Domain
         /// </summary>
         public string AbLine { get; set; } = "";
 
+        /// <summary>
+        /// Horizontal angle of the family's own facing in Revit, degrees (0 = East, CCW).
+        /// Null when the family faces straight up or down, or for speakers saved before this was recorded.
+        /// </summary>
+        public double? ModelAimDeg { get; set; }
+
+        /// <summary>
+        /// The user's aim correction from the plan viewer, degrees relative to <see cref="ModelAimDeg"/>.
+        /// Null when the speaker keeps the family's facing. Relative, so it survives moving the speaker
+        /// to another wall (the family turns, the correction turns with it).
+        /// </summary>
+        public double? AimOffsetDeg { get; set; }
+
         public override string ToString() => $"{TypeKey} @ {Position} [Id={ElementId}]";
     }
 }

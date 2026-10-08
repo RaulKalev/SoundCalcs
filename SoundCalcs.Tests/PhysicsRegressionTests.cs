@@ -71,6 +71,146 @@ namespace SoundCalcs.Tests
         }
 
         [Fact]
+        public void WallBehindAWallMountedSpeaker_BlocksAtEveryDistance()
+        {
+            // Speaker 10 cm in front of an STC 50 wall. Crossings near the path's ends used to be ignored
+            // as a fraction (2 %) of the path, so beyond ~5 m the room behind got the direct sound unblocked.
+            var walls = new List<ComputeWall> { Wall(0, -30, 0, 30, 50, Anechoic) };
+            var receivers = new List<Vec3> { new Vec3(-2, 0, 1.2), new Vec3(-10, 0, 1.2), new Vec3(-25, 0, 1.2) };
+            var (res, _) = Run(new List<ComputeSource> { Omni(0.1, 0, 1.2) }, receivers, walls);
+            for (int i = 0; i < receivers.Count; i++)
+            {
+                double freeField = 90 - 20 * Math.Log10(0.1 - receivers[i].X);
+                Assert.True(res[i].SplDb < freeField - 30, $"{receivers[i]}: {res[i].SplDb} dB, free field {freeField:F1} dB");
+            }
+        }
+
+        [Fact]
+        public void SpeakerInsideAThickWall_IsNotBlockedByIt_AlongTheWall()
+        {
+            // An in-wall speaker 5 cm in front of the centreline of a 300 mm wall, listener along the wall
+            var walls = new List<ComputeWall> { Wall(0, -30, 0, 30, 50, Anechoic) };
+            walls[0].HalfThicknessM = 0.15;
+            var (res, _) = Run(new List<ComputeSource> { Omni(0.05, 0, 1.2) }, new List<Vec3> { new Vec3(0.4, 6, 1.2) }, walls);
+            double freeField = 90 - 20 * Math.Log10(Math.Sqrt(0.35 * 0.35 + 36));
+            Assert.InRange(res[0].SplDb, freeField - 0.5, freeField + 0.1);
+        }
+
+        [Fact]
+        public void ReverberantField_UsesTheDirectivityOfEachBand()
+        {
+            // A cone beams at high frequencies and is nearly omni at low ones; the reverberant field is fed by
+            // the power radiated in each band. One broadband Q (4 for this cone) put 5 dB too little reverberant
+            // energy at 125 Hz and 4 dB too much at 8 kHz.
+            var cone = new SimpleConeProvider(90, 60, -12);
+            var down = new Vec3(0, 0, -1);
+            Assert.Equal(1.0, SPLCalculator.DirectivityQ(new SimpleOmniProvider(90), down, 3), 2);
+            double q125 = SPLCalculator.DirectivityQ(cone, down, 0), q8k = SPLCalculator.DirectivityQ(cone, down, 6);
+            Assert.InRange(q125, 1.1, 1.6);
+            Assert.InRange(q8k, 9, 13);
+            for (int k = 1; k < 7; k++)
+                Assert.True(SPLCalculator.DirectivityQ(cone, down, k) > SPLCalculator.DirectivityQ(cone, down, k - 1));
+            // Orientation does not change Q
+            Assert.Equal(SPLCalculator.DirectivityQ(cone, down, 4), SPLCalculator.DirectivityQ(cone, new Vec3(1, 0, 0), 4), 1);
+        }
+
+        [Fact]
+        public void ReflectedPath_ThroughAPartition_PaysItsTl()
+        {
+            // 16 × 8 m, STC 55 partition at x = 10. Second-order path: speaker → through the partition → east wall →
+            // back off the partition's far face → listener. Reflecting walls used to be skipped on every leg, so
+            // the crossing on the first leg was free and ~40 dB leaked into the small room (8 kHz at 42 dB).
+            var walls = new List<ComputeWall>
+            {
+                Wall(-0.1, 0, 16.1, 0, 55), Wall(16, -0.1, 16, 8.1, 55), Wall(16.1, 8, -0.1, 8, 55),
+                Wall(0, 8.1, 0, -0.1, 55), Wall(10, -0.1, 10, 8.1, 55)
+            };
+            var (res, _) = Run(new List<ComputeSource> { Omni(5, 4, 1.5) }, new List<Vec3> { new Vec3(13.3, 3.8, 1.2) },
+                walls, quality: CalculationQuality.Full);
+            // In front: ≈ 90 − 8.5 (band share) − 20·log(8.3) ≈ 63 dB at 8 kHz; the partition takes 54 dB
+            Assert.True(res[0].SplDbByBand[6] < 20, $"8 kHz behind the partition: {res[0].SplDbByBand[6]} dB");
+        }
+
+        private static ComputeSource WallSpeaker(double x, double y, double z, Vec3 facing) => new ComputeSource
+        {
+            Position = new Vec3(x, y, z),
+            FacingDirection = facing,
+            Profile = new SpeakerProfileMapping { ProfileSource = ProfileSourceType.WallMounted, OnAxisSplDb = 90, ConeHalfAngleDeg = 60, OffAxisAttenuationDb = -12 }
+        };
+
+        [Fact]
+        public void WallSpeakerExactlyOnThePartitionLine_DoesNotRadiateThroughIt()
+        {
+            // Detail line traced along the face the speaker hangs on: the speaker is on the line, facing away
+            var walls = new List<ComputeWall> { Wall(0, -20, 0, 20, 50, Anechoic) };
+            var receivers = new List<Vec3> { new Vec3(4, 0, 1.2), new Vec3(-4, 0, 1.2) };
+            var (res, _) = Run(new List<ComputeSource> { WallSpeaker(0, 0, 2.5, new Vec3(1, 0, 0)) }, receivers, walls);
+            Assert.True(res[0].SplDb - res[1].SplDb > 30, $"in front {res[0].SplDb} dB, behind {res[1].SplDb} dB");
+        }
+
+        [Fact]
+        public void ReflectionAtAJunction_IsNotALeak()
+        {
+            // Partition x = 8 meets the wall y = 6 exactly where a second-order path (walls x = 0, y = 6) would bounce
+            var walls = new List<ComputeWall>
+            {
+                Wall(-0.1, 0, 16.1, 0, 50), Wall(16, -0.1, 16, 6.1, 50), Wall(16.1, 6, -0.1, 6, 50),
+                Wall(0, 6.1, 0, -0.1, 50), Wall(8, -0.1, 8, 6.1, 50)
+            };
+            // Receivers on the line from the image (−4, 9) through the corner (8, 6)
+            var receivers = Enumerable.Range(1, 6).Select(i => new Vec3(8 + 0.5 * i, 6 - 0.125 * i, 1.2)).ToList();
+            var (res, _) = Run(new List<ComputeSource> { Omni(4, 3, 1.2) }, receivers, walls, quality: CalculationQuality.Full);
+            double spread = res.Max(r => r.SplDbByBand[3]) - res.Min(r => r.SplDbByBand[3]);
+            Assert.True(spread < 6, $"1 kHz behind the partition varies by {spread:F1} dB");
+        }
+
+        [Fact]
+        public void CollinearWallPieces_AreCrossedOnce()
+        {
+            // A partition drawn as two lines meeting at y = 0: their extended ends overlap there
+            // (long walls: diffraction around far ends must not matter)
+            var one = new List<ComputeWall> { Wall(0, -1000, 0, 1000, 40, Anechoic) };
+            var two = new List<ComputeWall> { Wall(0, -1000, 0, 0.1, 40, Anechoic), Wall(0, -0.1, 0, 1000, 40, Anechoic) };
+            var at = new List<Vec3> { new Vec3(3, 0, 1.2) };
+            var (a, _) = Run(new List<ComputeSource> { Omni(-3, 0, 1.2) }, at, one);
+            var (b, _) = Run(new List<ComputeSource> { Omni(-3, 0, 1.2) }, at, two);
+            Assert.Equal(a[0].SplDbByBand[3], b[0].SplDbByBand[3], 1);
+        }
+
+        [Fact]
+        public void BarronTail_StartsWhereTheExplicitReflectionsLeaveOff()
+        {
+            // 20 × 12 × 3 m, T = 1 s, omni at mid height, listener 8 m away (image sources + Barron remainder, no lattice).
+            // C80 of the reflected part must follow Barron's decay: the explicit reflections are its head, so the
+            // remainder is its later part, not a new decay from the direct sound (that made C80 up to 5 dB too high).
+            var room = Room(0, 0, 20, 12, 1.0);
+            var input = new AcousticJobInput
+            {
+                Sources = new List<ComputeSource> { Omni(6, 6, 1.5) },
+                Receivers = new List<ReceiverPoint> { new ReceiverPoint(new Vec3(14, 6, 1.5), 0) { RoomIndex = 0 } },
+                Walls = new List<ComputeWall> { Wall(0, 0, 20, 0, 50), Wall(20, 0, 20, 12, 50), Wall(20, 12, 0, 12, 50), Wall(0, 12, 0, 0, 50) },
+                Rooms = new List<RoomPolygon> { room },
+                Environment = new EnvironmentSettings
+                {
+                    RT60ByBand = Enumerable.Repeat(1.0, 7).ToArray(), BackgroundNoiseByBand = Enumerable.Repeat(-50.0, 7).ToArray(),
+                    UseRoomShapeModel = false
+                },
+                Quality = CalculationQuality.Full
+            };
+            var (results, bands) = new SPLCalculator().Calculate(input, CancellationToken.None, null);
+            STICalculator.ComputeC80D50(results, bands);
+
+            // Barron: direct 1/r², reflected R·e^(−t0/τ) with R = 16π/A (omni), of which 1 − e^(−0.08/τ) within 80 ms
+            double c = 331.3 + 0.606 * 20, tau = 1.0 / 13.82, r = 8, t0 = r / c;
+            double a = 0.161 * 20 * 12 * 3 / 1.0;
+            double reflected = 16 * Math.PI / a * Math.Exp(-t0 / tau);
+            double early = 1 / (r * r) + reflected * (1 - Math.Exp(-0.08 / tau));
+            double late = reflected * Math.Exp(-0.08 / tau);
+            double expected = 10 * Math.Log10(early / late);
+            Assert.InRange(results[0].C80Db, expected - 1.0, expected + 1.0);
+        }
+
+        [Fact]
         public void PathGrazingPastWallEnd_AtACornerGap_StillBlocks()
         {
             // Wall x = 0 from y = −5 to y = 1.00 whose end meets a second wall (y = 1.1): a

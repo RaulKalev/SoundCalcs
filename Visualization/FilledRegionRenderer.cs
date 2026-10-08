@@ -30,8 +30,6 @@ namespace SoundCalcs.Visualization
         private const string StiRegionTypePrefix = "SC_STI_";
 
         // Cached across calls within a session so we don't re-query the pattern every render
-        private static ElementId _solidFillPatternId = ElementId.InvalidElementId;
-        private static ElementId _invisibleLinesStyleId = ElementId.InvalidElementId;
 
         // -----------------------------------------------------------------------
         // Public API
@@ -79,12 +77,17 @@ namespace SoundCalcs.Visualization
             int numBands = plan.NumBands;
             var strips = plan.Strips;
 
+            // Filled regions are drawn in the view's plane: plan views only (3D views can't hold them, and a
+            // section's plane is vertical)
+            if (!(view is ViewPlan))
+                throw new InvalidOperationException("Heatmaps can be drawn in plan views (floor or ceiling plans) only. Open a plan view and try again.");
+
             using (Transaction tx = new Transaction(doc, "SoundCalcs: Render Heatmap"))
             {
                 tx.Start();
                 try
                 {
-                    ClearOldRegions(doc);
+                    ClearOldRegions(doc, view);
 
                     ElementId[] regionTypeIds;
                     if (mode == VisualizationMode.STI)
@@ -130,12 +133,13 @@ namespace SoundCalcs.Visualization
                             }
                             catch (Exception ex)
                             {
-                                Debug.WriteLine(
-                                    $"[SoundCalcs] Strip create failed band {band}: {ex.Message}");
+                                IO.FileLogger.Log($"Heatmap strip failed (band {band}): {ex.Message}");
                             }
                         }
                     }
 
+                    if (created == 0)
+                        throw new InvalidOperationException("No heatmap region could be created in this view (details in the log).");
                     tx.Commit();
 
                     // Write back the exact range used so the UI legend matches.
@@ -174,7 +178,7 @@ namespace SoundCalcs.Visualization
                 tx.Start();
                 try
                 {
-                    ClearOldRegions(doc);
+                    ClearOldRegions(doc, view);
                     tx.Commit();
                     Debug.WriteLine("[SoundCalcs] Heatmap cleared.");
                 }
@@ -191,12 +195,13 @@ namespace SoundCalcs.Visualization
         // FilledRegionType management
         // -----------------------------------------------------------------------
 
-        private static void ClearOldRegions(Document doc)
+        /// <summary>Deletes the SoundCalcs regions of this view only: other views keep their heatmaps.</summary>
+        private static void ClearOldRegions(Document doc, View view)
         {
             HashSet<ElementId> scTypeIds = GetSoundCalcsRegionTypeIds(doc);
             if (scTypeIds.Count == 0) return;
 
-            using (var coll = new FilteredElementCollector(doc))
+            using (var coll = new FilteredElementCollector(doc, view.Id))
             {
                 List<ElementId> toDelete = coll
                     .OfClass(typeof(FilledRegion))
@@ -241,7 +246,7 @@ namespace SoundCalcs.Visualization
             {
                 double lo = minSpl + i * step;
                 double hi = minSpl + (i + 1) * step;
-                bandNames[i] = $"{RegionTypePrefix}{lo:F1}-{hi:F1} dB";
+                bandNames[i] = $"{RegionTypePrefix}{lo:F1}-{hi:F1} dB #{i + 1}";   // the index keeps names unique in narrow ranges
             }
 
             // Pick any non-SC type as a duplication template
@@ -283,6 +288,7 @@ namespace SoundCalcs.Visualization
                 FilledRegionType frt = existing.TryGetValue(name, out FilledRegionType found)
                     ? found
                     : template.Duplicate(name) as FilledRegionType;
+                if (frt != null) existing[name] = frt;
 
                 if (frt == null)
                 {
@@ -320,7 +326,7 @@ namespace SoundCalcs.Visualization
                 double lo = minSti + i * step;
                 double hi = minSti + (i + 1) * step;
                 string quality = HeatmapMath.StiQuality((lo + hi) / 2);
-                bandNames[i] = $"{StiRegionTypePrefix}{lo:F2}-{hi:F2} ({quality})";
+                bandNames[i] = $"{StiRegionTypePrefix}{lo:F2}-{hi:F2} ({quality}) #{i + 1}";
             }
 
             FilledRegionType template = null;
@@ -361,6 +367,7 @@ namespace SoundCalcs.Visualization
                 FilledRegionType frt = existing.TryGetValue(name, out FilledRegionType found)
                     ? found
                     : template.Duplicate(name) as FilledRegionType;
+                if (frt != null) existing[name] = frt;
 
                 if (frt == null)
                 {
@@ -404,7 +411,7 @@ namespace SoundCalcs.Visualization
             {
                 double lo = minSpl + i * step;
                 double hi = minSpl + (i + 1) * step;
-                bandNames[i] = $"{prefix}{lo:F1}-{hi:F1} dB";
+                bandNames[i] = $"{prefix}{lo:F1}-{hi:F1} dB #{i + 1}";
             }
 
             FilledRegionType template = null;
@@ -443,6 +450,7 @@ namespace SoundCalcs.Visualization
                 FilledRegionType frt = existing.TryGetValue(name, out FilledRegionType found)
                     ? found
                     : template.Duplicate(name) as FilledRegionType;
+                if (frt != null) existing[name] = frt;
 
                 if (frt == null)
                 {
@@ -479,8 +487,7 @@ namespace SoundCalcs.Visualization
 
         private static ElementId GetSolidFillPatternId(Document doc)
         {
-            if (_solidFillPatternId != ElementId.InvalidElementId)
-                return _solidFillPatternId;
+            // Not cached across calls: element ids belong to one document
 
             using (var coll = new FilteredElementCollector(doc))
             {
@@ -491,8 +498,7 @@ namespace SoundCalcs.Visualization
                     FillPattern fp = fpe.GetFillPattern();
                     if (fp != null && fp.IsSolidFill)
                     {
-                        _solidFillPatternId = fpe.Id;
-                        return _solidFillPatternId;
+                        return fpe.Id;
                     }
                 }
             }
@@ -506,8 +512,7 @@ namespace SoundCalcs.Visualization
         /// </summary>
         private static ElementId GetInvisibleLinesStyleId(Document doc)
         {
-            if (_invisibleLinesStyleId != ElementId.InvalidElementId)
-                return _invisibleLinesStyleId;
+            // Not cached across calls: element ids belong to one document
 
             using (var coll = new FilteredElementCollector(doc))
             {
@@ -518,8 +523,7 @@ namespace SoundCalcs.Visualization
                     if (gs.GraphicsStyleCategory != null &&
                         gs.GraphicsStyleCategory.Name.IndexOf("Invisible", StringComparison.OrdinalIgnoreCase) >= 0)
                     {
-                        _invisibleLinesStyleId = gs.Id;
-                        return _invisibleLinesStyleId;
+                        return gs.Id;
                     }
                 }
             }

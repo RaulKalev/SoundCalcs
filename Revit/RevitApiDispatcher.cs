@@ -1,6 +1,7 @@
 using System;
-using System.Diagnostics;
+using System.Collections.Generic;
 using Autodesk.Revit.UI;
+using SoundCalcs.IO;
 
 namespace SoundCalcs.Revit
 {
@@ -20,7 +21,7 @@ namespace SoundCalcs.Revit
         }
 
         /// <summary>
-        /// Queue an action to run on the Revit API thread.
+        /// Queue an action to run on the Revit API thread, after any queued before it.
         /// The action receives the UIApplication for API calls.
         /// </summary>
         public void Enqueue(Action<UIApplication> action)
@@ -31,35 +32,37 @@ namespace SoundCalcs.Revit
 
         private class DelegateHandler : IExternalEventHandler
         {
-            private Action<UIApplication> _pendingAction;
+            // Every queued action runs: two speakers aimed before Revit gets to the event both get stored
+            private readonly Queue<Action<UIApplication>> _pending = new Queue<Action<UIApplication>>();
             private readonly object _lock = new object();
 
             public void SetAction(Action<UIApplication> action)
             {
                 lock (_lock)
                 {
-                    _pendingAction = action;
+                    _pending.Enqueue(action);
                 }
             }
 
             public void Execute(UIApplication app)
             {
-                Action<UIApplication> action;
-                lock (_lock)
+                while (true)
                 {
-                    action = _pendingAction;
-                    _pendingAction = null;
-                }
+                    Action<UIApplication> action;
+                    lock (_lock)
+                    {
+                        if (_pending.Count == 0) return;
+                        action = _pending.Dequeue();
+                    }
 
-                if (action == null) return;
-
-                try
-                {
-                    action(app);
-                }
-                catch (Exception ex)
-                {
-                    Debug.WriteLine($"[SoundCalcs] RevitApiDispatcher action failed: {ex.Message}");
+                    try
+                    {
+                        action(app);
+                    }
+                    catch (Exception ex)
+                    {
+                        FileLogger.Log($"RevitApiDispatcher action failed: {ex}");
+                    }
                 }
             }
 

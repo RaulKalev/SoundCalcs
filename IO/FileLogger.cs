@@ -6,6 +6,10 @@ namespace SoundCalcs.IO
     public static class FileLogger
     {
         private static string _logPath;
+        private static readonly object Gate = new object();
+
+        /// <summary>The log is started afresh beyond this size (it is written on every run).</summary>
+        private const long MaxBytes = 20L * 1024 * 1024;
 
         public static string LogPath
         {
@@ -27,7 +31,14 @@ namespace SoundCalcs.IO
             try
             {
                 string line = $"{DateTime.Now:HH:mm:ss.fff} {message}";
-                File.AppendAllText(LogPath, line + Environment.NewLine);
+                lock (Gate)   // compute and the IFC preload log from other threads
+                {
+                    var info = new FileInfo(LogPath);
+                    if (info.Exists && info.Length > MaxBytes)
+                        File.Copy(LogPath, Path.ChangeExtension(LogPath, ".old.log"), true);
+                    if (info.Exists && info.Length > MaxBytes) File.Delete(LogPath);
+                    File.AppendAllText(LogPath, line + Environment.NewLine);
+                }
             }
             catch 
             {

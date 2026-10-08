@@ -71,8 +71,8 @@ namespace SoundCalcs.Harness
         public List<SpeakerSpec> Speakers { get; set; } = new List<SpeakerSpec>();
 
         /// <summary>
-        /// Analysis boundary. Null = convex hull of all wall endpoints, exactly as
-        /// the plugin's "Select Boundary" builds it.
+        /// Analysis boundary. Null = as the plugin's "Select Boundary" builds it: the walls' outline when they
+        /// close around themselves, else the convex hull of their endpoints.
         /// </summary>
         public List<Vec2> Boundary { get; set; }
 
@@ -152,11 +152,7 @@ namespace SoundCalcs.Harness
             // --- Boundary (MainViewModel.SelectBoundary) ---
             List<Vec2> boundary = Boundary;
             if (boundary == null)
-            {
-                var pts = new List<Vec2>();
-                foreach (var seg in segments) { pts.Add(seg.Start); pts.Add(seg.End); }
-                boundary = JobInputBuilder.ConvexHull(pts);
-            }
+                boundary = JobInputBuilder.BoundaryFromWalls(segments);
             if (boundary.Count < 3)
                 throw new InvalidOperationException(
                     $"Scenario '{Name}' has no usable boundary (need ≥3 wall endpoints or an explicit Boundary).");

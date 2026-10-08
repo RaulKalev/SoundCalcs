@@ -59,14 +59,16 @@ namespace SoundCalcs.Compute
                             IO.FileLogger.Log($"  ({v.X:F3}, {v.Y:F3})");
                     }
 
-                    // Save input for debugging / reload
-                    JobSerializer.SaveInput(input);
+                    // Save input for debugging / reload (a failed write never fails the job)
+                    try { JobSerializer.SaveInput(input); }
+                    catch (Exception ex) { IO.FileLogger.Log($"Job input not saved: {ex.Message}"); }
 
                     output = Compute(input, token, progress);
                     stopwatch.Stop();
                     output.ComputeTimeSeconds = stopwatch.Elapsed.TotalSeconds;
 
-                    JobSerializer.SaveOutput(output);
+                    try { JobSerializer.SaveOutput(output); }
+                    catch (Exception ex) { IO.FileLogger.Log($"Job output not saved: {ex.Message}"); }
 
                     Debug.WriteLine($"[SoundCalcs] Job {input.JobId} completed in " +
                         $"{output.ComputeTimeSeconds:F2}s. SPL range: " +
@@ -89,19 +91,20 @@ namespace SoundCalcs.Compute
                 catch (Exception ex)
                 {
                     stopwatch.Stop();
-                    Debug.WriteLine($"[SoundCalcs] Job {input.JobId} failed: {ex.Message}");
+                    IO.FileLogger.Log($"Job {input.JobId} failed: {ex}");
 
                     output = new AcousticJobOutput
                     {
                         JobId = input.JobId,
                         Timestamp = DateTime.UtcNow,
                         ComputeTimeSeconds = stopwatch.Elapsed.TotalSeconds,
-                        WasCanceled = false
+                        WasCanceled = false,
+                        Error = ex.Message
                     };
                 }
 
                 JobCompleted?.Invoke(output);
-            }, token);
+            });   // no token here: a task canceled before it starts would never report completion
         }
 
         /// <summary>

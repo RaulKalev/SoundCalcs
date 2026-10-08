@@ -32,6 +32,15 @@ namespace SoundCalcs.IO
         public string LayoutProjectName { get; set; }
         public string SpeakersProjectKey { get; set; }
         public string SpeakersProjectName { get; set; }
+
+        /// <summary>Detail lines the boundary was traced from, read again by Refresh. Empty in older settings.</summary>
+        public List<int> BoundaryLineIds { get; set; } = new List<int>();
+
+        /// <summary>Read only (settings of the first IFC version): the file is now kept on <see cref="LinkSelection"/>.</summary>
+        public string IfcFileOverride { get; set; } = "";
+
+        /// <summary>True when the walls came from "Detect walls" (Refresh detects them again).</summary>
+        public bool WallsDetected { get; set; }
     }
 
     /// <summary>
@@ -113,7 +122,9 @@ namespace SoundCalcs.IO
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"[SoundCalcs] Failed to load settings: {ex.Message}");
+                // Keep the unreadable file (the next autosave would otherwise overwrite it with defaults)
+                FileLogger.Log($"Settings could not be read ({ex.Message}); kept as settings.bad.json");
+                try { File.Copy(SettingsPath, Path.Combine(SettingsDir, "settings.bad.json"), true); } catch { }
                 return new PluginSettings();
             }
         }
@@ -125,13 +136,17 @@ namespace SoundCalcs.IO
                 if (!Directory.Exists(SettingsDir))
                     Directory.CreateDirectory(SettingsDir);
 
+                // Write a temporary file and swap it in, so a crash mid-write can't leave a truncated file
                 string json = JsonConvert.SerializeObject(settings, JsonSettings);
-                File.WriteAllText(SettingsPath, json);
+                string temp = SettingsPath + ".tmp";
+                File.WriteAllText(temp, json);
+                if (File.Exists(SettingsPath)) File.Replace(temp, SettingsPath, null);
+                else File.Move(temp, SettingsPath);
                 Debug.WriteLine($"[SoundCalcs] Settings saved to {SettingsPath}");
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"[SoundCalcs] Failed to save settings: {ex.Message}");
+                FileLogger.Log($"Settings could not be saved: {ex.Message}");
             }
         }
 

@@ -2,7 +2,8 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes"
-    xmlns:conv="clr-namespace:SoundCalcs.UI.Converters">
+    xmlns:conv="clr-namespace:SoundCalcs.UI.Converters"
+    xmlns:ui="clr-namespace:SoundCalcs.UI">
 
     <!--
         SoundCalcs control styles (the same design language as Sentinel). No colours here: every brush is a DynamicResource into the active palette
@@ -1421,6 +1422,7 @@
         <Setter Property="Width" Value="88" />
         <Setter Property="HorizontalAlignment" Value="Left" />
         <Setter Property="HorizontalContentAlignment" Value="Right" />
+        <Setter Property="ui:DecimalInput.Enabled" Value="True" />
     </Style>
     <!--  Band cell in the octave-band table  -->
     <Style
@@ -1431,6 +1433,7 @@
         <Setter Property="Padding" Value="4,0" />
         <Setter Property="Margin" Value="0,0,4,0" />
         <Setter Property="HorizontalContentAlignment" Value="Center" />
+        <Setter Property="ui:DecimalInput.Enabled" Value="True" />
     </Style>
 
     <!--  Compact combo for grid cells  -->
@@ -1463,6 +1466,13 @@
         <Setter Property="SelectionBrush" Value="{DynamicResource Accent}" />
         <Setter Property="Padding" Value="3,2" />
         <Setter Property="Margin" Value="-4,0" />
+    </Style>
+    <!--  Number cell being edited: accepts a decimal comma  -->
+    <Style
+        x:Key="Grid.EditBox.Number"
+        BasedOn="{StaticResource Grid.EditBox}"
+        TargetType="{x:Type TextBox}">
+        <Setter Property="ui:DecimalInput.Enabled" Value="True" />
     </Style>
     <!--  Cell text: editable columns in primary text, computed (read-only) columns in secondary text  -->
     <Style x:Key="Grid.EditableText" TargetType="{x:Type TextBlock}">

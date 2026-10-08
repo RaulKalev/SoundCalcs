@@ -444,7 +444,21 @@
                                     <ListBox.ItemTemplate>
                                         <DataTemplate>
                                             <StackPanel>
-                                                <TextBlock Text="{Binding LinkName}" TextTrimming="CharacterEllipsis" />
+                                                <DockPanel>
+                                                    <Border
+                                                        Margin="6,0,0,0"
+                                                        Padding="5,0"
+                                                        VerticalAlignment="Center"
+                                                        BorderBrush="{DynamicResource Surface.Stroke}"
+                                                        BorderThickness="1"
+                                                        CornerRadius="{StaticResource Radius.Small}"
+                                                        DockPanel.Dock="Right"
+                                                        ToolTip="IFC link: walls are rebuilt from its shapes (experimental)"
+                                                        Visibility="{Binding KindLabel, Converter={StaticResource NotEmptyToVis}}">
+                                                        <TextBlock Style="{StaticResource Type.Caption}" Text="{Binding KindLabel}" />
+                                                    </Border>
+                                                    <TextBlock Text="{Binding LinkName}" TextTrimming="CharacterEllipsis" />
+                                                </DockPanel>
                                                 <TextBlock
                                                     Margin="0,1,0,0"
                                                     Style="{StaticResource Type.Caption}"
@@ -461,13 +475,51 @@
                                     Style="{StaticResource Type.Caption}"
                                     Text="No linked models found. Link the architectural model in Revit, then press Refresh."
                                     Visibility="{Binding AvailableLinks.Count, Converter={StaticResource CountToVis}, ConverterParameter=Invert}" />
+                                <!--  IFC link (experimental): where the exact wall lines come from  -->
+                                <StackPanel Margin="14,6,8,8" Visibility="{Binding SelectedLinkIsIfc, Converter={StaticResource BoolToVis}}">
+                                    <TextBlock
+                                        Style="{StaticResource Type.Secondary}"
+                                        Text="IFC link (experimental). Detect walls rebuilds its walls from their shapes, and reads the original .ifc for exact wall lines, thicknesses and acoustic ratings."
+                                        TextWrapping="Wrap" />
+                                    <DockPanel Margin="0,6,0,0">
+                                        <Button
+                                            Height="28"
+                                            Margin="8,0,0,0"
+                                            AutomationProperties.Name="Use the IFC file next to the link"
+                                            Click="ClearIfcFile_Click"
+                                            DockPanel.Dock="Right"
+                                            Style="{StaticResource Button.Plain}"
+                                            ToolTip="Go back to the .ifc file next to the linked model"
+                                            Visibility="{Binding IfcFileOverride, Converter={StaticResource NotEmptyToVis}}">
+                                            Automatic
+                                        </Button>
+                                        <Button
+                                            Height="28"
+                                            Margin="8,0,0,0"
+                                            AutomationProperties.Name="Choose the original IFC file"
+                                            Click="BrowseIfc_Click"
+                                            DockPanel.Dock="Right"
+                                            Style="{StaticResource Button.Plain}"
+                                            ToolTip="Choose the .ifc file this link was made from">
+                                            <StackPanel Orientation="Horizontal">
+                                                <materialDesign:PackIcon Kind="FolderOpenOutline" Style="{StaticResource ButtonIconLabel}" />
+                                                <TextBlock Text="Choose file" />
+                                            </StackPanel>
+                                        </Button>
+                                        <TextBlock
+                                            VerticalAlignment="Center"
+                                            Style="{StaticResource Type.Caption}"
+                                            Text="{Binding IfcFileStatus}"
+                                            TextWrapping="Wrap" />
+                                    </DockPanel>
+                                </StackPanel>
                             </StackPanel>
                         </Border>
 
                         <TextBlock Style="{StaticResource Type.GroupTitle}" Text="Room boundary" />
                         <Border Style="{StaticResource Card}">
                             <StackPanel>
-                                <TextBlock Style="{StaticResource Type.Secondary}" Text="Select the detail lines that outline the room. Each line style becomes a wall type you can set below." />
+                                <TextBlock Style="{StaticResource Type.Secondary}" Text="Select the detail lines that outline the room. Each line style becomes a wall type you can set below. After editing the lines in Revit, press Refresh." />
                                 <DockPanel Margin="0,12,0,0">
                                     <Button
                                         Height="28"
@@ -490,12 +542,24 @@
                                             </StackPanel>
                                         </Button>
                                         <Button
+                                            Margin="0,0,8,0"
                                             Click="AutoDetectWalls_Click"
                                             Style="{StaticResource Button.Secondary}"
                                             ToolTip="Read the Revit walls of the host and linked model and estimate their ratings">
                                             <StackPanel Orientation="Horizontal">
                                                 <materialDesign:PackIcon Kind="AutoFix" Style="{StaticResource ButtonIconLabel}" />
                                                 <TextBlock Text="Detect walls" />
+                                            </StackPanel>
+                                        </Button>
+                                        <Button
+                                            AutomationProperties.Name="Refresh boundary and walls from the model"
+                                            Click="RefreshLayout_Click"
+                                            IsEnabled="{Binding CanRefreshLayout}"
+                                            Style="{StaticResource Button.Secondary}"
+                                            ToolTip="Read the same boundary lines and walls again after you change them in Revit. Wall types and heights are kept">
+                                            <StackPanel Orientation="Horizontal">
+                                                <materialDesign:PackIcon Kind="Refresh" Style="{StaticResource ButtonIconLabel}" />
+                                                <TextBlock Text="Refresh" />
                                             </StackPanel>
                                         </Button>
                                     </WrapPanel>
@@ -536,7 +600,7 @@
                                         <DataGridTextColumn
                                             Width="80"
                                             Binding="{Binding HeightM, UpdateSourceTrigger=LostFocus}"
-                                            EditingElementStyle="{StaticResource Grid.EditBox}"
+                                            EditingElementStyle="{StaticResource Grid.EditBox.Number}"
                                             ElementStyle="{StaticResource Grid.EditableText}">
                                             <DataGridTextColumn.Header>
                                                 <TextBlock Text="Height (m)" ToolTip="Wall height. 0 = full height (floor to ceiling). Use for screens and low partitions." />
@@ -610,6 +674,17 @@
                                 <StackPanel Orientation="Horizontal">
                                     <materialDesign:PackIcon Kind="CursorDefaultClickOutline" Style="{StaticResource ButtonIconLabel}" />
                                     <TextBlock Text="Pick speakers" />
+                                </StackPanel>
+                            </Button>
+                            <Button
+                                AutomationProperties.Name="Refresh speakers from the model"
+                                Click="RefreshSpeakers_Click"
+                                IsEnabled="{Binding CanRefreshSpeakers}"
+                                Style="{StaticResource Button.Secondary}"
+                                ToolTip="Read the picked speakers again after you move or change them in Revit. Speaker settings and aim corrections are kept">
+                                <StackPanel Orientation="Horizontal">
+                                    <materialDesign:PackIcon Kind="Refresh" Style="{StaticResource ButtonIconLabel}" />
+                                    <TextBlock Text="Refresh" />
                                 </StackPanel>
                             </Button>
                         </WrapPanel>
@@ -693,7 +768,7 @@
                                     <DataGridTextColumn
                                         Width="76"
                                         Binding="{Binding OnAxisSplDb}"
-                                        EditingElementStyle="{StaticResource Grid.EditBox}"
+                                        EditingElementStyle="{StaticResource Grid.EditBox.Number}"
                                         ElementStyle="{StaticResource Grid.EditableText}">
                                         <DataGridTextColumn.Header>
                                             <TextBlock Text="SPL (dB)" ToolTip="On-axis sound pressure level at 1 m" />
@@ -702,7 +777,7 @@
                                     <DataGridTextColumn
                                         Width="90"
                                         Binding="{Binding ConeHalfAngleDeg}"
-                                        EditingElementStyle="{StaticResource Grid.EditBox}"
+                                        EditingElementStyle="{StaticResource Grid.EditBox.Number}"
                                         ElementStyle="{StaticResource Grid.EditableText}">
                                         <DataGridTextColumn.Header>
                                             <TextBlock Text="Cone angle (°)" ToolTip="Half-angle of the coverage cone, used when no datasheet coverage is entered" />

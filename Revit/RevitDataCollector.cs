@@ -26,11 +26,12 @@ namespace SoundCalcs.Revit
         // -----------------------------------------------------------------
 
         /// <summary>
-        /// Collect all family instances of the given built-in category from the host model.
-        /// When <paramref name="abLineParameterName"/> is non-empty, the value of that
-        /// instance parameter is stored in <see cref="SpeakerInstance.AbLine"/>.
+        /// Read the given speakers from the host model as they are now: position, type, level, A/B line and
+        /// the aim correction stored by the viewer. Ids that are deleted or not point-placed family instances
+        /// are left out. When <paramref name="abLineParameterName"/> is non-empty, the value of that instance
+        /// parameter is stored in <see cref="SpeakerInstance.AbLine"/>.
         /// </summary>
-        public List<SpeakerInstance> CollectSpeakers(BuiltInCategory category, string abLineParameterName = "")
+        public List<SpeakerInstance> CollectSpeakersById(IEnumerable<int> elementIds, string abLineParameterName = "")
         {
             var speakers = new List<SpeakerInstance>();
 
@@ -39,75 +40,68 @@ namespace SoundCalcs.Revit
                 levels = levelCollector.OfClass(typeof(Level)).Cast<Level>()
                     .OrderBy(l => l.ProjectElevation).ToList();
 
-            using (var collector = new FilteredElementCollector(_doc))
+            foreach (int id in elementIds.Distinct())
             {
-                var elements = collector
-                    .OfCategory(category)
-                    .OfClass(typeof(FamilyInstance))
-                    .WhereElementIsNotElementType()
-                    .ToElements();
-
-                foreach (Element elem in elements)
-                {
-                    FamilyInstance fi = elem as FamilyInstance;
-                    if (fi == null) continue;
-
-                    LocationPoint locPt = fi.Location as LocationPoint;
-                    if (locPt == null) continue;
-
-                    XYZ position = locPt.Point;
-                    XYZ facing = fi.FacingOrientation;
-
-                    Vec3 posM = UnitConversion.XyzToVec3(position);
-
-                    // Determine level name and elevation. ProjectElevation is in the same
-                    // internal coordinates as the location point; Level.Elevation is relative
-                    // to the level type's Elevation Base (project base / survey point).
-                    // Face-hosted families (e.g. on a ceiling or a linked host) often have no
-                    // LevelId: use the reference-level parameter, else the level just below.
-                    Level level = ResolveLevel(fi, position.Z, levels);
-                    string levelName = level?.Name ?? "";
-                    double levelElevM = level != null ? UnitConversion.FtToM(level.ProjectElevation) : 0;
-
-                    string familyName = fi.Symbol?.Family?.Name ?? "Unknown";
-                    string typeName = fi.Symbol?.Name ?? "Unknown";
-
-                    // Read A/B line designation from the configured parameter, if any
-                    string abLine = "";
-                    if (!string.IsNullOrEmpty(abLineParameterName))
-                    {
-                        Parameter abParam = fi.LookupParameter(abLineParameterName);
-                        if (abParam != null)
-                            abLine = abParam.AsString() ?? abParam.AsValueString() ?? "";
-                    }
-
-                    speakers.Add(new SpeakerInstance
-                    {
-                        ElementId = RevitCompat.GetIdValue(fi.Id),
-                        TypeKey = $"{familyName} : {typeName}",
-                        Position = posM,
-                        FacingDirection = UnitConversion.DirectionToVec3(facing),
-                        LevelName = levelName,
-                        LevelElevationM = levelElevM,
-                        ElevationFromLevelM = posM.Z - levelElevM,
-                        AbLine = abLine
-                    });
-
-                    // Override horizontal aim with any rotation stored by the user
-                    if (SpeakerRotationStorage.TryRead(fi, out double aimDeg))
-                    {
-                        double rad  = aimDeg * Math.PI / 180.0;
-                        double fz   = speakers[speakers.Count - 1].FacingDirection.Z;
-                        double hLen = Math.Sqrt(Math.Max(0.0, 1.0 - fz * fz));
-                        if (hLen < 1e-6) hLen = 1.0;
-                        speakers[speakers.Count - 1].FacingDirection =
-                            new Domain.Vec3(Math.Cos(rad) * hLen, Math.Sin(rad) * hLen, fz);
-                    }
-                }
+                FamilyInstance fi = _doc.GetElement(RevitCompat.ToElementId(id)) as FamilyInstance;
+                if (fi == null) continue;
+                SpeakerInstance speaker = ReadSpeaker(fi, levels, abLineParameterName);
+                if (speaker != null) speakers.Add(speaker);
             }
 
-            Debug.WriteLine($"[SoundCalcs] Collected {speakers.Count} speakers from category {category}");
+            Debug.WriteLine($"[SoundCalcs] Read {speakers.Count} speakers by id");
             return speakers;
+        }
+
+        private SpeakerInstance ReadSpeaker(FamilyInstance fi, List<Level> levels, string abLineParameterName)
+        {
+            LocationPoint locPt = fi.Location as LocationPoint;
+            if (locPt == null) return null;
+
+            XYZ position = locPt.Point;
+            Vec3 posM = UnitConversion.XyzToVec3(position);
+            Vec3 facing = UnitConversion.DirectionToVec3(fi.FacingOrientation);
+
+            // Determine level name and elevation. ProjectElevation is in the same
+            // internal coordinates as the location point; Level.Elevation is relative
+            // to the level type's Elevation Base (project base / survey point).
+            // Face-hosted families (e.g. on a ceiling or a linked host) often have no
+            // LevelId: use the reference-level parameter, else the level just below.
+            Level level = ResolveLevel(fi, position.Z, levels);
+            string levelName = level?.Name ?? "";
+            double levelElevM = level != null ? UnitConversion.FtToM(level.ProjectElevation) : 0;
+
+            string familyName = fi.Symbol?.Family?.Name ?? "Unknown";
+            string typeName = fi.Symbol?.Name ?? "Unknown";
+
+            // Read A/B line designation from the configured parameter, if any
+            string abLine = "";
+            if (!string.IsNullOrEmpty(abLineParameterName))
+            {
+                Parameter abParam = fi.LookupParameter(abLineParameterName);
+                if (abParam != null)
+                    abLine = abParam.AsString() ?? abParam.AsValueString() ?? "";
+            }
+
+            var speaker = new SpeakerInstance
+            {
+                ElementId = RevitCompat.GetIdValue(fi.Id),
+                TypeKey = $"{familyName} : {typeName}",
+                Position = posM,
+                FacingDirection = facing,
+                LevelName = levelName,
+                LevelElevationM = levelElevM,
+                ElevationFromLevelM = posM.Z - levelElevM,
+                AbLine = abLine,
+                ModelAimDeg = SpeakerAim.HorizontalAngleDeg(facing)
+            };
+
+            // Turn by any aim correction the user made in the viewer
+            if (SpeakerRotationStorage.TryReadOffset(fi, speaker.ModelAimDeg, out double offsetDeg))
+            {
+                speaker.AimOffsetDeg = offsetDeg;
+                SpeakerAim.ApplyOffset(speaker);
+            }
+            return speaker;
         }
 
         /// <summary>
@@ -139,26 +133,60 @@ namespace SoundCalcs.Revit
             return below ?? levelsByElevation.FirstOrDefault();
         }
 
+        // -----------------------------------------------------------------
+        // Boundary lines
+        // -----------------------------------------------------------------
+
         /// <summary>
-        /// Group speakers by TypeKey.
+        /// Read the given detail / model lines as wall segments in meters, one group per line style.
+        /// Ids that are deleted or not curve elements are left out of <paramref name="foundIds"/>.
+        /// <paramref name="lineZ"/> is the elevation of the lines (0 when none were read).
         /// </summary>
-        public List<SpeakerTypeGroup> GroupSpeakers(List<SpeakerInstance> speakers)
+        public List<WallLineGroup> ReadBoundaryLines(IEnumerable<int> elementIds, out List<int> foundIds, out double lineZ)
         {
-            return speakers
-                .GroupBy(s => s.TypeKey)
-                .Select(g =>
+            var groups = new Dictionary<string, WallLineGroup>();
+            foundIds = new List<int>();
+            lineZ = 0;
+
+            foreach (int id in elementIds.Distinct())
+            {
+                CurveElement curveElem = _doc.GetElement(RevitCompat.ToElementId(id)) as CurveElement;
+                Curve curve = curveElem?.GeometryCurve;
+                if (curve == null) continue;
+                foundIds.Add(id);
+
+                string styleName = "Unknown";
+                try
                 {
-                    string[] parts = g.Key.Split(new[] { " : " }, StringSplitOptions.None);
-                    return new SpeakerTypeGroup
+                    if (curveElem.LineStyle is GraphicsStyle gs) styleName = gs.Name;
+                }
+                catch { }
+
+                if (!groups.TryGetValue(styleName, out WallLineGroup grp))
+                    groups[styleName] = grp = new WallLineGroup { LineStyleName = styleName, UserEdited = false };
+
+                IList<XYZ> pts = curve.Tessellate();
+                for (int i = 0; i < pts.Count - 1; i++)
+                {
+                    XYZ p0 = pts[i];
+                    XYZ p1 = pts[i + 1];
+                    lineZ = UnitConversion.FtToM(p0.Z);
+
+                    var seg = new WallSegment2D
                     {
-                        TypeKey = g.Key,
-                        FamilyName = parts.Length > 0 ? parts[0] : g.Key,
-                        TypeName = parts.Length > 1 ? parts[1] : "",
-                        Instances = g.ToList()
+                        Start = new Vec2(UnitConversion.FtToM(p0.X), UnitConversion.FtToM(p0.Y)),
+                        End = new Vec2(UnitConversion.FtToM(p1.X), UnitConversion.FtToM(p1.Y)),
+                        BaseElevationM = lineZ,
+                        HeightM = 3.0,
+                        ThicknessM = 0.1
                     };
-                })
-                .OrderBy(g => g.TypeKey)
-                .ToList();
+                    grp.Segments.Add(seg);
+                    grp.SegmentCount++;
+                    grp.TotalLengthM += seg.Length;
+                }
+            }
+
+            return groups.Values.ToList();
         }
 
         // -----------------------------------------------------------------
@@ -204,11 +232,21 @@ namespace SoundCalcs.Revit
                         catch { /* May not be available */ }
                     }
 
+                    // An IFC link is a converted "<file>.ifc.RVT" copy; the original .ifc sits next to it
+                    string linkDocPath = "";
+                    try { linkDocPath = linkInst.GetLinkDocument()?.PathName ?? ""; } catch { }
+                    string ifcPath;
+                    bool isIfc = LinkSelection.DetectIfc(filePath, out ifcPath) ||
+                                 LinkSelection.DetectIfc(linkDocPath, out ifcPath) ||
+                                 LinkSelection.DetectIfc(name, out _);
+
                     links.Add(new LinkSelection
                     {
                         LinkInstanceId = RevitCompat.GetIdValue(linkInst.Id),
                         LinkName = name,
-                        FilePath = filePath
+                        FilePath = filePath,
+                        IsIfc = isIfc,
+                        IfcFilePath = ifcPath ?? ""
                     });
                 }
             }
@@ -460,6 +498,239 @@ namespace SoundCalcs.Revit
         }
 
         // -----------------------------------------------------------------
+        // Walls of a linked IFC (shapes only: Revit rebuilds IFC walls as DirectShapes)
+        // -----------------------------------------------------------------
+
+        static readonly string[] IfcEntityParams = { "IfcExportAs", "Export to IFC As", "IfcEntity", "IFC Entity", "IfcType" };
+        static readonly string[] ObjectTypeParams = { "IfcObjectType", "ObjectType", "Object Type" };
+
+        /// <summary>
+        /// Read the walls of a linked IFC: each wall's top face outlines and vertices in host coordinates
+        /// (metres), its IfcGUID, type name, AcousticRating and materials. Walls are the Walls category, plus
+        /// Generic Models exported as IfcWall* or whose IFC object type names a wall (IfcBuildingElementProxy).
+        /// </summary>
+        public List<IfcLinkWall> ReadIfcLinkWalls(int linkInstanceId)
+        {
+            var result = new List<IfcLinkWall>();
+            RevitLinkInstance linkInstance = _doc.GetElement(RevitCompat.ToElementId(linkInstanceId)) as RevitLinkInstance;
+            Document linkDoc = linkInstance?.GetLinkDocument();
+            if (linkDoc == null) return result;
+            Transform xform = linkInstance.GetTotalTransform();
+
+            var elements = new List<Element>();
+            using (var walls = new FilteredElementCollector(linkDoc))
+                elements.AddRange(walls.OfCategory(BuiltInCategory.OST_Walls).WhereElementIsNotElementType().ToElements());
+            using (var generic = new FilteredElementCollector(linkDoc))
+                elements.AddRange(generic.OfCategory(BuiltInCategory.OST_GenericModel).WhereElementIsNotElementType()
+                    .ToElements().Where(IsIfcWallProxy));
+
+            var options = new Options { ComputeReferences = false, DetailLevel = ViewDetailLevel.Fine };
+            foreach (Element elem in elements)
+            {
+                try
+                {
+                    var wall = new IfcLinkWall
+                    {
+                        ElementId = RevitCompat.GetIdValue(elem.Id),
+                        IfcGuid = IfcGuid(elem),
+                        GroupName = IfcGroupName(linkDoc, elem),
+                        AcousticRating = ParamStartingWith(elem, "AcousticRating")
+                            ?? ParamStartingWith(linkDoc.GetElement(elem.GetTypeId()), "AcousticRating")
+                    };
+                    foreach (ElementId mid in elem.GetMaterialIds(false))
+                        if (linkDoc.GetElement(mid) is Material m && !wall.Materials.Contains(m.Name)) wall.Materials.Add(m.Name);
+
+                    var geom = new IfcGeometry();
+                    GeometryElement ge = elem.get_Geometry(options);
+                    if (ge != null) CollectIfcGeometry(ge, xform, geom);
+                    if (geom.Points.Count < 3) continue;
+
+                    wall.Points = geom.Points;
+                    wall.BaseZ = geom.MinZ;
+                    wall.TopZ = geom.MaxZ;
+                    wall.Outlines = geom.Outlines();
+                    result.Add(wall);
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"[SoundCalcs] IFC wall {elem.Id} skipped: {ex.Message}");
+                }
+            }
+            return result;
+        }
+
+        private static bool IsIfcWallProxy(Element elem)
+        {
+            foreach (string name in IfcEntityParams)
+            {
+                string v = ParamString(elem, name);
+                if (v.StartsWith("IfcWall", StringComparison.OrdinalIgnoreCase) ||
+                    v.StartsWith("IfcCurtainWall", StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+            foreach (string name in ObjectTypeParams)
+                if (WallTypeEstimator.NamesAWall(ParamString(elem, name))) return true;
+            return false;
+        }
+
+        private static string IfcGuid(Element elem)
+        {
+            string guid = "";
+            try { guid = elem.get_Parameter(BuiltInParameter.IFC_GUID)?.AsString() ?? ""; } catch { }
+            return guid.Length > 0 ? guid : ParamString(elem, "IfcGUID");
+        }
+
+        /// <summary>The walls-table row name: the IFC type, else object type, else the IFC name without its id.</summary>
+        private static string IfcGroupName(Document linkDoc, Element elem)
+        {
+            string typeName = linkDoc.GetElement(elem.GetTypeId())?.Name ?? "";
+            if (typeName.Length > 0 && !typeName.StartsWith("Ifc", StringComparison.OrdinalIgnoreCase)) return typeName;
+            foreach (string name in ObjectTypeParams)
+            {
+                string v = ParamString(elem, name);
+                if (v.Length > 0) return v;
+            }
+            string ifcName = ParamString(elem, "IfcName");
+            if (ifcName.Length == 0) ifcName = elem.Name ?? "";
+            // Revit-exported IFC names end with the element id: "Basic Wall:Generic - 200mm:123456"
+            int colon = ifcName.LastIndexOf(':');
+            if (colon > 0 && ifcName.Substring(colon + 1).All(char.IsDigit)) ifcName = ifcName.Substring(0, colon);
+            return ifcName.Length > 0 ? ifcName : (elem.Category?.Name ?? "Wall");
+        }
+
+        private static string ParamString(Element elem, string name)
+        {
+            Parameter p = elem?.LookupParameter(name);
+            if (p == null || !p.HasValue) return "";
+            return (p.StorageType == StorageType.String ? p.AsString() : p.AsValueString()) ?? "";
+        }
+
+        /// <summary>A parameter whose name starts with <paramref name="prefix"/> ("AcousticRating(Pset_WallCommon)").</summary>
+        private static string ParamStartingWith(Element elem, string prefix)
+        {
+            if (elem == null) return null;
+            foreach (Parameter p in elem.Parameters)
+            {
+                if (p?.Definition == null || !p.HasValue) continue;
+                if (!p.Definition.Name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) continue;
+                string v = p.StorageType == StorageType.String ? p.AsString() : p.AsValueString();
+                if (!string.IsNullOrWhiteSpace(v)) return v.Trim();
+            }
+            return null;
+        }
+
+        /// <summary>Plan geometry of one wall: vertices, and its top faces per solid / mesh.</summary>
+        private class IfcGeometry
+        {
+            public readonly List<Vec2> Points = new List<Vec2>();
+            public double MinZ = double.MaxValue, MaxZ = double.MinValue;
+            // Per solid or mesh: upward faces (height, outline) and upward triangles (height, triangle)
+            public readonly List<List<(double Z, List<Vec2> Loop)>> SolidTops = new List<List<(double, List<Vec2>)>>();
+            public readonly List<List<(double Z, Vec2 A, Vec2 B, Vec2 C)>> MeshTops = new List<List<(double, Vec2, Vec2, Vec2)>>();
+
+            public void Add(XYZ p)
+            {
+                Points.Add(new Vec2(UnitConversion.FtToM(p.X), UnitConversion.FtToM(p.Y)));
+                double z = UnitConversion.FtToM(p.Z);
+                MinZ = Math.Min(MinZ, z);
+                MaxZ = Math.Max(MaxZ, z);
+            }
+
+            /// <summary>
+            /// Every upward face of each solid, and of each mesh per height, as outlines: a stepped or partly sloped
+            /// top has faces at several heights, and only all of them cover the wall's length. Overlaps (window
+            /// sills under the top) are merged by <see cref="IfcWallBuilder"/>.
+            /// </summary>
+            public List<List<Vec2>> Outlines()
+            {
+                var result = new List<List<Vec2>>();
+                foreach (var tops in SolidTops)
+                    result.AddRange(tops.Select(t => t.Loop));
+                foreach (var tris in MeshTops.Where(t => t.Count > 0))
+                    foreach (var level in tris.GroupBy(t => Math.Round(t.Z, 2)))
+                    {
+                        List<Vec2> loop = WallFootprint.OutlineFromTriangles(level.Select(t => (t.A, t.B, t.C)));
+                        if (loop.Count >= 3) result.Add(loop);
+                    }
+                return result;
+            }
+        }
+
+        private static void CollectIfcGeometry(GeometryElement ge, Transform xform, IfcGeometry geom)
+        {
+            foreach (GeometryObject obj in ge)
+            {
+                if (obj is Solid solid && solid.Faces.Size > 0)
+                {
+                    var tops = new List<(double, List<Vec2>)>();
+                    foreach (Face face in solid.Faces)
+                    {
+                        foreach (EdgeArray loop in face.EdgeLoops)
+                            foreach (Edge edge in loop)
+                                foreach (XYZ p in edge.Tessellate()) geom.Add(xform.OfPoint(p));
+
+                        if (!(face is PlanarFace pf) || xform.OfVector(pf.FaceNormal).Z < 0.99) continue;
+                        List<Vec2> outer = null;
+                        double outerArea = 0, z = 0;
+                        foreach (CurveLoop cl in pf.GetEdgesAsCurveLoops())
+                        {
+                            var pts = new List<Vec2>();
+                            foreach (Curve c in cl)
+                            {
+                                IList<XYZ> tess = c.Tessellate();
+                                for (int i = 0; i < tess.Count - 1; i++)
+                                {
+                                    XYZ q = xform.OfPoint(tess[i]);
+                                    pts.Add(new Vec2(UnitConversion.FtToM(q.X), UnitConversion.FtToM(q.Y)));
+                                    z = UnitConversion.FtToM(q.Z);
+                                }
+                            }
+                            double area = Math.Abs(SignedArea(pts));
+                            if (area > outerArea) { outerArea = area; outer = pts; }
+                        }
+                        if (outer != null && outer.Count >= 3) tops.Add((z, outer));
+                    }
+                    geom.SolidTops.Add(tops);
+                }
+                else if (obj is Mesh mesh)
+                {
+                    var tris = new List<(double, Vec2, Vec2, Vec2)>();
+                    foreach (XYZ v in mesh.Vertices) geom.Add(xform.OfPoint(v));
+                    for (int i = 0; i < mesh.NumTriangles; i++)
+                    {
+                        MeshTriangle t = mesh.get_Triangle(i);
+                        XYZ a = xform.OfPoint(t.get_Vertex(0)), b = xform.OfPoint(t.get_Vertex(1)), c = xform.OfPoint(t.get_Vertex(2));
+                        XYZ n = (b - a).CrossProduct(c - a);
+                        if (n.GetLength() < 1e-12 || Math.Abs(n.Normalize().Z) < 0.99) continue;
+                        // Horizontal in either winding (meshes are not reliably oriented): the bottom gives the same
+                        // plan outline as the top, and is merged with it
+                        Vec2 A = new Vec2(UnitConversion.FtToM(a.X), UnitConversion.FtToM(a.Y));
+                        Vec2 B = new Vec2(UnitConversion.FtToM(b.X), UnitConversion.FtToM(b.Y));
+                        Vec2 C = new Vec2(UnitConversion.FtToM(c.X), UnitConversion.FtToM(c.Y));
+                        tris.Add((UnitConversion.FtToM((a.Z + b.Z + c.Z) / 3), A, B, C));
+                    }
+                    geom.MeshTops.Add(tris);
+                }
+                else if (obj is GeometryInstance gi)
+                {
+                    GeometryElement inst = gi.GetInstanceGeometry(xform);
+                    if (inst != null) CollectIfcGeometry(inst, Transform.Identity, geom);
+                }
+            }
+        }
+
+        private static double SignedArea(List<Vec2> pts)
+        {
+            double a = 0;
+            for (int i = 0; i < pts.Count; i++)
+            {
+                Vec2 p = pts[i], q = pts[(i + 1) % pts.Count];
+                a += p.X * q.Y - q.X * p.Y;
+            }
+            return a / 2;
+        }
+
+        // -----------------------------------------------------------------
         // Auto wall detection from Revit wall elements
         // -----------------------------------------------------------------
 
@@ -517,11 +788,11 @@ namespace SoundCalcs.Revit
 
                     if (!groups.TryGetValue(typeName, out Domain.WallLineGroup grp))
                     {
-                        int estStc = EstimateStcForWall(typeName, thicknessM);
                         grp = new Domain.WallLineGroup
                         {
                             LineStyleName = typeName,
-                            WallType = Domain.WallTypeCatalog.FindClosestByStc(estStc)
+                            WallType = WallTypeEstimator.Estimate(typeName, thicknessM),
+                            UserEdited = false
                         };
                         groups[typeName] = grp;
                     }
@@ -541,55 +812,6 @@ namespace SoundCalcs.Revit
             }
 
             return new List<Domain.WallLineGroup>(groups.Values);
-        }
-
-        /// <summary>
-        /// Estimate STC from wall type name keywords and physical thickness.
-        /// </summary>
-        private static int EstimateStcForWall(string typeName, double thicknessM)
-        {
-            string n = typeName.ToLowerInvariant();
-
-            bool isConcrete = n.Contains("concrete") || n.Contains("beton");
-            bool isMasonry  = n.Contains("brick") || n.Contains("masonry") ||
-                              n.Contains("cmu")   || n.Contains("block");
-            bool isStud     = n.Contains("stud")  || n.Contains("timber") ||
-                              n.Contains("gypsum")|| n.Contains("drywall") ||
-                              n.Contains("plasterboard");
-            bool isGlass    = n.Contains("glass") || n.Contains("glaz") ||
-                              n.Contains("curtain");
-
-            if (isGlass)    return 32;
-
-            if (isConcrete)
-            {
-                if (thicknessM >= 0.25) return 57;
-                if (thicknessM >= 0.18) return 55;
-                if (thicknessM >= 0.13) return 50;
-                return 45;
-            }
-
-            if (isMasonry)
-            {
-                if (thicknessM >= 0.25) return 55;
-                if (thicknessM >= 0.18) return 50;
-                return 45;
-            }
-
-            if (isStud)
-            {
-                if (thicknessM >= 0.15) return 45;
-                if (thicknessM >= 0.10) return 40;
-                return 35;
-            }
-
-            // Generic: thickness only
-            if (thicknessM >= 0.30) return 55;
-            if (thicknessM >= 0.20) return 50;
-            if (thicknessM >= 0.15) return 45;
-            if (thicknessM >= 0.10) return 40;
-            if (thicknessM >= 0.07) return 35;
-            return 30;
         }
     }
 

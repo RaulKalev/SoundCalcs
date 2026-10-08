@@ -63,6 +63,57 @@ namespace SoundCalcs.Domain
             return w;
         }
 
+        /// <summary>
+        /// The walls with every stretch covered twice on the same line removed from the later wall: collinear pieces
+        /// (a wall traced in several lines, an arc's segments) overlap at their joints because each end is extended
+        /// by <see cref="WallEndExtensionM"/>, and duplicated lines overlap entirely. A ray through such a stretch
+        /// would pay the wall's loss twice. Returns new wall objects; the input is not changed.
+        /// </summary>
+        public static List<ComputeWall> RemoveCollinearOverlaps(List<ComputeWall> walls)
+        {
+            const double lineTol = 0.01;
+            double cosTol = Math.Cos(0.5 * Math.PI / 180);
+            var result = new List<ComputeWall>();
+            foreach (ComputeWall w in walls)
+            {
+                // Pieces of w still uncovered, as intervals along w
+                Vec2 d = w.End - w.Start;
+                double len = d.Length;
+                if (len < 1e-9) { result.Add(w); continue; }
+                Vec2 u = d * (1.0 / len);
+                var free = new List<(double Lo, double Hi)> { (0, len) };
+                foreach (ComputeWall a in result)
+                {
+                    Vec2 ad = a.End - a.Start;
+                    double alen = ad.Length;
+                    if (alen < 1e-9 || Math.Abs(Vec2.Dot(ad * (1.0 / alen), u)) < cosTol) continue;
+                    if (Math.Abs(Vec2.Cross(u, a.Start - w.Start)) > lineTol || Math.Abs(Vec2.Cross(u, a.End - w.Start)) > lineTol) continue;
+                    double a0 = Vec2.Dot(a.Start - w.Start, u), a1 = Vec2.Dot(a.End - w.Start, u);
+                    double lo = Math.Min(a0, a1), hi = Math.Max(a0, a1);
+                    var next = new List<(double, double)>();
+                    foreach (var (fl, fh) in free)
+                    {
+                        if (hi <= fl || lo >= fh) { next.Add((fl, fh)); continue; }
+                        if (lo > fl) next.Add((fl, lo));
+                        if (hi < fh) next.Add((hi, fh));
+                    }
+                    free = next;
+                }
+                if (free.Count == 1 && free[0].Lo == 0 && free[0].Hi == len) { result.Add(w); continue; }
+                foreach (var (fl, fh) in free)
+                {
+                    if (fh - fl < 0.01) continue;
+                    result.Add(new ComputeWall
+                    {
+                        Start = w.Start + u * fl, End = w.Start + u * fh,
+                        StcRating = w.StcRating, HalfThicknessM = w.HalfThicknessM, HeightM = w.HeightM,
+                        BaseElevationM = w.BaseElevationM, AbsorptionByBand = w.AbsorptionByBand
+                    });
+                }
+            }
+            return result;
+        }
+
         /// <summary>Partial walls at least this tall count as enclosing the room.</summary>
         public const double EnclosingHeightM = 2.4;
 
@@ -109,11 +160,12 @@ namespace SoundCalcs.Domain
                 double maxElevation = 0;
                 foreach (SpeakerInstance inst in speakerList)
                 {
-                    if (room.ContainsSpeakerPosition(inst.Position))
-                    {
-                        double h = inst.ElevationFromLevelM;
-                        if (h > maxElevation) maxElevation = h;
-                    }
+                    if (!room.ContainsSpeakerPosition(inst.Position)) continue;
+                    // Only speakers on this room's level: one on the floor above stands over it in plan too
+                    if (!string.IsNullOrEmpty(inst.LevelName) && Math.Abs(inst.LevelElevationM - room.FloorElevationM) > 0.5)
+                        continue;
+                    double h = inst.Position.Z - room.FloorElevationM;
+                    if (h > maxElevation) maxElevation = h;
                 }
                 if (maxElevation > 0.5)
                     room.CeilingHeightM = maxElevation;
@@ -156,9 +208,12 @@ namespace SoundCalcs.Domain
                     double remainder = boundary.Area - detected.Sum(r => r.Area);
                     if (remainder > 1.0)
                     {
+                        // The boundary with the rooms cut out: its points, perimeter and ceiling speakers are the
+                        // open area's own, not the rooms'
                         group.Add(new RoomPolygon
                         {
                             Vertices = boundary.Vertices.ToList(),
+                            Holes = detected.Select(r => r.Vertices.ToList()).ToList(),
                             FloorElevationM = boundary.FloorElevationM,
                             Name = $"{boundary.Name} – Open area",
                             AreaOverrideM2 = remainder
@@ -247,6 +302,33 @@ namespace SoundCalcs.Domain
                     room.EffectiveAreaM2, room.Perimeter, h, lines, Math.Min(covered, room.Perimeter),
                     floorAbsorption, ceilingAbsorption, people, temperatureC, relativeHumidityPct);
             }
+        }
+
+        /// <summary>
+        /// Whether an A/B line parameter value means <paramref name="line"/> ("A" or "B"): "A", "a", " A ",
+        /// "A-line", "A line", "Line A" all mean A; "AB" or "Bar" mean neither.
+        /// </summary>
+        public static bool IsOnLine(string abLine, string line)
+        {
+            if (string.IsNullOrWhiteSpace(abLine) || string.IsNullOrEmpty(line)) return false;
+            string v = abLine.Trim();
+            if (v.StartsWith("line", StringComparison.OrdinalIgnoreCase)) v = v.Substring(4).Trim(' ', '-', '_', ':');
+            if (v.Length == 0 || !string.Equals(v.Substring(0, 1), line, StringComparison.OrdinalIgnoreCase)) return false;
+            return v.Length == 1 || !char.IsLetterOrDigit(v[1]);
+        }
+
+        /// <summary>
+        /// The analysis boundary for a set of wall lines: their own outline when they close around all of
+        /// themselves (so the notch of an L-shaped building stays outside), else the convex hull of their ends
+        /// (open layouts, a few lines marking an area).
+        /// </summary>
+        public static List<Vec2> BoundaryFromWalls(List<WallSegment2D> walls)
+        {
+            List<Vec2> outline = RoomDetector.OuterOutline(walls);
+            if (outline != null) return outline;
+            var pts = new List<Vec2>();
+            foreach (WallSegment2D w in walls) { pts.Add(w.Start); pts.Add(w.End); }
+            return ConvexHull(pts);
         }
 
         /// <summary>

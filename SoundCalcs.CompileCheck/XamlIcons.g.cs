@@ -21,6 +21,7 @@ namespace SoundCalcs.CompileCheck
             MaterialDesignThemes.Wpf.PackIconKind.FitToScreenOutline,
             MaterialDesignThemes.Wpf.PackIconKind.FlashOutline,
             MaterialDesignThemes.Wpf.PackIconKind.FloorPlan,
+            MaterialDesignThemes.Wpf.PackIconKind.FolderOpenOutline,
             MaterialDesignThemes.Wpf.PackIconKind.InformationOutline,
             MaterialDesignThemes.Wpf.PackIconKind.PinOffOutline,
             MaterialDesignThemes.Wpf.PackIconKind.PlayCircleOutline,

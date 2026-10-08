@@ -102,6 +102,6 @@ namespace SoundCalcs.IO
         /// Generate a new unique job ID based on timestamp.
         /// </summary>
         public static string NewJobId() =>
-            $"job_{DateTime.Now:yyyyMMdd_HHmmss}";
+            $"job_{DateTime.Now:yyyyMMdd_HHmmss_fff}";
     }
 }
