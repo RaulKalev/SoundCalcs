@@ -62,7 +62,8 @@ namespace SoundCalcs.Compute
             double[] floorAbsorption, double[] ceilingAbsorption, double[] t60, double[] airDbPerM,
             double defaultCeilingHeightM)
         {
-            if (room == null || room.AreaOverrideM2.HasValue || room.Vertices.Count < 3) return null;
+            if (room == null || room.AreaOverrideM2.HasValue || room.Vertices.Count < 3 ||
+                (room.Holes != null && room.Holes.Count > 0)) return null;   // a room around a closet is no box
             if (!TryFitRectangle(room.Vertices, out Vec2 origin, out Vec2 ax, out Vec2 ay, out double lx, out double ly))
                 return null;
             if (lx < 1.0 || ly < 1.0 || room.Area / (lx * ly) < MinRectangularity) return null;
@@ -170,11 +171,10 @@ namespace SoundCalcs.Compute
 
             // Flush-mounted on a surface: no rays leave into that surface
             bool[] flushLow = new bool[3], flushHigh = new bool[3];
-            for (int a = 0; a < 3; a++)
-            {
-                flushLow[a] = sp[a] < FlushToleranceM;
-                flushHigh[a] = L[a] - sp[a] < FlushToleranceM;
-            }
+            // Only floor and ceiling (a = 2): a box speaker on a wall still radiates toward it and gets its
+            // reflection (boundary gain), as in the image-source path; a flush ceiling speaker radiates downward only
+            flushLow[2] = sp[2] < FlushToleranceM;
+            flushHigh[2] = L[2] - sp[2] < FlushToleranceM;
 
             // Per axis: image offsets (position, reflections off the low plane, off the high plane, emission sign)
             var axes = new List<(double Pos, int Low, int High, int Sign)>[3];
@@ -311,9 +311,8 @@ namespace SoundCalcs.Compute
                     double phi = (j + 0.5) * 2 * Math.PI / nPhi;
                     double[] dir = { Math.Sin(theta) * Math.Cos(phi), Math.Sin(theta) * Math.Sin(phi), Math.Cos(theta) };
                     bool blocked = false;
-                    for (int a = 0; a < 3; a++)
-                        if ((sp[a] < FlushToleranceM && dir[a] < 0) || (L[a] - sp[a] < FlushToleranceM && dir[a] > 0))
-                            blocked = true;
+                    if ((sp[2] < FlushToleranceM && dir[2] < 0) || (L[2] - sp[2] < FlushToleranceM && dir[2] > 0))
+                        blocked = true;   // floor / ceiling only (see Accumulate)
                     if (blocked) continue;
                     Vec3 world = ToWorldDirection(new Vec3(dir[0], dir[1], dir[2]));
                     for (int k = 0; k < nb; k++) power[k] += gainSquared(world, k) * dOmega;

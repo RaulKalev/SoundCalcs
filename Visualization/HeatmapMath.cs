@@ -310,7 +310,8 @@ namespace SoundCalcs.Visualization
             bool isPerBand = octaveBandIdx >= 0;
 
             // Filter out points below the minimum SPL threshold
-            if (mode == VisualizationMode.SPL && minSplThreshold.HasValue)
+            // (a level in dB SPL: in dBA mode it hides the same receivers but doesn't set the dBA range)
+            if ((mode == VisualizationMode.SPL || mode == VisualizationMode.SPL_A) && minSplThreshold.HasValue)
                 results = results.Where(r => r.SplDb >= minSplThreshold.Value).ToList();
 
             // For per-band modes, filter out results without band data
@@ -333,7 +334,7 @@ namespace SoundCalcs.Visualization
             }
             else if (mode == VisualizationMode.SPL_A)
             {
-                minVal = minSplThreshold ?? results.Min(r => r.SplDbA);
+                minVal = results.Min(r => r.SplDbA);
                 maxVal = results.Max(r => r.SplDbA);
             }
             else if (mode == VisualizationMode.C80)
@@ -352,6 +353,7 @@ namespace SoundCalcs.Visualization
                 maxVal = results.Max(r => r.SplDb);
             }
             int numBands = RevitBandColors.Length;
+            if (!(maxVal > minVal)) maxVal = minVal + 1e-6;   // one value everywhere (a single receiver)
 
             // --- Assign each receiver a band index ---
             int[] bandIndex = new int[results.Count];

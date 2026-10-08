@@ -6,17 +6,28 @@ using System.Linq;
 namespace SoundCalcs.Domain
 {
     /// <summary>
-    /// Detects closed room polygons from a set of 2D wall segments.
-    /// Uses planar face detection via the "leftmost turn" (minimum angle) algorithm:
-    ///   1. Snap wall endpoints within tolerance
-    ///   2. Build a planar adjacency graph
-    ///   3. Trace minimal faces by always turning left (CCW)
-    ///   4. Filter to valid interior rooms
+    /// Detects closed room polygons from a set of 2D wall segments, as the faces of the planar graph they form:
+    ///   1. Merge duplicated (overlapping collinear) walls: shared walls drawn once per room
+    ///   2. Close corners and T junctions: a wall end that stops short of (or overshoots) a crossing wall by up
+    ///      to <see cref="CornerReachM"/> is moved onto it. Never toward a parallel wall, so door gaps stay open
+    ///   3. Split the walls where they cross, merge coincident nodes (exact coordinates are kept)
+    ///   4. Drop dangling ends (free-standing wall parts that enclose nothing)
+    ///   5. Walk every half-edge once, turning to the next edge clockwise: inner faces come out counter-clockwise
+    ///      (rooms), the outer boundary of each connected group of walls clockwise (dropped, or a hole when it
+    ///      lies inside a room of another group: a free-standing closet)
     /// </summary>
     public class RoomDetector
     {
-        private const double SnapToleranceM = 0.15;  // 150mm — generous for IFC geometry
+        /// <summary>How far a wall end may be moved onto a crossing wall to close a corner or T junction.</summary>
+        public const double CornerReachM = 0.3;
+
+        /// <summary>Walls closer than this are the same wall (duplicates); nodes closer than this are one node.</summary>
+        private const double MergeToleranceM = 0.005;
+
         private const double MinRoomAreaM2 = 1.0;     // Ignore tiny slivers
+
+        /// <summary>Faces narrower than this (2·area/perimeter) are the gap inside a double wall, not a room.</summary>
+        private const double MinRoomWidthM = 0.4;
 
         /// <summary>
         /// Detect room polygons from wall segments.
@@ -30,231 +41,284 @@ namespace SoundCalcs.Domain
                 Debug.WriteLine("[SoundCalcs] Not enough walls for room detection.");
                 return new List<RoomPolygon>();
             }
+            Faces(walls, out List<List<Vec2>> inner, out List<List<Vec2>> outer, out int nodeCount);
 
-            // Step 0: Preprocess — extend wall centerlines and split at intersections
-            // This is critical for IFC geometry where walls overlap at corners
-            var processed = SplitWallsAtIntersections(walls);
-            Debug.WriteLine($"[SoundCalcs] Preprocessing: {walls.Count} walls → {processed.Count} segments after splitting.");
-
-            // Step 1: Extract and snap endpoints
-            var edges = new List<(int from, int to)>();
-            var nodeList = new List<Vec2>();
-            var nodeMap = new Dictionary<long, int>(); // hash -> index
-
-            foreach (WallSegment2D wall in processed)
-            {
-                int startIdx = GetOrAddNode(wall.Start, nodeList, nodeMap);
-                int endIdx = GetOrAddNode(wall.End, nodeList, nodeMap);
-
-                if (startIdx == endIdx) continue; // degenerate wall
-
-                edges.Add((startIdx, endIdx));
-                edges.Add((endIdx, startIdx)); // bidirectional
-            }
-
-            int nodeCount = nodeList.Count;
-            Debug.WriteLine($"[SoundCalcs] Room detection: {nodeCount} nodes, {edges.Count / 2} edges from {processed.Count} segments.");
-
-            if (nodeCount < 3)
-                return new List<RoomPolygon>();
-
-            // Step 2: Build adjacency list sorted by angle
-            var adjacency = new Dictionary<int, List<int>>();
-            for (int i = 0; i < nodeCount; i++)
-                adjacency[i] = new List<int>();
-
-            foreach (var (from, to) in edges)
-            {
-                if (!adjacency[from].Contains(to))
-                    adjacency[from].Add(to);
-            }
-
-            // Sort each adjacency list by the angle of the edge direction
-            foreach (int node in adjacency.Keys.ToList())
-            {
-                Vec2 nodePos = nodeList[node];
-                adjacency[node].Sort((a, b) =>
-                {
-                    double angleA = Math.Atan2(nodeList[a].Y - nodePos.Y, nodeList[a].X - nodePos.X);
-                    double angleB = Math.Atan2(nodeList[b].Y - nodePos.Y, nodeList[b].X - nodePos.X);
-                    return angleA.CompareTo(angleB);
-                });
-            }
-
-            // Step 3: Trace minimal faces using "next CCW edge" algorithm
-            var usedEdges = new HashSet<long>();
             var rooms = new List<RoomPolygon>();
-            int roomNumber = 1;
-
-            foreach (var (from, to) in edges)
+            foreach (List<Vec2> ring in inner)
             {
-                long edgeKey = EdgeKey(from, to);
-                if (usedEdges.Contains(edgeKey)) continue;
-
-                // Trace a face starting from this directed edge
-                var face = TraceFace(from, to, nodeList, adjacency, usedEdges);
-                if (face == null || face.Count < 3) continue;
-
-                // Build vertices
-                var vertices = new List<Vec2>();
-                foreach (int idx in face)
-                    vertices.Add(nodeList[idx]);
-
-                var room = new RoomPolygon
-                {
-                    Vertices = vertices,
-                    FloorElevationM = floorElevationM,
-                    Name = $"Room {roomNumber}"
-                };
-
-                // Filter: must have reasonable area
-                // Accept both CW and CCW winding — IFC geometry may have unpredictable winding
-                if (room.Area >= MinRoomAreaM2)
-                {
-                    rooms.Add(room);
-                    roomNumber++;
-                }
+                double area = SignedArea(ring);
+                double perimeter = 0;
+                for (int i = 0; i < ring.Count; i++) perimeter += Vec2.Distance(ring[i], ring[(i + 1) % ring.Count]);
+                if (area < MinRoomAreaM2 || 2 * area / perimeter < MinRoomWidthM) continue;
+                rooms.Add(new RoomPolygon { Vertices = ring, FloorElevationM = floorElevationM });
             }
 
-            Debug.WriteLine($"[SoundCalcs] Detected {rooms.Count} rooms.");
+            // A group of walls standing free inside a room (its outer boundary inside that room's outline) is a
+            // hole in it: the smallest room around it
+            foreach (List<Vec2> boundary in outer)
+            {
+                Vec2 probe = boundary[0];
+                RoomPolygon host = rooms
+                    .Where(r => !r.Vertices.Contains(probe) && r.ContainsPoint(probe))
+                    .OrderBy(r => Math.Abs(r.SignedArea))
+                    .FirstOrDefault();
+                if (host != null && Math.Abs(SignedArea(boundary)) >= MinRoomAreaM2 * 0.25)
+                    host.Holes.Add(boundary.AsEnumerable().Reverse().ToList());
+            }
+
+            // Smallest first, so a point is found in the innermost room; numbered in that order
+            rooms = rooms.OrderBy(r => r.Area).ToList();
+            for (int i = 0; i < rooms.Count; i++) rooms[i].Name = $"Room {i + 1}";
+            Debug.WriteLine($"[SoundCalcs] Detected {rooms.Count} rooms from {walls.Count} walls ({nodeCount} nodes).");
             return rooms;
         }
 
-        // ========================= Wall Intersection Preprocessing =========================
-
         /// <summary>
-        /// Extend wall centerlines slightly and split them at intersection points.
-        /// IFC wall centerlines typically overlap or have gaps at corners — this creates
-        /// proper shared corner nodes for the face-tracing algorithm.
+        /// The outline of the walls when they close around all of themselves (the outer boundary of the closed
+        /// wall cycles, counter-clockwise; concave for an L-shaped building), or null when some wall lies outside
+        /// every closed cycle (an open layout: the caller's convex hull fits better).
         /// </summary>
-        private static List<WallSegment2D> SplitWallsAtIntersections(List<WallSegment2D> walls)
+        public static List<Vec2> OuterOutline(List<WallSegment2D> walls, double toleranceM = CornerReachM)
         {
-            // Extend each wall slightly in both directions
-            const double extendM = 0.3; // Extend by 300mm to find intersections
-
-            var extended = new List<WallSegment2D>();
-            foreach (var w in walls)
-            {
-                Vec2 dir = (w.End - w.Start).Normalized();
-                extended.Add(new WallSegment2D
+            if (walls == null || walls.Count < 3) return null;
+            Faces(walls, out _, out List<List<Vec2>> outer, out _);
+            List<Vec2> outline = outer.OrderByDescending(o => Math.Abs(SignedArea(o))).FirstOrDefault();
+            if (outline == null || Math.Abs(SignedArea(outline)) < MinRoomAreaM2) return null;
+            outline = outline.AsEnumerable().Reverse().ToList();   // counter-clockwise
+            var poly = new RoomPolygon { Vertices = outline };
+            foreach (WallSegment2D w in walls)
+                foreach (Vec2 p in new[] { w.Start, w.End })
                 {
-                    Start = w.Start - dir * extendM,
-                    End = w.End + dir * extendM,
-                    BaseElevationM = w.BaseElevationM,
-                    HeightM = w.HeightM,
-                    ThicknessM = w.ThicknessM
-                });
-            }
-
-            // For each wall, find all intersection points with other walls
-            var splitPoints = new List<List<Vec2>>();
-            for (int i = 0; i < extended.Count; i++)
-                splitPoints.Add(new List<Vec2>());
-
-            for (int i = 0; i < extended.Count; i++)
-            {
-                for (int j = i + 1; j < extended.Count; j++)
-                {
-                    Vec2? pt = LineLineIntersect(
-                        extended[i].Start, extended[i].End,
-                        extended[j].Start, extended[j].End);
-
-                    if (pt.HasValue)
-                    {
-                        splitPoints[i].Add(pt.Value);
-                        splitPoints[j].Add(pt.Value);
-                    }
+                    if (poly.ContainsPoint(p)) continue;
+                    double d = double.MaxValue;
+                    for (int i = 0; i < outline.Count; i++)
+                        d = Math.Min(d, PointSegmentDistance(p, outline[i], outline[(i + 1) % outline.Count]));
+                    if (d > toleranceM) return null;
                 }
-            }
-
-            // Split each wall at its intersection points
-            var result = new List<WallSegment2D>();
-            for (int i = 0; i < extended.Count; i++)
-            {
-                var w = extended[i];
-                var pts = splitPoints[i];
-
-                if (pts.Count == 0)
-                {
-                    // No intersections — use original (non-extended) wall
-                    result.Add(walls[i]);
-                    continue;
-                }
-
-                // Sort intersection points along the wall direction
-                Vec2 dir = w.End - w.Start;
-                double wallLen = dir.Length;
-                Vec2 normDir = dir.Normalized();
-
-                // Project each point onto the wall and get its parameter t
-                var projections = new List<(double t, Vec2 point)>();
-                projections.Add((0, w.Start));
-                projections.Add((wallLen, w.End));
-
-                foreach (Vec2 p in pts)
-                {
-                    double t = Vec2.Dot(p - w.Start, normDir);
-                    projections.Add((t, p));
-                }
-
-                projections.Sort((a, b) => a.t.CompareTo(b.t));
-
-                // Remove duplicates (points closer than snap tolerance)
-                var unique = new List<(double t, Vec2 point)> { projections[0] };
-                for (int k = 1; k < projections.Count; k++)
-                {
-                    if (projections[k].t - unique[unique.Count - 1].t > SnapToleranceM)
-                        unique.Add(projections[k]);
-                }
-
-                // Create sub-segments between consecutive points
-                for (int k = 0; k < unique.Count - 1; k++)
-                {
-                    double segLen = unique[k + 1].t - unique[k].t;
-                    if (segLen < SnapToleranceM) continue; // Skip tiny segments
-
-                    result.Add(new WallSegment2D
-                    {
-                        Start = unique[k].point,
-                        End = unique[k + 1].point,
-                        BaseElevationM = walls[i].BaseElevationM,
-                        HeightM = walls[i].HeightM,
-                        ThicknessM = walls[i].ThicknessM
-                    });
-                }
-            }
-
-            return result;
+            return outline;
         }
 
         /// <summary>
-        /// Compute intersection point of two finite line segments.
-        /// Returns null if segments are parallel or intersection is too far from both segments.
+        /// The faces of the wall graph: inner faces counter-clockwise (rooms), outer boundaries of each connected
+        /// group of walls clockwise.
         /// </summary>
-        private static Vec2? LineLineIntersect(Vec2 a1, Vec2 a2, Vec2 b1, Vec2 b2)
+        private static void Faces(List<WallSegment2D> walls, out List<List<Vec2>> inner, out List<List<Vec2>> outer, out int nodeCount)
         {
-            Vec2 d1 = a2 - a1;
-            Vec2 d2 = b2 - b1;
+            var segs = walls.Where(w => w != null && Vec2.Distance(w.Start, w.End) > 0.01)
+                .Select(w => new Seg { A = w.Start, B = w.End }).ToList();
+            MergeDuplicates(segs);
+            CloseJunctions(segs);
 
-            double cross = d1.X * d2.Y - d1.Y * d2.X;
-            if (Math.Abs(cross) < 1e-10) return null; // Parallel or coincident
+            // Planar graph: split at crossings, merge coincident nodes
+            var nodes = new List<Vec2>();
+            var nodeGrid = new Dictionary<(long, long), List<int>>();
+            int Node(Vec2 p)
+            {
+                long cx = (long)Math.Floor(p.X / MergeToleranceM), cy = (long)Math.Floor(p.Y / MergeToleranceM);
+                for (long dx = -1; dx <= 1; dx++)
+                    for (long dy = -1; dy <= 1; dy++)
+                        if (nodeGrid.TryGetValue((cx + dx, cy + dy), out var list))
+                            foreach (int i in list)
+                                if (Vec2.Distance(nodes[i], p) < MergeToleranceM) return i;
+                nodes.Add(p);
+                if (!nodeGrid.TryGetValue((cx, cy), out var cell)) nodeGrid[(cx, cy)] = cell = new List<int>();
+                cell.Add(nodes.Count - 1);
+                return nodes.Count - 1;
+            }
 
-            Vec2 diff = b1 - a1;
-            double t = (diff.X * d2.Y - diff.Y * d2.X) / cross;
-            double u = (diff.X * d1.Y - diff.Y * d1.X) / cross;
+            var adjacency = new Dictionary<int, HashSet<int>>();
+            void Edge(int a, int b)
+            {
+                if (a == b) return;
+                if (!adjacency.TryGetValue(a, out var la)) adjacency[a] = la = new HashSet<int>();
+                if (!adjacency.TryGetValue(b, out var lb)) adjacency[b] = lb = new HashSet<int>();
+                la.Add(b);
+                lb.Add(a);
+            }
 
-            // Allow slight extension beyond segment endpoints for walls that almost meet
-            const double margin = 0.3; // In parametric terms based on segment length
-            double lenA = d1.Length;
-            double lenB = d2.Length;
+            foreach (List<Vec2> piece in SplitAtCrossings(segs))
+                for (int i = 0; i < piece.Count - 1; i++)
+                    Edge(Node(piece[i]), Node(piece[i + 1]));
 
-            double tMarginA = lenA > 0 ? margin / lenA : margin;
-            double tMarginB = lenB > 0 ? margin / lenB : margin;
+            // Dangling ends enclose nothing
+            var queue = new Queue<int>(adjacency.Where(kv => kv.Value.Count <= 1).Select(kv => kv.Key));
+            while (queue.Count > 0)
+            {
+                int n = queue.Dequeue();
+                if (!adjacency.TryGetValue(n, out var nb) || nb.Count > 1) continue;
+                foreach (int m in nb)
+                {
+                    adjacency[m].Remove(n);
+                    if (adjacency[m].Count <= 1) queue.Enqueue(m);
+                }
+                adjacency.Remove(n);
+            }
 
-            if (t < -tMarginA || t > 1 + tMarginA) return null;
-            if (u < -tMarginB || u > 1 + tMarginB) return null;
+            // Neighbours of each node sorted counter-clockwise by angle
+            var sorted = new Dictionary<int, List<int>>();
+            foreach (var kv in adjacency)
+            {
+                Vec2 c = nodes[kv.Key];
+                sorted[kv.Key] = kv.Value.OrderBy(m => Math.Atan2(nodes[m].Y - c.Y, nodes[m].X - c.X)).ToList();
+            }
 
-            return a1 + d1 * t;
+            // Faces: each half-edge u→v continues v→w with w the neighbour of v just clockwise of u
+            var used = new HashSet<(int, int)>();
+            inner = new List<List<Vec2>>();
+            outer = new List<List<Vec2>>();
+            foreach (var kv in sorted)
+                foreach (int to in kv.Value)
+                {
+                    if (used.Contains((kv.Key, to))) continue;
+                    var ring = new List<Vec2>();
+                    int u = kv.Key, v = to;
+                    for (int guard = 0; guard <= 4 * nodes.Count + 4 && used.Add((u, v)); guard++)
+                    {
+                        ring.Add(nodes[u]);
+                        List<int> around = sorted[v];
+                        int at = around.IndexOf(u);
+                        int w = around[(at - 1 + around.Count) % around.Count];
+                        u = v;
+                        v = w;
+                    }
+                    if (ring.Count < 3) continue;
+                    double area = SignedArea(ring);
+                    if (area > 0) inner.Add(ring); else outer.Add(ring);
+                }
+            nodeCount = nodes.Count;
+        }
+
+        private class Seg
+        {
+            public Vec2 A, B;
+            public Vec2 Dir => (B - A).Normalized();
+            public double Length => Vec2.Distance(A, B);
+        }
+
+        private static double SignedArea(List<Vec2> ring)
+        {
+            double a = 0;
+            for (int i = 0; i < ring.Count; i++) a += Vec2.Cross(ring[i], ring[(i + 1) % ring.Count]);
+            return a / 2;
+        }
+
+        /// <summary>Overlapping collinear walls (a shared wall drawn once for each room) become one.</summary>
+        private static void MergeDuplicates(List<Seg> segs)
+        {
+            double cosTol = Math.Cos(0.5 * Math.PI / 180);
+            bool merged = true;
+            while (merged)
+            {
+                merged = false;
+                for (int i = 0; i < segs.Count && !merged; i++)
+                    for (int j = i + 1; j < segs.Count && !merged; j++)
+                    {
+                        Seg a = segs[i], b = segs[j];
+                        Vec2 d = a.Dir;
+                        if (Math.Abs(Vec2.Dot(d, b.Dir)) < cosTol) continue;
+                        if (Math.Abs(Vec2.Cross(d, b.A - a.A)) > MergeToleranceM || Math.Abs(Vec2.Cross(d, b.B - a.A)) > MergeToleranceM) continue;
+                        double b0 = Vec2.Dot(b.A - a.A, d), b1 = Vec2.Dot(b.B - a.A, d);
+                        double lo = Math.Min(b0, b1), hi = Math.Max(b0, b1);
+                        if (hi <= MergeToleranceM || lo >= a.Length - MergeToleranceM) continue;   // touching end to end is fine
+                        double s0 = Math.Min(0, lo), s1 = Math.Max(a.Length, hi);
+                        segs[i] = new Seg { A = a.A + d * s0, B = a.A + d * s1 };
+                        segs.RemoveAt(j);
+                        merged = true;
+                    }
+            }
+        }
+
+        /// <summary>
+        /// Moves wall ends onto crossing walls they stop short of or overshoot by up to <see cref="CornerReachM"/>
+        /// (detail lines and IFC centrelines rarely meet exactly). Only toward walls at 20° or more: ends of
+        /// collinear walls facing each other across a door gap are left alone.
+        /// </summary>
+        private static void CloseJunctions(List<Seg> segs)
+        {
+            double sinMin = Math.Sin(20 * Math.PI / 180);
+            var moves = new List<(Seg S, bool AtB, Vec2 To)>();
+            foreach (Seg s in segs)
+            {
+                double len = s.Length;
+                Vec2 d = s.Dir;
+                foreach (bool atB in new[] { false, true })
+                {
+                    Vec2 end = atB ? s.B : s.A;
+                    // Already on another wall
+                    if (segs.Any(o => !ReferenceEquals(o, s) && PointSegmentDistance(end, o.A, o.B) < MergeToleranceM)) continue;
+                    double best = double.MaxValue;
+                    Vec2 bestPt = end;
+                    foreach (Seg t in segs)
+                    {
+                        if (ReferenceEquals(s, t)) continue;
+                        Vec2 dt = t.Dir;
+                        double cross = Vec2.Cross(d, dt);
+                        if (Math.Abs(cross) < sinMin) continue;
+                        Vec2 w = t.A - s.A;
+                        double a = Vec2.Cross(w, dt) / cross;          // along s from A
+                        double b = Vec2.Cross(w, d) / cross;           // along t from its A
+                        double ext = atB ? a - len : -a;               // + beyond the end, − overshoot
+                        if (ext < -Math.Min(CornerReachM, len / 2) || ext > CornerReachM) continue;
+                        if (b < -CornerReachM || b > t.Length + CornerReachM) continue;
+                        if (Math.Abs(ext) < Math.Abs(best)) { best = ext; bestPt = s.A + d * a; }
+                    }
+                    if (best < double.MaxValue && Math.Abs(best) > 1e-9) moves.Add((s, atB, bestPt));
+                }
+            }
+            foreach (var m in moves)
+            {
+                if (m.AtB) m.S.B = m.To; else m.S.A = m.To;
+            }
+        }
+
+        /// <summary>Each wall as a polyline through the points where other walls cross or touch it.</summary>
+        private static List<List<Vec2>> SplitAtCrossings(List<Seg> segs)
+        {
+            var cuts = segs.Select(s => new List<double> { 0, 1 }).ToList();
+            for (int i = 0; i < segs.Count; i++)
+                for (int j = i + 1; j < segs.Count; j++)
+                {
+                    Seg a = segs[i], b = segs[j];
+                    Vec2 da = a.B - a.A, db = b.B - b.A;
+                    double cross = Vec2.Cross(da, db);
+                    if (Math.Abs(cross) < 1e-12)
+                    {
+                        // Collinear walls touching: an end of one on the other
+                        AddCutIfOn(cuts[i], a, b.A); AddCutIfOn(cuts[i], a, b.B);
+                        AddCutIfOn(cuts[j], b, a.A); AddCutIfOn(cuts[j], b, a.B);
+                        continue;
+                    }
+                    Vec2 w = b.A - a.A;
+                    double t = Vec2.Cross(w, db) / cross, u = Vec2.Cross(w, da) / cross;
+                    double ea = MergeToleranceM / Math.Max(da.Length, 1e-9), eb = MergeToleranceM / Math.Max(db.Length, 1e-9);
+                    if (t < -ea || t > 1 + ea || u < -eb || u > 1 + eb) continue;
+                    cuts[i].Add(Math.Max(0, Math.Min(1, t)));
+                    cuts[j].Add(Math.Max(0, Math.Min(1, u)));
+                }
+            var result = new List<List<Vec2>>();
+            for (int i = 0; i < segs.Count; i++)
+            {
+                Seg s = segs[i];
+                result.Add(cuts[i].Distinct().OrderBy(t => t).Select(t => s.A + (s.B - s.A) * t).ToList());
+            }
+            return result;
+        }
+
+        private static double PointSegmentDistance(Vec2 p, Vec2 a, Vec2 b)
+        {
+            Vec2 ab = b - a;
+            double len2 = ab.LengthSquared;
+            double t = len2 > 1e-18 ? Math.Max(0, Math.Min(1, Vec2.Dot(p - a, ab) / len2)) : 0;
+            return Vec2.Distance(p, a + ab * t);
+        }
+
+        private static void AddCutIfOn(List<double> cuts, Seg s, Vec2 p)
+        {
+            Vec2 d = s.B - s.A;
+            double len2 = d.LengthSquared;
+            if (len2 < 1e-18) return;
+            double t = Vec2.Dot(p - s.A, d) / len2;
+            if (t > 0 && t < 1 && PointSegmentDistance(p, s.A, s.B) < MergeToleranceM) cuts.Add(t);
         }
 
         // ========================= Speaker Matching =========================
@@ -283,133 +347,6 @@ namespace SoundCalcs.Domain
             Debug.WriteLine($"[SoundCalcs] {count} of {rooms.Count} rooms contain speakers.");
         }
 
-        /// <summary>
-        /// Trace a minimal face starting from directed edge (startFrom → startTo).
-        /// Returns list of node indices forming the face, or null if degenerate.
-        /// </summary>
-        private static List<int> TraceFace(
-            int startFrom, int startTo,
-            List<Vec2> nodes,
-            Dictionary<int, List<int>> adjacency,
-            HashSet<long> usedEdges)
-        {
-            var face = new List<int>();
-            int current = startFrom;
-            int next = startTo;
-            int maxSteps = nodes.Count + 2; // Safety limit
-
-            for (int step = 0; step < maxSteps; step++)
-            {
-                long edgeKey = EdgeKey(current, next);
-                if (usedEdges.Contains(edgeKey))
-                {
-                    // We've come back to a used edge — face is complete if we're at start
-                    if (current == startFrom && next == startTo && face.Count >= 3)
-                        return face;
-                    return null; // Degenerate
-                }
-
-                usedEdges.Add(edgeKey);
-                face.Add(current);
-
-                // Find the next edge: the one that makes the smallest CCW turn from (current→next)
-                int prev = current;
-                current = next;
-                next = GetNextCCW(prev, current, nodes, adjacency);
-
-                if (next < 0) return null; // Dead end
-
-                // Check if we've completed the loop
-                if (current == startFrom && next == startTo)
-                {
-                    usedEdges.Add(EdgeKey(current, next));
-                    face.Add(current);
-                    return face;
-                }
-            }
-
-            return null; // Exceeded max steps
-        }
-
-        /// <summary>
-        /// Given we arrived at 'current' from 'prev', find the next node
-        /// by taking the most clockwise turn (= next edge CW from incoming direction).
-        /// This traces the left boundary of each face.
-        /// </summary>
-        private static int GetNextCCW(int prev, int current, List<Vec2> nodes, Dictionary<int, List<int>> adjacency)
-        {
-            List<int> neighbors = adjacency[current];
-            if (neighbors.Count == 0) return -1;
-            if (neighbors.Count == 1) return neighbors[0]; // Only one way to go
-
-            // Incoming direction angle
-            Vec2 incoming = nodes[current] - nodes[prev];
-            double inAngle = Math.Atan2(incoming.Y, incoming.X);
-
-            // Find the neighbor with the smallest CW angle from the incoming direction
-            // This means we want the next edge sorted CW after the reverse of incoming
-            int bestIdx = -1;
-            double bestAngle = double.MaxValue;
-
-            foreach (int neighbor in neighbors)
-            {
-                if (neighbor == prev && neighbors.Count > 1) continue; // Don't go back (unless dead end)
-
-                Vec2 outgoing = nodes[neighbor] - nodes[current];
-                double outAngle = Math.Atan2(outgoing.Y, outgoing.X);
-
-                // Signed angle difference: how much we turn CW from incoming direction
-                double diff = inAngle - outAngle;
-                // Normalize to (0, 2π] — we want the smallest positive CW turn
-                while (diff <= 0) diff += 2 * Math.PI;
-                while (diff > 2 * Math.PI) diff -= 2 * Math.PI;
-
-                if (diff < bestAngle)
-                {
-                    bestAngle = diff;
-                    bestIdx = neighbor;
-                }
-            }
-
-            return bestIdx;
-        }
-
-        private static int GetOrAddNode(Vec2 point, List<Vec2> nodeList, Dictionary<long, int> nodeMap)
-        {
-            // Snap to grid: round to nearest 10mm
-            double snapX = Math.Round(point.X, 2);
-            double snapY = Math.Round(point.Y, 2);
-            Vec2 snapped = new Vec2(snapX, snapY);
-
-            long hash = snapped.GetHashCode();
-
-            // Check for exact match first
-            if (nodeMap.TryGetValue(hash, out int idx))
-            {
-                // Verify it's actually close (hash collision check)
-                if (Vec2.Distance(nodeList[idx], point) < SnapToleranceM)
-                    return idx;
-            }
-
-            // Linear scan for nearby nodes (handles hash collisions)
-            for (int i = 0; i < nodeList.Count; i++)
-            {
-                if (Vec2.Distance(nodeList[i], point) < SnapToleranceM)
-                    return i;
-            }
-
-            // New node
-            int newIdx = nodeList.Count;
-            nodeList.Add(snapped);
-            nodeMap[hash] = newIdx;
-            return newIdx;
-        }
-
-        private static long EdgeKey(int from, int to)
-        {
-            return ((long)from << 32) | (uint)to;
-        }
-
         // ========================= Enclosure Ratio =========================
 
         /// <summary>
@@ -428,18 +365,19 @@ namespace SoundCalcs.Domain
             const double perpTolerance = 0.30;  // Max perpendicular distance to count as "on edge"
             const double overlapTolerance = 0.15; // Tolerance for endpoint overlap
 
+            double cosParallel = Math.Cos(10 * Math.PI / 180);
             foreach (var room in rooms)
             {
-                int n = room.Vertices.Count;
-                if (n < 3) { room.EnclosureRatio = 0; continue; }
+                if (room.Vertices.Count < 3) { room.EnclosureRatio = 0; continue; }
 
                 double totalPerimeter = 0;
                 double coveredLength = 0;
 
-                for (int i = 0; i < n; i++)
+                foreach (List<Vec2> ring in room.Rings())
+                for (int i = 0; i < ring.Count; i++)
                 {
-                    Vec2 edgeStart = room.Vertices[i];
-                    Vec2 edgeEnd = room.Vertices[(i + 1) % n];
+                    Vec2 edgeStart = ring[i];
+                    Vec2 edgeEnd = ring[(i + 1) % ring.Count];
                     double edgeLen = Vec2.Distance(edgeStart, edgeEnd);
                     totalPerimeter += edgeLen;
 
@@ -458,7 +396,11 @@ namespace SoundCalcs.Domain
                         double perpStart = Math.Abs(Vec2.Dot(wall.Start - edgeStart, edgeNormal));
                         double perpEnd = Math.Abs(Vec2.Dot(wall.End - edgeStart, edgeNormal));
 
-                        if (perpStart > perpTolerance && perpEnd > perpTolerance) continue;
+                        // The wall must run along the edge: both ends near its line, and roughly parallel
+                        // (a wall crossing the edge, or touching it with one end, doesn't close it)
+                        if (perpStart > perpTolerance || perpEnd > perpTolerance) continue;
+                        Vec2 wd = wall.End - wall.Start;
+                        if (wd.Length < 1e-9 || Math.Abs(Vec2.Dot(wd.Normalized(), edgeDir)) < cosParallel) continue;
 
                         // Project wall endpoints onto the edge direction
                         double tStart = Vec2.Dot(wall.Start - edgeStart, edgeDir);

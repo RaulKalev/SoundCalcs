@@ -18,6 +18,9 @@ namespace SoundCalcs.UI.ViewModels
     public class MainViewModel : INotifyPropertyChanged, INotifyDataErrorInfo
     {
         private readonly UIApplication _uiApp;
+
+        // The window's thread. Revit hosts WPF without a WPF Application, so Application.Current is usually null.
+        private readonly System.Windows.Threading.Dispatcher _uiDispatcher;
         private readonly RevitApiDispatcher _dispatcher;
         private readonly JobRunner _jobRunner;
         private readonly FilledRegionRenderer _renderer;
@@ -28,6 +31,7 @@ namespace SoundCalcs.UI.ViewModels
         public MainViewModel(UIApplication uiApp)
         {
             _uiApp = uiApp;
+            _uiDispatcher = System.Windows.Threading.Dispatcher.CurrentDispatcher;
             _dispatcher = new RevitApiDispatcher();
             _jobRunner = new JobRunner();
             _renderer = new FilledRegionRenderer();
@@ -217,7 +221,7 @@ namespace SoundCalcs.UI.ViewModels
             string lineName = _speakerLineFilter == SpeakerLineFilterType.ALine ? "A line"
                 : _speakerLineFilter == SpeakerLineFilterType.BLine ? "B line" : null;
             var included = lineName == null ? all
-                : all.Where(s => string.Equals(s.AbLine, lineName.Substring(0, 1), StringComparison.OrdinalIgnoreCase)).ToList();
+                : all.Where(s => JobInputBuilder.IsOnLine(s.AbLine, lineName.Substring(0, 1))).ToList();
 
             CurrentProject(out string key, out _);
             var items = RunPreflight.Check(new PreflightInput
@@ -608,14 +612,6 @@ namespace SoundCalcs.UI.ViewModels
                     WallLineGroups.Add(new WallLineGroupViewModel(grp));
             }
 
-            var allPoints = new List<Vec2>();
-            foreach (var grp in groups)
-                foreach (var seg in grp.Segments)
-                {
-                    allPoints.Add(seg.Start);
-                    allPoints.Add(seg.End);
-                }
-
             // Floor elevation: prefer speaker level elevation if available
             double elevM = lineZ;
             var allSpeakers = SpeakerGroups.SelectMany(g => g.GetGroup().Instances).ToList();
@@ -629,8 +625,8 @@ namespace SoundCalcs.UI.ViewModels
                     .First().Key;
             }
 
-            // Build a single boundary polygon from the convex hull of all line endpoints
-            List<Vec2> hull = ConvexHull(allPoints);
+            // The boundary: the lines' own outline when they close (concave buildings stay concave), else their hull
+            List<Vec2> hull = JobInputBuilder.BoundaryFromWalls(groups.SelectMany(g => g.Segments).ToList());
             var boundary = new RoomPolygon
             {
                 Vertices = hull,
@@ -1584,11 +1580,27 @@ namespace SoundCalcs.UI.ViewModels
                 inst.AimOffsetDeg = SpeakerAim.OffsetFor(angleDeg, inst.ModelAimDeg);
             _unsavedAims.Add(elementId);
 
+            // Only into the project the speakers come from (the same element id is another element elsewhere)
+            if (!FromCurrentProject(_speakersProjectKey, _speakersProjectName, "speaker list", out string why))
+            {
+                StatusMessage = why + " The aim is kept in SoundCalcs only.";
+                SaveSettingsCore();
+                return;
+            }
+            string typeKey = aimed.FirstOrDefault()?.TypeKey;
+
             _dispatcher.Enqueue(uiApp =>
             {
                 Document doc = uiApp.ActiveUIDocument?.Document;
                 if (doc == null) return;
                 Element elem = doc.GetElement(RevitCompat.ToElementId(elementId));
+                var fi = elem as FamilyInstance;
+                if (fi == null || (typeKey != null && $"{fi.Symbol?.Family?.Name} : {fi.Symbol?.Name}" != typeKey))
+                {
+                    FileLogger.Log($"SetSpeakerAimAngle: id={elementId} is not the speaker '{typeKey}' in this model; not stored");
+                    SetStatusFromRevitThread("The aim could not be stored: that speaker is not in this model. SoundCalcs keeps it.");
+                    return;
+                }
                 if (SpeakerRotationStorage.Write(doc, elementId, angleDeg, out string error))
                 {
                     _unsavedAims.Remove(elementId);
@@ -1650,7 +1662,7 @@ namespace SoundCalcs.UI.ViewModels
                         if (_speakerLineFilter != SpeakerLineFilterType.Both)
                         {
                             string targetLine = _speakerLineFilter == SpeakerLineFilterType.ALine ? "A" : "B";
-                            if (!string.Equals(inst.AbLine, targetLine, StringComparison.OrdinalIgnoreCase))
+                            if (!JobInputBuilder.IsOnLine(inst.AbLine, targetLine))
                                 continue;
                         }
 
@@ -1734,9 +1746,6 @@ namespace SoundCalcs.UI.ViewModels
                 FileLogger.Log($"Analysis: {analysisRooms.Count} room(s), " +
                     $"{sources.Count} speakers, {receivers.Count} receiver points");
 
-                if (SelectedLink.IsValid)
-                    surfaces = collector.ExtractSurfacesFromLink(SelectedLink.LinkInstanceId);
-
                 if (receivers.Count == 0)
                 {
                     StatusMessage = "No receiver points generated. Check grid settings.";
@@ -1804,7 +1813,7 @@ namespace SoundCalcs.UI.ViewModels
                 // Run on background thread — capture dispatcher so progress
                 // updates marshal correctly even when SynchronizationContext is
                 // not the WPF DispatcherSynchronizationContext (Revit 2024 / net48).
-                var dispatcher = System.Windows.Application.Current?.Dispatcher
+                var dispatcher = _uiDispatcher
                     ?? System.Windows.Threading.Dispatcher.CurrentDispatcher;
                 var progress = new Progress<double>(p =>
                 {
@@ -1846,23 +1855,29 @@ namespace SoundCalcs.UI.ViewModels
         {
             // JobCompleted fires on the thread-pool; marshal to the UI thread
             // so bound properties update reliably on both net48 and net8.
-            var dispatcher = System.Windows.Application.Current?.Dispatcher;
+            var dispatcher = _uiDispatcher;
             if (dispatcher != null && !dispatcher.CheckAccess())
             {
                 dispatcher.BeginInvoke(new Action(() => OnJobCompleted(output)));
                 return;
             }
 
-            LastOutput = output;
             IsRunning = false;
 
+            // A canceled or failed run keeps the results already shown (e.g. the Draft before a canceled Full run)
             if (output.WasCanceled)
             {
-                StatusMessage = "Job canceled.";
+                StatusMessage = LastOutput != null ? "Job canceled. The previous results are still shown." : "Job canceled.";
                 LastRunSummary = $"Canceled after {output.ComputeTimeSeconds:F1}s";
+            }
+            else if (output.Error != null)
+            {
+                StatusMessage = $"The calculation failed: {output.Error} (details in the log).";
+                LastRunSummary = $"Failed after {output.ComputeTimeSeconds:F1}s";
             }
             else
             {
+                LastOutput = output;
                 StatusMessage = $"Results ready: {DateTime.Now:HH:mm:ss}";
                 LastRunSummary = $"{output.ReceiverCount} points | " +
                     $"{output.Quality} | " +
@@ -1912,7 +1927,7 @@ namespace SoundCalcs.UI.ViewModels
                         : "SPL";
                     SetStatusFromRevitThread($"{modeLabel} heatmap rendered: {output.Results.Count} points on '{view.Name}'");
                     // Refresh legend so it shows the actual rendered min/max range
-                    System.Windows.Application.Current?.Dispatcher?.Invoke(
+                    _uiDispatcher?.Invoke(
                         () => OnPropertyChanged(nameof(LegendItems)));
                 }
                 catch (Exception ex)
@@ -1956,7 +1971,7 @@ namespace SoundCalcs.UI.ViewModels
 
                     _renderer.Clear(doc, view);
                     string viewName = view.Name;
-                    System.Windows.Application.Current?.Dispatcher?.Invoke(() =>
+                    _uiDispatcher?.Invoke(() =>
                     {
                         if (HasResults)
                             OfferUndo($"Heatmap removed from '{viewName}'.", "Draw again", VisualizeResults);
@@ -1979,17 +1994,10 @@ namespace SoundCalcs.UI.ViewModels
         /// </summary>
         private void SetStatusFromRevitThread(string message)
         {
-            if (System.Windows.Application.Current?.Dispatcher != null)
-            {
-                System.Windows.Application.Current.Dispatcher.Invoke(() =>
-                {
-                    StatusMessage = message;
-                });
-            }
+            if (_uiDispatcher != null && !_uiDispatcher.CheckAccess())
+                _uiDispatcher.Invoke(() => StatusMessage = message);
             else
-            {
                 StatusMessage = message;
-            }
         }
 
         /// <summary>

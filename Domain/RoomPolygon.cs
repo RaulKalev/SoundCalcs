@@ -12,6 +12,12 @@ namespace SoundCalcs.Domain
         /// <summary>Ordered vertices of the room boundary (2D, meters).</summary>
         public List<Vec2> Vertices { get; set; } = new List<Vec2>();
 
+        /// <summary>
+        /// Areas inside the outline that are not part of the room (a free-standing closet or shaft whose own walls
+        /// form another room). Excluded from <see cref="Area"/> and <see cref="ContainsPoint"/>.
+        /// </summary>
+        public List<List<Vec2>> Holes { get; set; } = new List<List<Vec2>>();
+
         /// <summary>Floor elevation in meters.</summary>
         public double FloorElevationM { get; set; }
 
@@ -73,8 +79,24 @@ namespace SoundCalcs.Domain
             }
         }
 
-        /// <summary>Absolute area in square meters.</summary>
-        public double Area => Math.Abs(SignedArea);
+        /// <summary>Area in square meters, holes excluded.</summary>
+        public double Area
+        {
+            get
+            {
+                double a = Math.Abs(SignedArea);
+                if (Holes != null)
+                    foreach (List<Vec2> h in Holes) a -= Math.Abs(SignedAreaOf(h));
+                return Math.Max(0, a);
+            }
+        }
+
+        private static double SignedAreaOf(List<Vec2> pts)
+        {
+            double area = 0;
+            for (int i = 0; i < pts.Count; i++) area += Vec2.Cross(pts[i], pts[(i + 1) % pts.Count]);
+            return area * 0.5;
+        }
 
         /// <summary>
         /// Floor area to use for the room's volume when it differs from the polygon's area —
@@ -96,9 +118,9 @@ namespace SoundCalcs.Domain
             get
             {
                 double p = 0;
-                int n = Vertices.Count;
-                for (int i = 0; i < n; i++)
-                    p += Vec2.Distance(Vertices[i], Vertices[(i + 1) % n]);
+                foreach (List<Vec2> ring in Rings())
+                    for (int i = 0; i < ring.Count; i++)
+                        p += Vec2.Distance(ring[i], ring[(i + 1) % ring.Count]);
                 return p;
             }
         }
@@ -120,14 +142,31 @@ namespace SoundCalcs.Domain
         /// </summary>
         public bool ContainsPoint(Vec2 point)
         {
-            int n = Vertices.Count;
+            if (!InRing(point, Vertices)) return false;
+            if (Holes != null)
+                foreach (List<Vec2> h in Holes)
+                    if (InRing(point, h)) return false;
+            return true;
+        }
+
+        /// <summary>The outline followed by the holes' outlines.</summary>
+        public IEnumerable<List<Vec2>> Rings()
+        {
+            yield return Vertices;
+            if (Holes != null)
+                foreach (List<Vec2> h in Holes) yield return h;
+        }
+
+        private static bool InRing(Vec2 point, List<Vec2> ring)
+        {
+            int n = ring.Count;
             if (n < 3) return false;
 
             bool inside = false;
             for (int i = 0, j = n - 1; i < n; j = i++)
             {
-                Vec2 vi = Vertices[i];
-                Vec2 vj = Vertices[j];
+                Vec2 vi = ring[i];
+                Vec2 vj = ring[j];
 
                 if ((vi.Y > point.Y) != (vj.Y > point.Y) &&
                     point.X < (vj.X - vi.X) * (point.Y - vi.Y) / (vj.Y - vi.Y) + vi.X)

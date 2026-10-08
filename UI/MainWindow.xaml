@@ -600,7 +600,7 @@
                                         <DataGridTextColumn
                                             Width="80"
                                             Binding="{Binding HeightM, UpdateSourceTrigger=LostFocus}"
-                                            EditingElementStyle="{StaticResource Grid.EditBox}"
+                                            EditingElementStyle="{StaticResource Grid.EditBox.Number}"
                                             ElementStyle="{StaticResource Grid.EditableText}">
                                             <DataGridTextColumn.Header>
                                                 <TextBlock Text="Height (m)" ToolTip="Wall height. 0 = full height (floor to ceiling). Use for screens and low partitions." />
@@ -768,7 +768,7 @@
                                     <DataGridTextColumn
                                         Width="76"
                                         Binding="{Binding OnAxisSplDb}"
-                                        EditingElementStyle="{StaticResource Grid.EditBox}"
+                                        EditingElementStyle="{StaticResource Grid.EditBox.Number}"
                                         ElementStyle="{StaticResource Grid.EditableText}">
                                         <DataGridTextColumn.Header>
                                             <TextBlock Text="SPL (dB)" ToolTip="On-axis sound pressure level at 1 m" />
@@ -777,7 +777,7 @@
                                     <DataGridTextColumn
                                         Width="90"
                                         Binding="{Binding ConeHalfAngleDeg}"
-                                        EditingElementStyle="{StaticResource Grid.EditBox}"
+                                        EditingElementStyle="{StaticResource Grid.EditBox.Number}"
                                         ElementStyle="{StaticResource Grid.EditableText}">
                                         <DataGridTextColumn.Header>
                                             <TextBlock Text="Cone angle (°)" ToolTip="Half-angle of the coverage cone, used when no datasheet coverage is entered" />

@@ -98,7 +98,9 @@ namespace SoundCalcs.Compute
             if (totalReceivers == 0)
                 return (new List<ReceiverResult>(), new List<ReceiverBandData>());
 
-            var walls = input.Walls ?? new List<ComputeWall>();
+            // Collinear pieces of one wall overlap at their joints (each end is extended): a ray through a joint
+            // would pay the wall's TL twice
+            var walls = JobInputBuilder.RemoveCollinearOverlaps(input.Walls ?? new List<ComputeWall>());
             int numBands = OctaveBands.Count;
             int numSources = input.Sources.Count;
             double[] modFreqs = OctaveBands.ModulationFrequencies;
@@ -167,13 +169,14 @@ namespace SoundCalcs.Compute
             bool hasReverb = false;
 
             for (int s = 0; s < numSources; s++)
+                sourceRoomIndex[s] = SourceRoom(input.Rooms, input.Sources[s]);
+
+            // Per-room RT60: the room's own when set, else the job's
+            double[][] roomT60 = new double[numRooms][];
+            for (int r = 0; r < numRooms; r++)
             {
-                sourceRoomIndex[s] = -1;
-                Vec2 srcXY = new Vec2(input.Sources[s].Position.X, input.Sources[s].Position.Y);
-                for (int r = 0; r < numRooms; r++)
-                {
-                    if (input.Rooms[r].ContainsPoint(srcXY)) { sourceRoomIndex[s] = r; break; }
-                }
+                double[] rt = input.Rooms[r].RT60ByBand;
+                roomT60[r] = rt != null && rt.Length == numBands ? rt.Select(v => Math.Max(v, 0.05)).ToArray() : t60;
             }
 
             // Per-source RT60: the source's room's own RT60 when set, else the job's
@@ -199,7 +202,9 @@ namespace SoundCalcs.Compute
                     RoomPolygon room = input.Rooms[ri];
                     double ceilingH = room.CeilingHeightM > 0.5 ? room.CeilingHeightM : DefaultCeilingHeightM;
                     double vol = room.EffectiveAreaM2 * ceilingH;
-                    if (vol <= 1.0 || room.EnclosureRatio <= 0.01) continue;
+                    // No walls around the area at all: no diffuse field (see EnclosureFactor)
+                    double enclosure = EnclosureFactor(room, numBands);
+                    if (vol <= 1.0 || enclosure <= 0.01) continue;
 
                     hasReverb = true;
                     // A flush-mounted speaker radiates only into the room below the ceiling. Q per band:
@@ -210,7 +215,7 @@ namespace SoundCalcs.Compute
                     {
                         double q = flush ? LowerHemisphereQ(providers[s], facing, k) : DirectivityQ(providers[s], facing, k);
                         double sabineA = Math.Max(0.161 * vol / sourceT60[s][k], 1.0);
-                        reverbBySource[s][k] = sourceBand[s][k] * 16.0 * Math.PI / (q * sabineA) * room.EnclosureRatio;
+                        reverbBySource[s][k] = sourceBand[s][k] * 16.0 * Math.PI / (q * sabineA) * enclosure;
                     }
                 }
             }
@@ -252,7 +257,7 @@ namespace SoundCalcs.Compute
                             double atWall = reverbBySource[s][k] * Math.Exp(-13.82 * timeToWall / sourceT60[s][k]);
                             double tau = Math.Pow(10.0, -WallTlDb(walls[part.Wall].StcRating, k) / 10.0);
                             double aB = Math.Max(0.161 * volB / Math.Max(rtB[k], 0.05), 1.0);
-                            double e = atWall * tau * part.AreaM2 / aB * recvRoomPoly.EnclosureRatio;
+                            double e = atWall * tau * part.AreaM2 / aB * EnclosureFactor(recvRoomPoly, numBands);
                             transmitted[s][other][k] += e;
                             sum += e;
                         }
@@ -351,17 +356,23 @@ namespace SoundCalcs.Compute
                     // Ceiling reflection, scaled by the room's enclosure ratio (open areas have
                     // less ceiling). A flush-mounted speaker's ceiling image would coincide with
                     // the speaker itself — its half-space radiation is already in the on-axis level.
+                    // The ceiling of the speaker's own room (the ceiling is there whether or not walls are drawn)
                     int srcRoom = sourceRoomIndex[s];
-                    double enclosure = srcRoom >= 0 ? input.Rooms[srcRoom].EnclosureRatio : 0;
-                    if (ceilingZ - srcPos.Z > FlushMountToleranceM && enclosure > 0)
+                    double roomCeilingZ = ceilingZ;
+                    if (srcRoom >= 0)
+                    {
+                        RoomPolygon sr = input.Rooms[srcRoom];
+                        roomCeilingZ = sr.FloorElevationM + (sr.CeilingHeightM > 0.5 ? sr.CeilingHeightM : DefaultCeilingHeightM);
+                    }
+                    if (roomCeilingZ - srcPos.Z > FlushMountToleranceM && srcRoom >= 0)
                     {
                         double[] ceilCoeffs = new double[numBands];
                         for (int k = 0; k < numBands; k++)
-                            ceilCoeffs[k] = (1.0 - ceilingAbsorption[k]) * enclosure;
+                            ceilCoeffs[k] = 1.0 - ceilingAbsorption[k];
                         horizImages.Add(new HorizontalImageSource
                         {
-                            ImagePos3D = new Vec3(srcPos.X, srcPos.Y, 2.0 * ceilingZ - srcPos.Z),
-                            SurfaceZ = ceilingZ,
+                            ImagePos3D = new Vec3(srcPos.X, srcPos.Y, 2.0 * roomCeilingZ - srcPos.Z),
+                            SurfaceZ = roomCeilingZ,
                             SourceIndex = s,
                             ReflectionCoeffByBand = ceilCoeffs
                         });
@@ -401,6 +412,12 @@ namespace SoundCalcs.Compute
             // Power each source radiates into its box (for the lattice's diffuse part), computed on first
             // use; threads racing here compute the same array, so the race is harmless
             var latticePower = new double[numSources][];
+
+            // Where each speaker's paths start in plan, for blocking: a speaker on a wall line (wall-mounted,
+            // the line traced along the face it hangs on) is in front of that wall, not in it
+            Vec2[] srcPlan = new Vec2[numSources];
+            for (int s = 0; s < numSources; s++)
+                srcPlan[s] = PlanOrigin(input.Sources[s], walls);
 
             // Free wall ends (not joined to another wall): sound diffracts around them
             bool[] startFree = new bool[walls.Count], endFree = new bool[walls.Count];
@@ -466,7 +483,7 @@ namespace SoundCalcs.Compute
                         Vec3 toReceiver = delta / distance;
                         Vec3 facing = source.FacingDirection.Normalized();
 
-                        Vec2 srcXY0 = new Vec2(source.Position.X, source.Position.Y);
+                        Vec2 srcXY0 = srcPlan[s];
                         var hits = new List<int>(2);
                         directTl[s] = new double[numBands];
                         double stc = SumWallStc(srcXY0, recvXY, source.Position.Z, recvPos.Z, walls, -1, -1, hits, directTl[s]);
@@ -566,7 +583,7 @@ namespace SoundCalcs.Compute
                         ImageSource img = imageSourceArray[r];
                         if (useLattice[img.SourceIndex]) continue;
                         ComputeSource source = input.Sources[img.SourceIndex];
-                        Vec2 srcXY = new Vec2(source.Position.X, source.Position.Y);
+                        Vec2 srcXY = srcPlan[img.SourceIndex];
 
                         Vec2 imgToRecv = recvXY - img.ImagePos;
                         double len2D = imgToRecv.Length;
@@ -576,6 +593,8 @@ namespace SoundCalcs.Compute
                         double tLast = SegmentIntersectT(img.ImagePos, imgToRecv, walls[img.WallIndex].Start, walls[img.WallIndex].End);
                         if (tLast <= 0.0 || tLast >= 1.0) continue;
                         Vec2 lastPt = img.ImagePos + imgToRecv * tLast;
+                        // A bounce inside another wall (where a partition meets the reflecting wall) is no reflection
+                        if (InsideOtherWall(lastPt, walls, img.WallIndex, img.FirstWallIndex)) continue;
 
                         // Heights along the unfolded path: linear in plan distance from the source
                         double dz = recvPos.Z - source.Position.Z;
@@ -595,6 +614,7 @@ namespace SoundCalcs.Compute
                                 walls[img.FirstWallIndex].Start, walls[img.FirstWallIndex].End);
                             if (tFirst <= 0.0 || tFirst >= 1.0) continue;
                             firstPt = img.FirstImagePos + d1 * tFirst;
+                            if (InsideOtherWall(firstPt, walls, img.WallIndex, img.FirstWallIndex)) continue;
                             double zFirst = ZAt(Vec2.Distance(srcXY, firstPt));
                             if (!BelowTop(walls[img.FirstWallIndex], zFirst)) continue;
 
@@ -680,7 +700,9 @@ namespace SoundCalcs.Compute
                     // In box-shaped rooms the shoebox lattice gives the reflections instead, binned
                     // in time, with an exponential tail after its cutoff.
                     double[][] tail = new double[numSources][];
-                    double[] tailStart = (double[])directTime.Clone();
+                    // Each tail's start and decay time constant per band
+                    double[][] tailStart = new double[numSources][];
+                    double[][] tailTau = new double[numSources][];
                     int recvRoom = receiver.RoomIndex;
                     for (int s = 0; s < numSources; s++)
                     {
@@ -691,13 +713,18 @@ namespace SoundCalcs.Compute
                             double[] through = sourceRoomIndex[s] >= 0 ? transmitted[s]?[recvRoom] : null;
                             if (through == null) continue;
                             Vec2 via = transmitVia[s][recvRoom];
-                            Vec2 srcPlan = new Vec2(input.Sources[s].Position.X, input.Sources[s].Position.Y);
+                            Vec2 srcPlanXY = new Vec2(input.Sources[s].Position.X, input.Sources[s].Position.Y);
                             tail[s] = new double[numBands];
-                            tailStart[s] = (Vec2.Distance(srcPlan, via) + Vec2.Distance(via, recvXY)) / speedOfSound;
+                            tailStart[s] = new double[numBands];
+                            tailTau[s] = new double[numBands];
+                            double arrive = (Vec2.Distance(srcPlanXY, via) + Vec2.Distance(via, recvXY)) / speedOfSound;
                             for (int k = 0; k < numBands; k++)
                             {
                                 tail[s][k] = through[k];
                                 totalByBand[k] += through[k];
+                                tailStart[s][k] = arrive;
+                                // Decaying in the source room and again in this one: the two decays in series
+                                tailTau[s][k] = (sourceT60[s][k] + roomT60[recvRoom][k]) / 13.82;
                             }
                             continue;
                         }
@@ -731,22 +758,33 @@ namespace SoundCalcs.Compute
                             }
 
                             tail[s] = new double[numBands];
-                            tailStart[s] = ShoeboxLattice.CutoffTimeS;
+                            tailStart[s] = new double[numBands];
+                            tailTau[s] = new double[numBands];
                             for (int k = 0; k < numBands; k++)
                             {
                                 tail[s][k] = tailEnergy[k];
                                 totalByBand[k] += tail[s][k];
+                                tailStart[s][k] = ShoeboxLattice.CutoffTimeS;
+                                tailTau[s][k] = sourceT60[s][k] / 13.82;
                             }
                             continue;
                         }
 
                         if (!hasReverb) continue;
                         tail[s] = new double[numBands];
+                        tailStart[s] = new double[numBands];
+                        tailTau[s] = new double[numBands];
                         for (int k = 0; k < numBands; k++)
                         {
-                            double barron = reverbBySource[s][k] * Math.Exp(-13.82 * directTime[s] / sourceT60[s][k]);
-                            tail[s][k] = Math.Max(0, barron - imageEnergy[s][k]);
-                            totalByBand[k] += tail[s][k];
+                            double tau = sourceT60[s][k] / 13.82;
+                            double barron = reverbBySource[s][k] * Math.Exp(-directTime[s] / tau);
+                            double rest = Math.Max(0, barron - imageEnergy[s][k]);
+                            tail[s][k] = rest;
+                            totalByBand[k] += rest;
+                            // The explicit reflections are the head of Barron's decay; the rest is its later part,
+                            // starting where the energy still to come equals what is left
+                            tailStart[s][k] = directTime[s] + (rest > 0 && barron > rest ? tau * Math.Log(barron / rest) : 0);
+                            tailTau[s][k] = tau;
                         }
                     }
 
@@ -769,7 +807,7 @@ namespace SoundCalcs.Compute
                         SplDbByBand = splDbByBand
                     });
 
-                    bandDataBag.Add(BuildBandData(receiver.Index, arrivals, tail, tailStart, sourceT60, modFreqs, speechFactor));
+                    bandDataBag.Add(BuildBandData(receiver.Index, arrivals, tail, tailStart, tailTau, modFreqs, speechFactor));
 
                     int done = Interlocked.Increment(ref completed);
                     if (done % Math.Max(1, totalReceivers / 100) == 0)
@@ -796,8 +834,8 @@ namespace SoundCalcs.Compute
             int receiverIndex,
             List<(double Time, double[] Power, int Source)> arrivals,
             double[][] tail,
-            double[] tailStart,
-            double[][] sourceT60,
+            double[][] tailStart,
+            double[][] tailTau,
             double[] modFreqs,
             double[][] speechFactor)
         {
@@ -850,12 +888,12 @@ namespace SoundCalcs.Compute
             for (int s = 0; s < tail.Length; s++)
             {
                 if (tail[s] == null) continue;
-                double dt0 = tailStart[s] - tFirst;
                 for (int k = 0; k < nb; k++)
                 {
                     double r = tail[s][k] * speechFactor[s][k];
                     if (r <= 0) continue;
-                    double tau = sourceT60[s][k] / 13.82;
+                    double dt0 = tailStart[s][k] - tFirst;
+                    double tau = tailTau[s][k];
 
                     double e50 = r * (1 - Math.Exp(-Math.Max(0, Split50S - dt0) / tau));
                     double e80 = r * (1 - Math.Exp(-Math.Max(0, Split80S - dt0) / tau));
@@ -1006,6 +1044,79 @@ namespace SoundCalcs.Compute
 
         /// <summary>Plan-view blocking test (kept for callers that only need yes/no).</summary>
         internal static bool RayBlockedByWall(Vec2 p, Vec2 d, ComputeWall w) => BlockParam(p, d, w) >= 0;
+
+        /// <summary>
+        /// The room a speaker radiates into. A wall-mounted speaker usually sits on a wall line, where the
+        /// point-in-room test can fall on either side: it is tested 0.25 m in front of it. A speaker in no room
+        /// (just outside a room's edge) belongs to the nearest room within 0.5 m.
+        /// </summary>
+        private static int SourceRoom(List<RoomPolygon> rooms, ComputeSource src)
+        {
+            if (rooms == null || rooms.Count == 0) return -1;
+            Vec2 p = new Vec2(src.Position.X, src.Position.Y);
+            Vec3 f = src.FacingDirection;
+            double h = Math.Sqrt(f.X * f.X + f.Y * f.Y);
+            var probes = new List<Vec2>();
+            if (h > 0.5) probes.Add(p + new Vec2(f.X / h, f.Y / h) * 0.25);
+            probes.Add(p);
+            foreach (Vec2 q in probes)
+                for (int r = 0; r < rooms.Count; r++)
+                    if (rooms[r].ContainsPoint(q)) return r;
+
+            int best = -1;
+            double bestD = 0.5;
+            for (int r = 0; r < rooms.Count; r++)
+                foreach (List<Vec2> ring in rooms[r].Rings())
+                    for (int i = 0; i < ring.Count; i++)
+                    {
+                        double d = PointSegmentDistance(p, ring[i], ring[(i + 1) % ring.Count]);
+                        if (d < bestD) { bestD = d; best = r; }
+                    }
+            return best;
+        }
+
+        /// <summary>
+        /// Whether a room has a reverberant field: 1 when any of its perimeter is walled, 0 for an area with no walls
+        /// around it at all. The level itself follows from the RT60 (4W/A with A = 0.161·V/T), which already includes
+        /// the sound leaving through open sides: scaling it by the walled fraction again would count them twice (and
+        /// made the image-source path disagree with the room-shape model by 10·log of that fraction).
+        /// </summary>
+        private static double EnclosureFactor(RoomPolygon room, int numBands) =>
+            room.EnclosureRatio > 0.01 ? 1.0 : 0.0;
+
+        /// <summary>
+        /// Where a speaker's paths start in plan for the blocking tests. A speaker facing sideways within 4 cm of a
+        /// wall line hangs on that wall: its paths start 4 cm in front of it, so the wall is behind it (else a
+        /// speaker on the line would radiate through its own wall into the next room).
+        /// </summary>
+        private static Vec2 PlanOrigin(ComputeSource src, List<ComputeWall> walls)
+        {
+            var p = new Vec2(src.Position.X, src.Position.Y);
+            Vec3 f = src.FacingDirection;
+            double h = Math.Sqrt(f.X * f.X + f.Y * f.Y);
+            if (h < 0.5) return p;
+            double reach = 2 * EndToleranceM;
+            foreach (ComputeWall w in walls)
+                if (w.StcRating > 0 && PointSegmentDistance(p, w.Start, w.End) < reach)
+                    return p + new Vec2(f.X / h, f.Y / h) * reach;
+            return p;
+        }
+
+        /// <summary>
+        /// Whether a bounce point lies inside a wall other than the reflecting ones (within its half thickness of
+        /// its centreline): where a partition meets the reflecting wall, the bounce would be in the partition.
+        /// </summary>
+        private static bool InsideOtherWall(Vec2 p, List<ComputeWall> walls, int reflecting1, int reflecting2)
+        {
+            for (int i = 0; i < walls.Count; i++)
+            {
+                if (i == reflecting1 || i == reflecting2) continue;
+                ComputeWall w = walls[i];
+                if (w.StcRating <= 0) continue;
+                if (PointSegmentDistance(p, w.Start, w.End) < w.HalfThicknessM) return true;
+            }
+            return false;
+        }
 
         /// <summary>A wall between two rooms: the area through which one room's sound reaches the other.</summary>
         private class Partition

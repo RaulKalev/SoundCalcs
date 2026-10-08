@@ -229,6 +229,7 @@ namespace SoundCalcs.UI
         public AcousticViewerControl()
         {
             InitializeComponent();
+            SkCanvas.LostMouseCapture += Canvas_LostMouseCapture;
             Loaded += (s, e) => ApplyAppearance();
             Unloaded += (s, e) => StopMotion();
         }
@@ -872,6 +873,7 @@ namespace SoundCalcs.UI
                 if (spk != null)
                 {
                     _rotatingSpk = spk;
+                    _rotateStartFacing = spk.FacingDirection;
                     SkCanvas.CaptureMouse();
                     Refresh();
                     e.Handled = true;
@@ -941,6 +943,22 @@ namespace SoundCalcs.UI
             Refresh();
         }
 
+        // Facing of the speaker being aimed when the drag started
+        Vec3 _rotateStartFacing;
+
+        // Capture lost mid-drag (a Revit dialog, Alt+Tab): end the drag without committing it, so the plan
+        // doesn't keep panning or aiming on hover
+        void Canvas_LostMouseCapture(object sender, MouseEventArgs e)
+        {
+            if (_rotatingSpk != null)
+            {
+                _rotatingSpk.FacingDirection = _rotateStartFacing;
+                _rotatingSpk = null;
+                Refresh();
+            }
+            _isPanning = false;
+        }
+
         void Canvas_MouseUp(object sender, MouseButtonEventArgs e)
         {
             if (_rotatingSpk != null)
@@ -948,7 +966,11 @@ namespace SoundCalcs.UI
                 double angleDeg = Math.Atan2(
                     _rotatingSpk.FacingDirection.Y,
                     _rotatingSpk.FacingDirection.X) * 180.0 / Math.PI;
-                OnSpeakerRotated?.Invoke(_rotatingSpk.ElementId, angleDeg);
+                double startDeg = Math.Atan2(_rotateStartFacing.Y, _rotateStartFacing.X) * 180.0 / Math.PI;
+                double turned = Math.Abs(Math.IEEERemainder(angleDeg - startDeg, 360));
+                // A click without a drag aims nothing (no model change, no undo entry)
+                if (turned > 0.5) OnSpeakerRotated?.Invoke(_rotatingSpk.ElementId, angleDeg);
+                else _rotatingSpk.FacingDirection = _rotateStartFacing;
                 _rotatingSpk = null;
                 SkCanvas.ReleaseMouseCapture();
                 Refresh();

@@ -152,6 +152,9 @@ namespace SoundCalcs.Domain
         /// </summary>
         public bool WasCanceled { get; set; }
 
+        /// <summary>Why the job failed, or null when it completed (or was canceled).</summary>
+        public string Error { get; set; }
+
         /// <summary>
         /// The calculation quality level used for this run.
         /// </summary>

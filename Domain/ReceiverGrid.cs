@@ -93,8 +93,9 @@ namespace SoundCalcs.Domain
             {
                 for (double y = yMin; y <= yMax; y += spacing)
                 {
-                    // Only include points inside the room polygon
-                    if (room.ContainsPoint(new Vec2(x, y)))
+                    // Only include points inside the room polygon, at least the offset from each of its edges
+                    var p = new Vec2(x, y);
+                    if (room.ContainsPoint(p) && (offset <= 0 || DistanceToEdges(room, p) >= offset - 1e-9))
                     {
                         var pt = new ReceiverPoint(new Vec3(x, y, elevation), index);
                         pt.RoomIndex = roomIndex;
@@ -105,6 +106,20 @@ namespace SoundCalcs.Domain
             }
 
             return points;
+        }
+
+        private static double DistanceToEdges(RoomPolygon room, Vec2 p)
+        {
+            double best = double.MaxValue;
+            foreach (List<Vec2> ring in room.Rings())
+                for (int i = 0; i < ring.Count; i++)
+                {
+                    Vec2 a = ring[i], ab = ring[(i + 1) % ring.Count] - a;
+                    double len2 = ab.LengthSquared;
+                    double t = len2 > 1e-18 ? Math.Max(0, Math.Min(1, Vec2.Dot(p - a, ab) / len2)) : 0;
+                    best = Math.Min(best, Vec2.Distance(p, a + ab * t));
+                }
+            return best;
         }
     }
 }

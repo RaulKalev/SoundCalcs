@@ -736,8 +736,9 @@ namespace SoundCalcs.Harness
                 Name = "two_rooms",
                 Description = "16×8 m boundary split by a full-height concrete wall into an 80 m² and a 48 m² " +
                               "room; ceiling cone in the large room, Full quality, RT60 0.8 s. Each room must get " +
-                              "its own volume and reverberant field; the small room none from the speaker; " +
-                              "'Per room' RT60 must follow each room's own geometry; a door gap merges the rooms.",
+                              "its own volume and reverberant field; the small room only what passes through the partition " +
+                              "(L1 − R + 10·log S/A2); 'Per room' RT60 must follow each room's own geometry; door gaps " +
+                              "(1.2 m and 0.7 m) merge the rooms; the plan rotated 30° gives the same rooms and levels.",
                 Walls = walls,
                 Quality = CalculationQuality.Full,
                 Environment = new EnvironmentSettings { RT60ByBand = IecReference.Fill(0.8) },
@@ -812,6 +813,28 @@ namespace SoundCalcs.Harness
                     ctx.Assert("longer RT60 raises the source room's level, and the room behind the partition by more (both rooms reverberate)",
                         bigShift > 2 && smallShift > bigShift && smallShift < 10,
                         $"large room +{CheckContext.F(bigShift)} dB, small room +{CheckContext.F(smallShift)} dB");
+
+                    // The same plan rotated 30° (walls in any direction must split into the same rooms), and a 0.7 m door
+                    var rotSpec = run.Spec.Clone("_rot30");
+                    double ra = 30 * Math.PI / 180;
+                    (double X, double Y) R(double x, double y) => (Math.Cos(ra) * x - Math.Sin(ra) * y + 1000, Math.Sin(ra) * x + Math.Cos(ra) * y - 500);
+                    foreach (var w in rotSpec.Walls) { (w.X1, w.Y1) = R(w.X1, w.Y1); (w.X2, w.Y2) = R(w.X2, w.Y2); }
+                    foreach (var sp in rotSpec.Speakers) (sp.X, sp.Y) = R(sp.X, sp.Y);
+                    var rot = ScenarioRun.Execute(rotSpec);
+                    var rotAreas = rot.Input.Rooms.Select(r => r.EffectiveAreaM2).OrderByDescending(a => a).ToList();
+                    ctx.Assert("rotated 30°: same two rooms (80 m² and 48 m²)",
+                        rot.Input.Rooms.Count == 2 && Math.Abs(rotAreas[0] - 80) < 1 && Math.Abs(rotAreas[1] - 48) < 1,
+                        string.Join(", ", rot.Input.Rooms.Select(r => $"{r.Name}: {CheckContext.F(r.EffectiveAreaM2)} m²")));
+                    double rotSmall = Analytic.Db(rot.Output.Results.Where(r => rot.Input.Rooms[rot.Input.Receivers[r.ReceiverIndex].RoomIndex].EffectiveAreaM2 < 60)
+                        .Average(r => Math.Pow(10, r.SplDb / 10)));
+                    ctx.Near("rotated 30°: small room level unchanged", rotSmall, smallMean, 0.5, " dB");
+
+                    var doorSpec = run.Spec.Clone("_door07");
+                    doorSpec.Walls[4] = new WallSpec { X1 = 10, Y1 = 0, X2 = 10, Y2 = 3.65, WallType = "concrete_200" };
+                    doorSpec.Walls.Add(new WallSpec { X1 = 10, Y1 = 4.35, X2 = 10, Y2 = 8, WallType = "concrete_200" });
+                    var door = ScenarioRun.Execute(doorSpec);
+                    ctx.Assert("a 0.7 m door gap also merges the rooms (door gaps are never closed)",
+                        door.Input.Rooms.Count == 1, $"{door.Input.Rooms.Count} rooms");
 
                     // Per-room RT60 from each room's own geometry
                     var autoSpec = run.Spec.Clone("_auto_rt60");
