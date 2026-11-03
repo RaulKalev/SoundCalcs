@@ -58,8 +58,18 @@
     <PackageReference Include="Nice3point.Revit.Api.AdWindows" Version="2026.4.0" />
     <PackageReference Include="Nice3point.Revit.Api.RevitAPI" Version="2026.4.0" />
     <PackageReference Include="Nice3point.Revit.Api.RevitAPIUI" Version="2026.4.0" />
-    <PackageDownload Include="Microsoft.WindowsDesktop.App.Ref" Version="[8.0.0]" />
   </ItemGroup>
+
+  <!-- SkiaSharp.Views.WPF adds a WPF framework reference. Pin its targeting pack to 8.0.0 (AddWindowsDesktopReferences reads that version):
+       newer SDKs default to their own patch version, which is never downloaded because NuGet merges the two. -->
+  <Target Name="PinWindowsDesktopTargetingPack" BeforeTargets="ProcessFrameworkReferences"
+          Condition="'$(TargetFramework)' == 'net8.0-windows'">
+    <ItemGroup>
+      <KnownFrameworkReference Condition="'%(KnownFrameworkReference.TargetFramework)' == 'net8.0' And $([System.String]::Copy('%(KnownFrameworkReference.Identity)').StartsWith('Microsoft.WindowsDesktop.App'))">
+        <TargetingPackVersion>8.0.0</TargetingPackVersion>
+      </KnownFrameworkReference>
+    </ItemGroup>
+  </Target>
 
   <Target Name="AddWindowsDesktopReferences" BeforeTargets="ResolveAssemblyReferences"
           Condition="'$(TargetFramework)' == 'net8.0-windows'">
