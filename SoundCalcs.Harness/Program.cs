@@ -36,6 +36,9 @@ Options:
   --tol-spl <dB>          Tolerance for SPL comparisons (default 3)
   --tol-sti <value>       Tolerance for STI comparisons (default 0.05)
   --no-images             Skip PNG rendering
+  --report                Also build each scenario's PDF report (report.pdf + one PNG per page) and a
+                          combined report of all scenarios as areas (report_all.pdf)
+  --report-lang <en|et>   Report language (implies --report)
   --list                  List built-in scenarios and exit
   --example-spec <file>   Write an example ScenarioSpec JSON and exit
   --help                  Show this help
@@ -60,6 +63,8 @@ Exit code: 0 = all checks passed (warnings allowed), 1 = a check failed, 2 = usa
             var jobFiles = new List<string>();
             var modes = new[] { VisualizationMode.SPL, VisualizationMode.STI };
             bool images = true;
+            bool report = false;
+            var reportLang = SoundCalcs.Report.ReportLanguage.English;
             List<MeasuredPoint> measured = null;
             var tolerances = new MeasurementTolerances();
 
@@ -78,6 +83,12 @@ Exit code: 0 = all checks passed (warnings allowed), 1 = a check failed, 2 = usa
                                 .Select(m => (VisualizationMode)Enum.Parse(typeof(VisualizationMode), m.Trim(), true)).ToArray();
                             break;
                         case "--no-images": images = false; break;
+                        case "--report": report = true; break;
+                        case "--report-lang":
+                            report = true;
+                            reportLang = args[++i].StartsWith("et", StringComparison.OrdinalIgnoreCase)
+                                ? SoundCalcs.Report.ReportLanguage.Estonian : SoundCalcs.Report.ReportLanguage.English;
+                            break;
                         case "--measured": measured = Measurements.Load(args[++i]); break;
                         case "--tol-spl": tolerances.SplDb = double.Parse(args[++i], CultureInfo.InvariantCulture); break;
                         case "--tol-sti": tolerances.Sti = double.Parse(args[++i], CultureInfo.InvariantCulture); break;
@@ -134,12 +145,15 @@ Exit code: 0 = all checks passed (warnings allowed), 1 = a check failed, 2 = usa
                     }
                 }));
 
+            _report = report;
+            _reportLang = reportLang;
             var reports = new List<ScenarioReport>();
             foreach (var sc in scenarios)
                 reports.Add(RunScenario(sc, null, outDir, images));
             foreach (string f in jobFiles)
                 reports.Add(RunJobFile(f, modes, outDir, images, measured, tolerances));
 
+            if (report) WriteCombinedReport(reports, outDir);
             WriteReports(reports, outDir);
 
             int fails = reports.Sum(r => r.Checks.Count(c => c.Status == "FAIL"));
@@ -170,6 +184,26 @@ Exit code: 0 = all checks passed (warnings allowed), 1 = a check failed, 2 = usa
             public List<string> Images { get; set; } = new List<string>();
             public string Error { get; set; }
             [JsonIgnore] public List<SoundCalcs.Report.RoomStatistics> Rooms { get; set; }
+            [JsonIgnore] public ScenarioRun Run { get; set; }
+        }
+
+        static bool _report;
+        static SoundCalcs.Report.ReportLanguage _reportLang;
+
+        /// <summary>All scenarios with results as the areas of one project report (a multi-area report).</summary>
+        static void WriteCombinedReport(List<ScenarioReport> reports, string outDir)
+        {
+            var areas = reports.Where(r => r.Run != null && r.Run.Output.Results.Count > 0).Select(r => ReportChecks.Area(r.Run)).ToList();
+            if (areas.Count == 0) return;
+            var req = ReportChecks.Request(areas, _reportLang);
+            req.Options.IncludeValueCharts = false;
+            req.Options.IncludeSpeakerInstances = false;
+            var built = SoundCalcs.Report.ReportBuilder.Build(req);
+            string pdf = Path.Combine(outDir, "report_all.pdf");
+            int pages = SoundCalcs.Report.Pdf.PdfReportWriter.Write(built.Document, pdf);
+            File.WriteAllText(Path.Combine(outDir, "report_all_summary.csv"),
+                SoundCalcs.Report.ReportBuilder.SummaryCsv(built.Areas, new SoundCalcs.Report.ReportText(_reportLang), CultureInfo.InvariantCulture));
+            Console.WriteLine($"Combined report: {pdf} ({pages} pages, {areas.Count} areas)");
         }
 
         static ScenarioReport RunScenario(Scenario sc, ScenarioRun preRun, string outDir, bool images)
@@ -190,6 +224,7 @@ Exit code: 0 = all checks passed (warnings allowed), 1 = a check failed, 2 = usa
 
                 if (run != null)
                 {
+                    report.Run = run;
                     Summarise(run, report);
                     report.Rooms = SoundCalcs.Report.RoomStatisticsCalculator.Compute(run.Input, run.Output);
                     ReportChecks.RoomIndices(run.Input, run.Output, ctx);
@@ -219,6 +254,8 @@ Exit code: 0 = all checks passed (warnings allowed), 1 = a check failed, 2 = usa
                             report.Images.Add(Rel(outDir, file));
                         }
                     }
+                    if (_report)
+                        ReportChecks.WriteReport(run, dir, _reportLang, ctx, report.Images, outDir);
                 }
             }
             catch (Exception ex)
