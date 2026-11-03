@@ -18,6 +18,7 @@
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
   </ItemGroup>
 
   <!--
@@ -31,6 +32,10 @@
 
     <!-- File logger used by SPLCalculator diagnostics -->
     <Compile Include="../IO/FileLogger.cs" />
+
+    <!-- Settings and per-project area files (JSON round trip, migration of the old single layout) -->
+    <Compile Include="../IO/SettingsStore.cs" />
+    <Compile Include="../IO/ProjectStore.cs" />
 
     <!-- Acoustic compute engine (pure math, no Revit references) -->
     <Compile Include="../Compute/ISpeakerDirectivityProvider.cs" />

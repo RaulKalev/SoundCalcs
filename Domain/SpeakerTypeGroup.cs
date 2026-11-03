@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 
 namespace SoundCalcs.Domain
 {
@@ -8,6 +9,16 @@ namespace SoundCalcs.Domain
     /// </summary>
     public class SpeakerTypeGroup
     {
+        /// <summary>A copy with its own instances and mapping.</summary>
+        public SpeakerTypeGroup Clone()
+        {
+            var c = (SpeakerTypeGroup)MemberwiseClone();
+            c.Instances = (Instances ?? new List<SpeakerInstance>()).Select(i => i.Clone()).ToList();
+            c.Mapping = Mapping?.Clone() ?? new SpeakerProfileMapping();
+            return c;
+        }
+
+
         /// <summary>
         /// Composite key: "FamilyName : TypeName"
         /// </summary>

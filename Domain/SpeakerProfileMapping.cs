@@ -17,6 +17,16 @@ namespace SoundCalcs.Domain
     /// </summary>
     public class SpeakerProfileMapping
     {
+        /// <summary>A copy with its own band arrays.</summary>
+        public SpeakerProfileMapping Clone()
+        {
+            var c = (SpeakerProfileMapping)MemberwiseClone();
+            c.SpectrumShapeByBand = (double[])SpectrumShapeByBand?.Clone();
+            c.CoverageAngleByBandDeg = (double[])CoverageAngleByBandDeg?.Clone();
+            return c;
+        }
+
+
         /// <summary>
         /// The type key this mapping belongs to: "FamilyName : TypeName".
         /// </summary>

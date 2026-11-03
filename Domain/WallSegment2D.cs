@@ -6,6 +6,9 @@ namespace SoundCalcs.Domain
     /// </summary>
     public class WallSegment2D
     {
+        public WallSegment2D Clone() => (WallSegment2D)MemberwiseClone();
+
+
         /// <summary>Start point of the wall centerline in meters (XY).</summary>
         public Vec2 Start { get; set; }
 

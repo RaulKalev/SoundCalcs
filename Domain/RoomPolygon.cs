@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace SoundCalcs.Domain
 {
@@ -9,6 +10,17 @@ namespace SoundCalcs.Domain
     /// </summary>
     public class RoomPolygon
     {
+        /// <summary>A copy with its own vertex lists.</summary>
+        public RoomPolygon Clone()
+        {
+            var c = (RoomPolygon)MemberwiseClone();
+            c.Vertices = new List<Vec2>(Vertices ?? new List<Vec2>());
+            c.Holes = (Holes ?? new List<List<Vec2>>()).Select(h => new List<Vec2>(h)).ToList();
+            c.RT60ByBand = (double[])RT60ByBand?.Clone();
+            return c;
+        }
+
+
         /// <summary>Ordered vertices of the room boundary (2D, meters).</summary>
         public List<Vec2> Vertices { get; set; } = new List<Vec2>();
 

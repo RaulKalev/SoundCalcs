@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace SoundCalcs.Domain
 {
@@ -99,6 +100,15 @@ namespace SoundCalcs.Domain
     /// </summary>
     public class WallLineGroup
     {
+        /// <summary>A copy with its own segments (the wall type is a shared catalog entry).</summary>
+        public WallLineGroup Clone()
+        {
+            var c = (WallLineGroup)MemberwiseClone();
+            c.Segments = (Segments ?? new List<WallSegment2D>()).Select(s => s.Clone()).ToList();
+            return c;
+        }
+
+
         /// <summary>Name of the Revit line style (e.g. "Lines", "Wide Lines", custom styles).</summary>
         public string LineStyleName { get; set; } = "";
 

@@ -15,6 +15,17 @@ namespace SoundCalcs.Domain
     /// </summary>
     public class AnalysisSettings
     {
+        /// <summary>A copy with its own band arrays.</summary>
+        public AnalysisSettings Clone()
+        {
+            var c = (AnalysisSettings)MemberwiseClone();
+            c.RT60ByBand = (double[])RT60ByBand?.Clone();
+            c.BackgroundNoiseByBand = (double[])BackgroundNoiseByBand?.Clone();
+            c.CustomAbsorptionByBand = (double[])CustomAbsorptionByBand?.Clone();
+            return c;
+        }
+
+
         /// <summary>
         /// Distance between receiver grid points in meters.
         /// </summary>
