@@ -105,8 +105,8 @@ namespace SoundCalcs.Report
         public List<VisualizationMode> ValueChartModes { get; set; } =
             new List<VisualizationMode> { VisualizationMode.STI, VisualizationMode.SPL_A };
 
-        /// <summary>Areas included (by id); empty = all calculated areas.</summary>
-        public List<string> AreaIds { get; set; } = new List<string>();
+        /// <summary>Areas left out (by id); every other calculated area is in the report (also areas added later).</summary>
+        public List<string> ExcludedAreaIds { get; set; } = new List<string>();
 
         /// <summary>Rooms left out, as <see cref="RoomKey"/> values.</summary>
         public List<string> ExcludedRooms { get; set; } = new List<string>();
@@ -119,7 +119,7 @@ namespace SoundCalcs.Report
             var c = (ReportOptions)MemberwiseClone();
             c.PlanModes = new List<VisualizationMode>(PlanModes ?? new List<VisualizationMode>());
             c.ValueChartModes = new List<VisualizationMode>(ValueChartModes ?? new List<VisualizationMode>());
-            c.AreaIds = new List<string>(AreaIds ?? new List<string>());
+            c.ExcludedAreaIds = new List<string>(ExcludedAreaIds ?? new List<string>());
             c.ExcludedRooms = new List<string>(ExcludedRooms ?? new List<string>());
             return c;
         }

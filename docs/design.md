@@ -31,6 +31,10 @@ Apple-style clarity and hierarchy, built from native WPF so it behaves like a Wi
   The window uses WindowChrome, so Snap, Win+arrows, native resize borders and the DWM shadow work.
 - **Body**: the page on the left, the live plan on the right in a rounded surface. The splitter between them shows
   an accent line on hover; its position is remembered.
+- **Area bar** above the pages: the project's areas in a list (each with a glyph and a caption: calculated with
+  date and quality, *Changed since calculated*, *Not calculated*) and icon buttons to add, duplicate, rename (the
+  list turns into a text field: Enter or leaving it renames, Esc cancels) and delete (red; Undo on the status
+  line). Every page edits the area chosen here and the plan shows it. The bar is disabled while a calculation runs.
 - **Status line** under the content: the last result with a glyph, and the progress while running. After a
   destructive action it offers **Undo** (or *Draw again* after *Remove from view*) for 15 s or until the next
   message; Ctrl+Z does the same outside text fields. Destructive actions never ask first.
@@ -58,6 +62,23 @@ Apple-style clarity and hierarchy, built from native WPF so it behaves like a Wi
 - Empty states say what to do: *No walls yet*, *No speakers yet*, *No results yet* (with *Go to Run* and
   *Import latest*).
 - The results summary shows ranges (min – max) for SPL, dBA and STI.
+- The Run page offers *Run all areas* (secondary) when the project has more than one area; the line under the
+  buttons shows *Area 2 of 5* while it runs.
+- **Report dialog** (Results → *Create report…*, a window of its own with the same palette and styles): areas and
+  their rooms on the left as a checklist (an area's glyph and caption say whether its results are current; areas
+  without results cannot be ticked; each room shows its area, mean STI and pass/fail in the status colours), with
+  *Calculate N areas* for the ones that are not current. The middle column holds grouped cards: project details
+  (cover and header fields, logo, description), contents (one checkbox per section), quantities (plans and value
+  charts), criteria (each with its checkbox and value; share of points; rooms without speakers) and page (language,
+  paper as segmented controls). The right column is the preview: the pages exactly as the PDF prints them, on the
+  viewer canvas colour with a soft page shadow, *Updating…* while it rebuilds (half a second after the last edit),
+  page arrows, Page Up/Down and the wheel to page. The footer has *Also save CSV tables*, the result of the last save
+  with *Open*, and *Close* / *Save PDF…* (primary). Everything chosen is stored with the project.
+- **Report pages** (the PDF): white A4/A3 portrait pages, Segoe UI, a 10 pt accent band on the cover, section
+  headings with a short accent rule, the project and section in the header, title, revision, date and page numbers
+  in the footer, contents with links, tables with a light header band and hairlines, pass/fail cells in the status
+  colours, plans with the viewer's colour range, room outlines, walls, speakers (blue, labelled S1…), contour lines
+  with labels that keep clear of room names and speakers, a legend and a scale bar.
 - The plan viewer follows the appearance (canvas, walls, legend and text colours come from the `Viewer.*` keys).
   Its tools (Fit, Probe, Clear pins) are icon buttons on one floating bar, top left, clear of the legend; Probe
   shows the accent fill while it is on.

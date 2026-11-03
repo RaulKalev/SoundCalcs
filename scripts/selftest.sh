@@ -3,7 +3,7 @@
 #   1. unit tests                    (SoundCalcs.Tests)
 #   2. XAML checks                   (resource keys, styles, handlers, bindings, icons; scripts/xamlcheck.py)
 #   3. plugin compile check          (all Revit/WPF code, net48 + net8.0-windows)
-#   4. scenario harness + images     (SoundCalcs.Harness → $OUT/report.md, *.png)
+#   4. scenario harness + images     (SoundCalcs.Harness → $OUT/report.md, *.png, PDF reports)
 # Usage: scripts/selftest.sh [output-dir]      Exit code is non-zero if any step fails.
 set -uo pipefail
 cd "$(dirname "$0")/.."
@@ -26,8 +26,8 @@ step "unit tests" dotnet test SoundCalcs.Tests/SoundCalcs.Tests.csproj --nologo 
 step "xaml checks" python3 scripts/xamlcheck.py
 step "plugin compile check" bash -c \
   'dotnet build SoundCalcs.CompileCheck/SoundCalcs.CompileCheck.csproj -p:EnableWindowsTargeting=true -nologo -v q 2>&1 | grep -E "error|Build succeeded|Error\(s\)" | sort -u; exit ${PIPESTATUS[0]}'
-step "scenario harness" dotnet run -c Release --project SoundCalcs.Harness -- --out "$OUT"
+step "scenario harness" dotnet run -c Release --project SoundCalcs.Harness -- --out "$OUT" --report
 
 echo
-echo "Report: $OUT/report.md   Images: $OUT/<scenario>/*.png"
+echo "Report: $OUT/report.md   Images: $OUT/<scenario>/*.png   PDF: $OUT/<scenario>/report.pdf, $OUT/report_all.pdf"
 exit $status

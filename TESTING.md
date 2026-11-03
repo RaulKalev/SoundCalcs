@@ -11,7 +11,7 @@ scripts/selftest.sh              # all four layers below; output in harness-outp
 | Unit tests | `dotnet test SoundCalcs.Tests` | Calculator formulas, heatmap colour mapping and grid geometry, job-input helpers |
 | XAML checks | `python3 scripts/xamlcheck.py` | The XAML is not compiled on Linux, so this checks what would otherwise fail inside Revit: resource keys (and StaticResource order), styles on the right element types, event handlers and `x:Name` fields, binding paths, both palettes plus high contrast defining every key. It writes the icon names to `SoundCalcs.CompileCheck/XamlIcons.g.cs`, which the compile check then builds against `PackIconKind` |
 | Compile check | `dotnet build SoundCalcs.CompileCheck -p:EnableWindowsTargeting=true` | All plugin C# (Revit + WPF code included) compiles for net48 **and** net8.0-windows, using NuGet reference assemblies; XAML-generated members are stubbed in `XamlStubs.cs` |
-| Scenario harness | `dotnet run -c Release --project SoundCalcs.Harness -- --out harness-output` | Whole scenes go through the real pipeline: job built like `MainViewModel`, computed by `JobRunner.Compute`, drawn by the same `HeatmapMath` code as the viewer and the Revit renderer. Results are checked against physics and rendering invariants, and PNGs are written |
+| Scenario harness | `dotnet run -c Release --project SoundCalcs.Harness -- --out harness-output --report` | Whole scenes go through the real pipeline: job built like `MainViewModel`, computed by `JobRunner.Compute`, drawn by the same `HeatmapMath` code as the viewer and the Revit renderer. Results are checked against physics and rendering invariants, and PNGs are written. With `--report`, each scenario's PDF report is built and painted by the plugin's own report code |
 
 ## The harness
 
@@ -24,6 +24,7 @@ For every scenario it writes, under `harness-output/`:
 - `<scenario>/revit_<MODE>.png` shows what `FilledRegionRenderer` creates in the plan view: the merged rectangles per colour band, with the panel legend.
 - `<scenario>/input.json` and `output.json` hold the exact job input and results.
 - `compute.log` is the calculator's diagnostic log. Normally it goes to `Documents\SoundCalcs_Debug.log`.
+- With `--report` (or `--report-lang et` for Estonian): `<scenario>/report.pdf` and `<scenario>/report_pNN.png` (every page at 110 dpi, to look at), plus `report_all.pdf` and `report_all_summary.csv` with every scenario as an area of one project. `report.md` also lists every scenario's rooms (area, volume, points, speakers, SPL, dBA, STI, C80, RT60).
 
 The exit code is 0 when there are no failures. Warnings are allowed.
 
@@ -94,6 +95,18 @@ The report gives, per metric: bias, RMS error, worst point, and how many points 
 
 The `measurement_comparison` built-in scenario tests this tool itself. `docs/examples/measured_example.csv` shows the format.
 
+### Report checks
+
+With `--report`, every scenario also checks its report:
+
+- each result carries its receiver's room, and the room statistics count every receiver once (these two run without `--report` too);
+- the plan figures use the viewer's colour range (P2–P98);
+- there is a value chart per room and quantity, listing every point of the room with one min and one max;
+- each speaker's contribution at a room's centre point, rerun on its own, adds up (in energy) to the job's level there (±0.5 dB): a check of the model's additivity over speakers as much as of the report;
+- every heading is placed on a page, in order; the file is a PDF; and (when `pdftotext` is installed) its text holds every room name, so the text is real text.
+
+`ReportBuilderTests.cs`, `RoomStatisticsTests.cs`, `HeatmapContourTests.cs` and `ProjectStoreTests.cs` cover the same code in unit tests: criteria with point coverage and rooms without speakers, area and room selection, sections and languages, CSV in the locale's separators, room layers and value charts, contour lines (straight, closed, stopping at grid gaps), the bilinear page bitmap, project files (round trip, file names, migration of the old single layout, unreadable files), the area fingerprint and result status. `SettingsStoreTests.cs` pins the wall-type round trip.
+
 Every scenario also runs a generic **"no isolated hot spots"** check: a receiver more than 3 dB louder than all four neighbours (away from speakers) is almost always a leak through a wall.
 
 ### Adding a built-in scenario
@@ -102,4 +115,4 @@ Add a method to `SoundCalcs.Harness/Scenarios.cs` that returns a `Scenario` with
 
 ## Shared code
 
-The viewer (`UI/AcousticViewerControl.xaml.cs`) and `Visualization/FilledRegionRenderer.cs` take their colour range, band assignment, grid placement and strip merging from `Visualization/HeatmapMath.cs`. `MainViewModel` builds jobs through `Domain/JobInputBuilder.cs`. Keep new rendering or job-building logic in those Revit-free classes so the harness keeps covering it.
+The viewer (`UI/AcousticViewerControl.xaml.cs`), `Visualization/FilledRegionRenderer.cs` and the report's plan figures (`Report/PlanFigureBuilder.cs`) take their colour range, band assignment, grid placement, strip merging and contour lines from `Visualization/HeatmapMath.cs`. The report dialog's preview, the PDF and the harness PNGs are painted by the same `Report/Pdf/SkiaReportPainter.cs`. `MainViewModel` builds jobs through `Domain/JobInputBuilder.cs`. Keep new rendering or job-building logic in those Revit-free classes so the harness keeps covering it.

@@ -400,10 +400,123 @@
                     <ColumnDefinition Width="12" />
                     <ColumnDefinition Width="*" MinWidth="320" />
                 </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <!--  Areas of the project: every page edits the area chosen here  -->
+                <Border
+                    x:Name="AreaBar"
+                    Margin="0,0,0,12"
+                    Padding="12,6,6,6"
+                    Style="{StaticResource Card}">
+                    <DockPanel>
+                        <StackPanel
+                            Margin="8,0,0,0"
+                            VerticalAlignment="Center"
+                            DockPanel.Dock="Right"
+                            Orientation="Horizontal">
+                            <Button
+                                AutomationProperties.Name="New area"
+                                Click="AddArea_Click"
+                                IsEnabled="{Binding CanEditAreas}"
+                                Style="{StaticResource Button.Icon}"
+                                ToolTip="New area: another room or floor of this project, with its own boundary, speakers and results">
+                                <materialDesign:PackIcon Width="18" Height="18" Kind="Plus" />
+                            </Button>
+                            <Button
+                                AutomationProperties.Name="Duplicate area"
+                                Click="DuplicateArea_Click"
+                                IsEnabled="{Binding CanEditAreas}"
+                                Style="{StaticResource Button.Icon}"
+                                ToolTip="Duplicate this area (layout, speakers and settings)">
+                                <materialDesign:PackIcon Width="16" Height="16" Kind="ContentCopy" />
+                            </Button>
+                            <Button
+                                AutomationProperties.Name="Rename area"
+                                Click="RenameArea_Click"
+                                IsEnabled="{Binding CanEditAreas}"
+                                Style="{StaticResource Button.Icon}"
+                                ToolTip="Rename this area">
+                                <materialDesign:PackIcon Width="16" Height="16" Kind="PencilOutline" />
+                            </Button>
+                            <Button
+                                AutomationProperties.Name="Delete area"
+                                Click="DeleteArea_Click"
+                                Foreground="{DynamicResource Status.Error}"
+                                IsEnabled="{Binding CanDeleteArea}"
+                                Style="{StaticResource Button.Icon}"
+                                ToolTip="Delete this area (Undo brings it back)">
+                                <materialDesign:PackIcon Width="16" Height="16" Kind="TrashCanOutline" />
+                            </Button>
+                        </StackPanel>
+                        <TextBlock
+                            Margin="0,0,12,0"
+                            VerticalAlignment="Center"
+                            DockPanel.Dock="Left"
+                            Style="{StaticResource Type.RowLabel}"
+                            Text="Area" />
+                        <Grid>
+                            <ComboBox
+                                x:Name="AreaCombo"
+                                AutomationProperties.Name="Area"
+                                IsEnabled="{Binding CanEditAreas}"
+                                ItemsSource="{Binding Areas}"
+                                SelectedItem="{Binding SelectedAreaItem}"
+                                Style="{StaticResource Input.Combo}"
+                                ToolTip="The area the pages edit and the plan shows">
+                                <ComboBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <DockPanel>
+                                            <materialDesign:PackIcon
+                                                x:Name="StatusGlyph"
+                                                Width="12"
+                                                Height="12"
+                                                Margin="0,0,8,0"
+                                                VerticalAlignment="Center"
+                                                DockPanel.Dock="Left"
+                                                Foreground="{DynamicResource Text.Tertiary}"
+                                                Kind="CircleOutline" />
+                                            <TextBlock
+                                                Margin="10,0,0,0"
+                                                VerticalAlignment="Center"
+                                                DockPanel.Dock="Right"
+                                                Style="{StaticResource Type.Caption}"
+                                                Text="{Binding StatusText}" />
+                                            <TextBlock
+                                                VerticalAlignment="Center"
+                                                Text="{Binding Name}"
+                                                TextTrimming="CharacterEllipsis" />
+                                        </DockPanel>
+                                        <DataTemplate.Triggers>
+                                            <DataTrigger Binding="{Binding IsCurrent}" Value="True">
+                                                <Setter TargetName="StatusGlyph" Property="Kind" Value="CheckCircle" />
+                                                <Setter TargetName="StatusGlyph" Property="Foreground" Value="{DynamicResource Status.Ok}" />
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding IsOutdated}" Value="True">
+                                                <Setter TargetName="StatusGlyph" Property="Kind" Value="AlertCircle" />
+                                                <Setter TargetName="StatusGlyph" Property="Foreground" Value="{DynamicResource Status.Warning}" />
+                                            </DataTrigger>
+                                        </DataTemplate.Triggers>
+                                    </DataTemplate>
+                                </ComboBox.ItemTemplate>
+                            </ComboBox>
+                            <TextBox
+                                x:Name="AreaNameBox"
+                                AutomationProperties.Name="Area name"
+                                KeyDown="AreaNameBox_KeyDown"
+                                LostKeyboardFocus="AreaNameBox_LostKeyboardFocus"
+                                Style="{StaticResource Input.Text}"
+                                Visibility="Collapsed" />
+                        </Grid>
+                    </DockPanel>
+                </Border>
 
                 <!--  ================= MODEL =================  -->
                 <ScrollViewer
                     x:Name="ModelPage"
+                    Grid.Row="1"
                     ui:Motion.Reveal="True"
                     Style="{StaticResource PageScroll}">
                     <StackPanel Margin="0,0,0,16">
@@ -645,6 +758,7 @@
                 <!--  ================= SPEAKERS =================  -->
                 <Grid
                     x:Name="SpeakersPage"
+                    Grid.Row="1"
                     ui:Motion.Reveal="True"
                     Visibility="Collapsed">
                     <Grid.RowDefinitions>
@@ -948,6 +1062,7 @@
                 <!--  ================= ROOM =================  -->
                 <ScrollViewer
                     x:Name="RoomPage"
+                    Grid.Row="1"
                     ui:Motion.Reveal="True"
                     Style="{StaticResource PageScroll}"
                     Visibility="Collapsed">
@@ -1286,6 +1401,7 @@
                 <!--  ================= RUN =================  -->
                 <ScrollViewer
                     x:Name="RunPage"
+                    Grid.Row="1"
                     ui:Motion.Reveal="True"
                     Style="{StaticResource PageScroll}"
                     Visibility="Collapsed">
@@ -1409,6 +1525,18 @@
                                         </StackPanel>
                                     </Button>
                                     <Button
+                                        Margin="0,0,8,0"
+                                        Click="RunAllAreas_Click"
+                                        IsEnabled="{Binding CanEditAreas}"
+                                        Style="{StaticResource Button.Secondary}"
+                                        ToolTip="Run every area of the project in turn (Full quality); areas that cannot run are skipped"
+                                        Visibility="{Binding HasSeveralAreas, Converter={StaticResource BoolToVis}}">
+                                        <StackPanel Orientation="Horizontal">
+                                            <materialDesign:PackIcon Kind="PlaylistPlay" Style="{StaticResource ButtonIconLabel}" />
+                                            <TextBlock Text="Run all areas" />
+                                        </StackPanel>
+                                    </Button>
+                                    <Button
                                         Click="CancelJob_Click"
                                         Style="{StaticResource Button.Destructive}"
                                         ToolTip="Stop the running analysis"
@@ -1439,6 +1567,12 @@
                                     Margin="0,10,0,0"
                                     Style="{StaticResource Type.Caption}"
                                     Text="Quick draft skips second-order and floor/ceiling reflections for a fast preview." />
+                                <TextBlock
+                                    Margin="0,6,0,0"
+                                    Foreground="{DynamicResource Accent.Text}"
+                                    Style="{StaticResource Type.Caption}"
+                                    Text="{Binding RunAllProgress}"
+                                    Visibility="{Binding IsRunningAll, Converter={StaticResource BoolToVis}}" />
 
                                 <DockPanel Margin="0,16,0,0">
                                     <TextBlock
@@ -1479,6 +1613,7 @@
                 <!--  ================= RESULTS =================  -->
                 <ScrollViewer
                     x:Name="ResultsPage"
+                    Grid.Row="1"
                     ui:Motion.Reveal="True"
                     Style="{StaticResource PageScroll}"
                     Visibility="Collapsed">
@@ -1520,9 +1655,38 @@
                             </StackPanel>
                         </Border>
 
+                        <TextBlock Style="{StaticResource Type.GroupTitle}" Text="Report" />
+                        <Border Padding="0,2" Style="{StaticResource Card}">
+                            <DockPanel Style="{StaticResource SettingRow}">
+                                <Button
+                                    VerticalAlignment="Center"
+                                    Click="CreateReport_Click"
+                                    DockPanel.Dock="Right"
+                                    IsEnabled="{Binding CanEditAreas}"
+                                    Style="{StaticResource Button.Secondary}"
+                                    ToolTip="Choose areas and rooms, criteria and contents, preview and save the PDF">
+                                    <StackPanel Orientation="Horizontal">
+                                        <materialDesign:PackIcon Kind="FilePdfBox" Style="{StaticResource ButtonIconLabel}" />
+                                        <TextBlock Text="Create report…" />
+                                    </StackPanel>
+                                </Button>
+                                <StackPanel Style="{StaticResource SettingText}">
+                                    <TextBlock Style="{StaticResource Type.RowLabel}" Text="PDF report" />
+                                    <TextBlock
+                                        Style="{StaticResource Type.RowHint}"
+                                        Text="Every calculated area: plans, room results, criteria and value charts"
+                                        TextWrapping="Wrap" />
+                                </StackPanel>
+                            </DockPanel>
+                        </Border>
+
                         <StackPanel Visibility="{Binding HasResults, Converter={StaticResource BoolToVis}}">
                             <TextBlock
-                                Margin="4,0,0,0"
+                                Margin="4,12,0,0"
+                                Style="{StaticResource Type.Secondary}"
+                                Text="{Binding ActiveAreaStatus}" />
+                            <TextBlock
+                                Margin="4,2,0,0"
                                 Style="{StaticResource Type.Secondary}"
                                 Text="{Binding LastRunSummary}" />
 
@@ -1699,6 +1863,7 @@
 
                 <!--  Drag handle between the page and the plan (accent line on hover)  -->
                 <GridSplitter
+                    Grid.RowSpan="2"
                     Grid.Column="1"
                     Width="12"
                     HorizontalAlignment="Stretch"
@@ -1712,6 +1877,7 @@
                 <!--  Live plan: opaque surface with rounded corners  -->
                 <Border
                     x:Name="ViewerFrame"
+                    Grid.RowSpan="2"
                     Grid.Column="2"
                     Style="{StaticResource Surface}">
                     <ui:AcousticViewerControl

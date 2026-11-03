@@ -99,6 +99,10 @@ namespace SoundCalcs.IO
             return JsonConvert.DeserializeObject<AcousticJobOutput>(json, JsonSettings);
         }
 
+        /// <summary>Whether both files of the job are on disk.</summary>
+        public static bool Exists(string jobId) =>
+            !string.IsNullOrEmpty(jobId) && File.Exists(GetInputPath(jobId)) && File.Exists(GetOutputPath(jobId));
+
         /// <summary>The job's input and output, or nulls when either file is missing or unreadable.</summary>
         public static (AcousticJobInput Input, AcousticJobOutput Output) TryLoad(string jobId)
         {

@@ -85,7 +85,7 @@ namespace SoundCalcs.Tests
         {
             var req = Request(Area("1"), Area("2"), new ReportAreaData { AreaId = "3", AreaName = "Not calculated" });
             Assert.Equal(new[] { "1", "2" }, ReportBuilder.IncludedAreas(req).Select(a => a.AreaId));
-            req.Options.AreaIds = new List<string> { "2" };
+            req.Options.ExcludedAreaIds = new List<string> { "1" };
             req.Options.ExcludedRooms = new List<string> { ReportOptions.RoomKey("2", "Boundary – B") };
             var a = ReportBuilder.Analyse(req).Single();
             Assert.Equal("2", a.Area.AreaId);

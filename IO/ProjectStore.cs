@@ -116,9 +116,6 @@ namespace SoundCalcs.IO
             {
                 // The Room page values always carry over as the starting point
                 area.Settings = legacy.AnalysisSettings?.Clone() ?? new AnalysisSettings();
-                area.LinkSelection = legacy.LinkSelection != null ? (LinkSelection)legacy.LinkSelection.Clone() : new LinkSelection();
-                if (string.IsNullOrEmpty(area.LinkSelection.IfcFileOverride) && !string.IsNullOrEmpty(legacy.IfcFileOverride))
-                    area.LinkSelection.IfcFileOverride = legacy.IfcFileOverride;
 
                 bool mine = Same(legacy.LayoutProjectKey, projectKey) || Same(legacy.SpeakersProjectKey, projectKey);
                 bool untagged = string.IsNullOrEmpty(legacy.LayoutProjectKey) && string.IsNullOrEmpty(legacy.SpeakersProjectKey);
@@ -133,6 +130,10 @@ namespace SoundCalcs.IO
                     area.LayoutProjectName = legacy.LayoutProjectName;
                     area.SpeakersProjectKey = legacy.SpeakersProjectKey;
                     area.SpeakersProjectName = legacy.SpeakersProjectName;
+                    // The link belongs to that document too (its element id means nothing in another one)
+                    area.LinkSelection = legacy.LinkSelection != null ? (LinkSelection)legacy.LinkSelection.Clone() : new LinkSelection();
+                    if (string.IsNullOrEmpty(area.LinkSelection.IfcFileOverride) && !string.IsNullOrEmpty(legacy.IfcFileOverride))
+                        area.LinkSelection.IfcFileOverride = legacy.IfcFileOverride;
                     usedLegacy = true;
                 }
             }

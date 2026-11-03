@@ -1,5 +1,13 @@
 # Plan: PDF reports and multiple areas per project
 
+> **Status (implemented):** all phases are built. Decisions taken after the plan was written:
+> A4 portrait by default (A3 optional); default criteria editable per project; cover with project number, revision
+> and checked by; areas stored per user (and optionally in the model); English and Estonian; value charts in the
+> first report. One deviation: instead of splitting `MainViewModel` into an `AreaViewModel`, the view model shows
+> one area at a time and saves/loads it on switching (`CaptureArea` / `ApplyArea`), so the pages kept their bindings.
+> Room colours in the report are drawn per room (clipped to the room, grown to its walls), so they no longer blend
+> across partitions as they do in the viewer.
+
 Goal: export calculation results as a PDF report, and organise work the way DIALux does for
 lighting: a project holds several **areas** (rooms or zones), each with its own boundary, walls,
 speakers, settings and results, and the report dialog lets you tick the rooms to include.

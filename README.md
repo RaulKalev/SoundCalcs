@@ -24,6 +24,9 @@ A Revit plugin for room acoustics analysis. Calculates per-receiver SPL and Spee
 - **Linked IFC support** — wall boundaries can be drawn as detail lines over any linked model. *Experimental:* with a linked IFC selected, **Detect walls** rebuilds the walls from the IFC's shapes (Revit links IFC walls as plain geometry, without wall lines or widths) and, when the original `.ifc` is next to the link or chosen in the Model page, uses its exact wall axes, layer thicknesses and `Pset_WallCommon.AcousticRating`
 - **Configurable environment** — temperature, per-band RT60, per-band background noise
 - **Live legend** — always reflects the exact rendered min/max range
+- **Areas** — a project holds several areas (rooms, floors, zones), each with its own boundary, walls, speakers, Room settings and results, like the rooms of a lighting calculation. Areas are saved per Revit document, can be duplicated, run one by one or all together, and show whether their results still match their inputs
+- **PDF reports** — tick the areas and rooms to include and get a vector PDF (A4 or A3, English or Estonian): cover with project number, revision and checked by, contents, a summary of every room with pass/fail, per-area plans (dBA, STI, …) with contour lines, inputs, walls, speakers and their positions, per-room statistics (mean, min, max, spread, P10/P90), the STI distribution, a criteria check, value charts (the number at every grid point, min and max marked), each speaker's contribution at the room centre, the criteria and the calculation method. Criteria (STI min/mean, SPL variation, dBA min, signal to noise, share of points) are set per project. The room summary and every grid value can be saved as CSV too
+- **Areas in the model** — a project's areas can be stored in the Revit model, so a colleague opening it can load them
 
 ## Revit Compatibility
 
@@ -42,14 +45,18 @@ The output DLL is signed with a code-signing certificate.
 4. **Run the analysis** — the plugin computes SPL and STI at every grid point on a background thread with a live progress bar.
 5. **Switch visualization modes** — choose broadband SPL, any octave band, or STI. The heatmap updates in-place without re-running the analysis.
 6. **Read the legend** — each colour band shows the exact dB (or STI) range it covers.
+7. **Add areas** — the Area bar above the pages adds, duplicates, renames and deletes areas; every page edits the area chosen there. *Run all areas* calculates them in turn.
+8. **Create the report** — Results → *Create report…*: tick areas and rooms, choose contents, criteria and project details, check the pages in the preview and save the PDF.
 
 ## Project Structure
 
 ```
 Commands/          Revit IExternalCommand entry point
 Compute/           Pure-C# acoustic math (SPLCalculator, STICalculator, JobRunner)
-Domain/            Data models (AcousticJobInput/Output, ComputeWall, ReceiverPoint, …)
-IO/                JSON job serialisation, file logger, settings store
+Domain/            Data models (AcousticJobInput/Output, ComputeWall, ReceiverPoint, AnalysisArea, …)
+IO/                JSON job serialisation, file logger, settings store, project files (areas)
+Report/            Report content (room statistics, criteria, plan figures, EN/ET text) — Revit- and Skia-free
+Report/Pdf/        SkiaSharp painter: pages for the PDF, the dialog preview and the harness PNGs
 Revit/             Revit API helpers (data collector, dispatcher, compat shims)
 UI/                WPF panel (MainWindow, MainViewModel, converters, themes)
 Visualization/     FilledRegionRenderer — row-strip heatmap drawing

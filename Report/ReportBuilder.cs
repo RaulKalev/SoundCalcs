@@ -43,6 +43,13 @@ namespace SoundCalcs.Report
         public string ModelName { get; set; } = "";
         public string PluginVersion { get; set; } = "";
         public DateTime Date { get; set; } = DateTime.Now;
+
+        /// <summary>
+        /// Speaker contributions already computed, by job id (they take one model run per speaker). Build fills it, so
+        /// a dialog that rebuilds the report for its preview computes them once per job.
+        /// </summary>
+        public Dictionary<string, Dictionary<int, RoomContributions>> ContributionCache { get; set; } =
+            new Dictionary<string, Dictionary<int, RoomContributions>>();
     }
 
     /// <summary>The numbers behind one area's part of the report.</summary>
@@ -77,7 +84,7 @@ namespace SoundCalcs.Report
         /// <summary>The areas the options include that have results, in request order.</summary>
         public static List<ReportAreaData> IncludedAreas(ReportRequest req) =>
             req.Areas.Where(a => a.HasResults &&
-                (req.Options.AreaIds == null || req.Options.AreaIds.Count == 0 || req.Options.AreaIds.Contains(a.AreaId))).ToList();
+                (req.Options.ExcludedAreaIds == null || !req.Options.ExcludedAreaIds.Contains(a.AreaId))).ToList();
 
         /// <summary>Statistics and criteria of every included area and room (no speaker contributions: those are slow).</summary>
         public static List<AreaAnalysis> Analyse(ReportRequest req)
@@ -109,7 +116,16 @@ namespace SoundCalcs.Report
                 foreach (AreaAnalysis a in areas)
                 {
                     token.ThrowIfCancellationRequested();
-                    a.Contributions = SpeakerContributionCalculator.Compute(a.Area.Input, a.Area.Output, a.Rooms, token);
+                    string key = a.Area.Output.JobId ?? "";
+                    var cache = req.ContributionCache ?? new Dictionary<string, Dictionary<int, RoomContributions>>();
+                    if (key.Length == 0 || !cache.TryGetValue(key, out Dictionary<int, RoomContributions> c))
+                    {
+                        // Every room of the job (not only the included ones), so the cache does not depend on the selection
+                        var all = RoomStatisticsCalculator.Compute(a.Area.Input, a.Area.Output, t.OutsideRooms);
+                        c = SpeakerContributionCalculator.Compute(a.Area.Input, a.Area.Output, all, token);
+                        if (key.Length > 0) lock (cache) cache[key] = c;
+                    }
+                    a.Contributions = c;
                 }
 
             string projectTitle = FirstNonEmpty(p.ProjectName, req.ModelName, t.ReportTitle);
