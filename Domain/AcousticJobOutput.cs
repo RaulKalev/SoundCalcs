@@ -12,6 +12,12 @@ namespace SoundCalcs.Domain
         public Vec3 Position { get; set; }
 
         /// <summary>
+        /// Index into the job's rooms of the room this receiver lies in (copied from the receiver), -1 when it lies in
+        /// none or the result was written before this was recorded.
+        /// </summary>
+        public int RoomIndex { get; set; } = -1;
+
+        /// <summary>
         /// Sound Pressure Level in dB at this receiver (broadband).
         /// Derived as energy sum of per-band values.
         /// </summary>
@@ -52,6 +58,11 @@ namespace SoundCalcs.Domain
     public class AcousticJobOutput
     {
         public string JobId { get; set; } = "";
+
+        /// <summary>The project (document path, else title) and area the job was run for; empty in older files.</summary>
+        public string ProjectKey { get; set; } = "";
+        public string AreaId { get; set; } = "";
+        public string AreaName { get; set; } = "";
 
         /// <summary>
         /// UTC timestamp when the job completed.

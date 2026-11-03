@@ -53,7 +53,7 @@ namespace SoundCalcs.Compute
     {
         private const double RefDistanceM = 1.0;
         private const double MinDistanceM = 0.01;
-        private const double DefaultCeilingHeightM = 3.0;
+        public const double DefaultCeilingHeightM = 3.0;
 
         /// <summary>Speakers within this distance of the ceiling are flush-mounted: no ceiling image.</summary>
         private const double FlushMountToleranceM = 0.10;
@@ -810,6 +810,7 @@ namespace SoundCalcs.Compute
                     resultsBag.Add(new ReceiverResult
                     {
                         ReceiverIndex = receiver.Index,
+                        RoomIndex = receiver.RoomIndex,
                         Position = recvPos,
                         SplDb = totalLinear > 0 ? Math.Round(10.0 * Math.Log10(totalLinear), 2) : -100.0,
                         SplDbA = aWeightedLinear > 0 ? Math.Round(10.0 * Math.Log10(aWeightedLinear), 2) : -100.0,

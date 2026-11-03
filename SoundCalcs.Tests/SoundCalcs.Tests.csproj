@@ -47,6 +47,9 @@
     <!-- Heatmap colour mapping / grid geometry shared by the viewer and Revit renderer -->
     <Compile Include="../Visualization/HeatmapMath.cs" />
     <Compile Include="../Visualization/VisualizationMode.cs" />
+
+    <!-- Report content (statistics, builder, criteria); the Skia painter in Report/Pdf is not included here -->
+    <Compile Include="../Report/*.cs" />
   </ItemGroup>
 
 </Project>

@@ -169,6 +169,7 @@ Exit code: 0 = all checks passed (warnings allowed), 1 = a check failed, 2 = usa
             public List<CheckResult> Checks { get; set; } = new List<CheckResult>();
             public List<string> Images { get; set; } = new List<string>();
             public string Error { get; set; }
+            [JsonIgnore] public List<SoundCalcs.Report.RoomStatistics> Rooms { get; set; }
         }
 
         static ScenarioReport RunScenario(Scenario sc, ScenarioRun preRun, string outDir, bool images)
@@ -190,6 +191,8 @@ Exit code: 0 = all checks passed (warnings allowed), 1 = a check failed, 2 = usa
                 if (run != null)
                 {
                     Summarise(run, report);
+                    report.Rooms = SoundCalcs.Report.RoomStatisticsCalculator.Compute(run.Input, run.Output);
+                    ReportChecks.RoomIndices(run.Input, run.Output, ctx);
                     VisualChecks.Run(run.Input, run.Output, HeatmapMath.ViewerGridSpacing(run.Output.Results), ctx);
                 }
                 sc.Checks?.Invoke(run, ctx);
@@ -339,6 +342,22 @@ Exit code: 0 = all checks passed (warnings allowed), 1 = a check failed, 2 = usa
                     md.AppendLine($"{r.Sources} source(s), {r.Walls} wall segment(s), {r.Receivers} receivers, " +
                                   $"{r.Quality} quality, computed in {r.ComputeSeconds:F2} s. " +
                                   $"C80 range {Range(r.C80Range, "F1")} dB.");
+                    md.AppendLine();
+                }
+                if (r.Rooms != null && r.Rooms.Count > 0)
+                {
+                    md.AppendLine("| Room | Area m² | Volume m³ | Points | Speakers | SPL mean (min – max) dB | dBA mean | STI mean (min) | C80 mean | RT60 500 Hz |");
+                    md.AppendLine("|---|---:|---:|---:|---:|---|---:|---|---:|---:|");
+                    foreach (var room in r.Rooms)
+                    {
+                        var spl = room[VisualizationMode.SPL];
+                        var spla = room[VisualizationMode.SPL_A];
+                        var sti = room[VisualizationMode.STI];
+                        var c80 = room[VisualizationMode.C80];
+                        md.AppendLine($"| {Esc(room.Name)} | {room.AreaM2:F1} | {room.VolumeM3:F0} | {room.ReceiverCount} | {room.SpeakerCount} | " +
+                                      $"{spl.Mean:F1} ({spl.Min:F1} – {spl.Max:F1}) | {spla.Mean:F1} | {sti.Mean:F2} ({sti.Min:F2}) | " +
+                                      $"{c80.Mean:F1} | {room.Rt60ByBand[2]:F2}{(room.Rt60Estimated ? " (est.)" : "")} |");
+                    }
                     md.AppendLine();
                 }
                 md.AppendLine("| Status | Check | Detail |");
