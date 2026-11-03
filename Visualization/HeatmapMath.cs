@@ -37,6 +37,9 @@ namespace SoundCalcs.Visualization
         public Rgba[] Pixels { get; set; }
         public bool[] Filled { get; set; }
 
+        /// <summary>Row-major values of the receivers on each cell; NaN where <see cref="Filled"/> is false.</summary>
+        public double[] Values { get; set; }
+
         /// <summary>Receivers that landed on a pixel already taken by another receiver.</summary>
         public int Collisions { get; set; }
 
@@ -315,8 +318,10 @@ namespace SoundCalcs.Visualization
                 YMax = yMax,
                 Spacing = spacing,
                 Pixels = new Rgba[cols * rows],
-                Filled = new bool[cols * rows]
+                Filled = new bool[cols * rows],
+                Values = new double[cols * rows]
             };
+            for (int i = 0; i < grid.Values.Length; i++) grid.Values[i] = double.NaN;
 
             for (int i = 0; i < results.Count; i++)
             {
@@ -327,6 +332,7 @@ namespace SoundCalcs.Visualization
                     int idx = row * cols + col;
                     if (grid.Filled[idx]) grid.Collisions++;
                     grid.Filled[idx] = true;
+                    grid.Values[idx] = vals[i];
                     grid.Pixels[idx] = SampleGradient((vals[i] - minVal) / range);
                 }
                 else
@@ -635,6 +641,267 @@ namespace SoundCalcs.Visualization
 
                 strips[b] = merged;
             }
+        }
+
+        // -------------------------------------------------------------------
+        // Report figures: smooth bitmap, contour lines
+        // -------------------------------------------------------------------
+
+        /// <summary>
+        /// The heatmap bitmap scaled to <paramref name="width"/> × <paramref name="height"/> pixels over the grid's world
+        /// rectangle with bilinear filtering (what the viewer's SKFilterQuality.Medium does on screen), interpolating
+        /// premultiplied colours so cells next to empty ones fade out instead of darkening. Row 0 is the top (largest Y).
+        /// Colours are returned unpremultiplied.
+        /// </summary>
+        public static Rgba[] ResampleBilinear(HeatmapGrid grid, int width, int height)
+        {
+            var px = new Rgba[width * height];
+            if (grid == null || width <= 0 || height <= 0) return px;
+            for (int y = 0; y < height; y++)
+            {
+                // Texel coordinates: cell centres at integer positions, row 0 = lowest Y
+                double v = (height - y - 0.5) / height * grid.Rows - 0.5;
+                for (int x = 0; x < width; x++)
+                {
+                    double u = (x + 0.5) / width * grid.Cols - 0.5;
+                    int c0 = (int)Math.Floor(u), r0 = (int)Math.Floor(v);
+                    double fu = u - c0, fv = v - r0;
+                    double a = 0, r = 0, g = 0, b = 0;
+                    for (int k = 0; k < 4; k++)
+                    {
+                        int c = c0 + (k & 1), rr = r0 + (k >> 1);
+                        double w = ((k & 1) == 1 ? fu : 1 - fu) * ((k >> 1) == 1 ? fv : 1 - fv);
+                        if (w <= 0) continue;
+                        // Clamp to the edge like the GPU sampler does
+                        c = c < 0 ? 0 : c >= grid.Cols ? grid.Cols - 1 : c;
+                        rr = rr < 0 ? 0 : rr >= grid.Rows ? grid.Rows - 1 : rr;
+                        int idx = rr * grid.Cols + c;
+                        if (!grid.Filled[idx]) continue;
+                        Rgba p = grid.Pixels[idx];
+                        double pa = p.A / 255.0 * w;
+                        a += pa; r += p.R * pa; g += p.G * pa; b += p.B * pa;
+                    }
+                    if (a <= 1e-6) continue;
+                    px[y * width + x] = new Rgba(
+                        (byte)Math.Min(255, Math.Round(r / a)), (byte)Math.Min(255, Math.Round(g / a)),
+                        (byte)Math.Min(255, Math.Round(b / a)), (byte)Math.Min(255, Math.Round(a * 255)));
+                }
+            }
+            return px;
+        }
+
+        /// <summary>
+        /// A copy of <paramref name="grid"/> that keeps only the cells for which <paramref name="keep"/> (row-major cell
+        /// index) is true; the others are empty. Used to draw and contour each room on its own, so colours and contour
+        /// lines do not blend across the walls between rooms.
+        /// </summary>
+        public static HeatmapGrid MaskGrid(HeatmapGrid grid, Func<int, bool> keep)
+        {
+            var m = new HeatmapGrid
+            {
+                Cols = grid.Cols, Rows = grid.Rows, XMin = grid.XMin, YMin = grid.YMin, XMax = grid.XMax, YMax = grid.YMax,
+                Spacing = grid.Spacing,
+                Pixels = new Rgba[grid.Pixels.Length],
+                Filled = new bool[grid.Filled.Length],
+                Values = new double[grid.Filled.Length]
+            };
+            for (int i = 0; i < m.Filled.Length; i++)
+            {
+                bool k = grid.Filled[i] && keep(i);
+                m.Filled[i] = k;
+                m.Pixels[i] = k ? grid.Pixels[i] : default(Rgba);
+                m.Values[i] = k && grid.Values != null ? grid.Values[i] : double.NaN;
+            }
+            return m;
+        }
+
+        /// <summary>The grid with <paramref name="cells"/> empty cells added on every side (room to grow into).</summary>
+        public static HeatmapGrid Pad(HeatmapGrid grid, int cells)
+        {
+            int cols = grid.Cols + 2 * cells, rows = grid.Rows + 2 * cells;
+            var g = new HeatmapGrid
+            {
+                Cols = cols, Rows = rows, Spacing = grid.Spacing,
+                XMin = grid.XMin - cells * grid.Spacing, YMin = grid.YMin - cells * grid.Spacing,
+                XMax = grid.XMax + cells * grid.Spacing, YMax = grid.YMax + cells * grid.Spacing,
+                Pixels = new Rgba[cols * rows], Filled = new bool[cols * rows], Values = new double[cols * rows],
+                Collisions = grid.Collisions, OutOfBounds = grid.OutOfBounds
+            };
+            for (int i = 0; i < g.Values.Length; i++) g.Values[i] = double.NaN;
+            for (int r = 0; r < grid.Rows; r++)
+                for (int c = 0; c < grid.Cols; c++)
+                {
+                    int from = r * grid.Cols + c, to = (r + cells) * cols + c + cells;
+                    g.Pixels[to] = grid.Pixels[from];
+                    g.Filled[to] = grid.Filled[from];
+                    g.Values[to] = grid.Values != null ? grid.Values[from] : double.NaN;
+                }
+            return g;
+        }
+
+        /// <summary>
+        /// Grows the filled cells outward by <paramref name="steps"/> cells: each empty cell next to filled ones takes
+        /// their average colour. Clipped to a room outline afterwards, the colours then reach the walls instead of
+        /// fading out in the half cell between the last receiver and the wall. Values are not extended.
+        /// </summary>
+        public static HeatmapGrid Dilate(HeatmapGrid grid, int steps)
+        {
+            var g = MaskGrid(grid, i => true);
+            for (int step = 0; step < steps; step++)
+            {
+                var filled = (bool[])g.Filled.Clone();
+                var pixels = (Rgba[])g.Pixels.Clone();
+                for (int r = 0; r < g.Rows; r++)
+                    for (int c = 0; c < g.Cols; c++)
+                    {
+                        int idx = r * g.Cols + c;
+                        if (g.Filled[idx]) continue;
+                        int n = 0, sr = 0, sg = 0, sb = 0, sa = 0;
+                        for (int dr = -1; dr <= 1; dr++)
+                            for (int dc = -1; dc <= 1; dc++)
+                            {
+                                int rr = r + dr, cc = c + dc;
+                                if ((dr == 0 && dc == 0) || rr < 0 || cc < 0 || rr >= g.Rows || cc >= g.Cols) continue;
+                                int j = rr * g.Cols + cc;
+                                if (!g.Filled[j]) continue;
+                                Rgba p = g.Pixels[j];
+                                n++; sr += p.R; sg += p.G; sb += p.B; sa = Math.Max(sa, p.A);
+                            }
+                        if (n == 0) continue;
+                        filled[idx] = true;
+                        pixels[idx] = new Rgba((byte)(sr / n), (byte)(sg / n), (byte)(sb / n), (byte)sa);
+                    }
+                g.Filled = filled;
+                g.Pixels = pixels;
+            }
+            return g;
+        }
+
+        /// <summary>
+        /// Contour levels for a value range: the IEC 60268-16 category limits (0.30, 0.45, 0.60, 0.75) inside the range
+        /// for STI, otherwise round steps (1, 2, 3, 5, 10 ... units) giving three to seven lines.
+        /// </summary>
+        public static List<double> ContourLevels(double min, double max, VisualizationMode mode)
+        {
+            var levels = new List<double>();
+            if (!(max > min)) return levels;
+            if (mode == VisualizationMode.STI)
+            {
+                foreach (double l in new[] { 0.30, 0.45, 0.60, 0.75 })
+                    if (l > min && l < max) levels.Add(l);
+                return levels;
+            }
+            double[] steps = { 0.5, 1, 2, 3, 5, 10, 20, 50 };
+            double step = steps[steps.Length - 1];
+            foreach (double st in steps)
+            {
+                int n = (int)Math.Floor(max / st) - (int)Math.Ceiling(min / st) + 1;
+                if (n <= 7) { step = st; break; }
+            }
+            for (double l = Math.Ceiling(min / step) * step; l < max - 1e-9; l += step)
+                if (l > min + 1e-9) levels.Add(Math.Round(l, 6));
+            return levels;
+        }
+
+        /// <summary>
+        /// Contour lines of <see cref="HeatmapGrid.Values"/> at <paramref name="level"/> by marching squares over the
+        /// cells whose four corner receivers exist (no line crosses a gap in the grid). Segments are joined into
+        /// polylines in world coordinates (metres); closed contours repeat their first point at the end.
+        /// </summary>
+        public static List<List<Vec2>> Contour(HeatmapGrid grid, double level)
+        {
+            var segments = new List<(Vec2 A, Vec2 B)>();
+            if (grid?.Values == null) return new List<List<Vec2>>();
+            int cols = grid.Cols, rows = grid.Rows;
+            double sp = grid.Spacing;
+            Vec2 P(int c, int r) => new Vec2(grid.XMin + c * sp, grid.YMin + r * sp);
+            Vec2 Lerp(int c0, int r0, double v0, int c1, int r1, double v1)
+            {
+                double t = Math.Abs(v1 - v0) < 1e-12 ? 0.5 : (level - v0) / (v1 - v0);
+                t = t < 0 ? 0 : t > 1 ? 1 : t;
+                Vec2 a = P(c0, r0), b = P(c1, r1);
+                return new Vec2(a.X + (b.X - a.X) * t, a.Y + (b.Y - a.Y) * t);
+            }
+
+            for (int r = 0; r + 1 < rows; r++)
+            {
+                for (int c = 0; c + 1 < cols; c++)
+                {
+                    double v00 = grid.Values[r * cols + c], v10 = grid.Values[r * cols + c + 1];
+                    double v11 = grid.Values[(r + 1) * cols + c + 1], v01 = grid.Values[(r + 1) * cols + c];
+                    if (double.IsNaN(v00) || double.IsNaN(v10) || double.IsNaN(v11) || double.IsNaN(v01)) continue;
+                    int code = (v00 >= level ? 1 : 0) | (v10 >= level ? 2 : 0) | (v11 >= level ? 4 : 0) | (v01 >= level ? 8 : 0);
+                    if (code == 0 || code == 15) continue;
+                    // Edge crossings: bottom (00-10), right (10-11), top (01-11), left (00-01)
+                    Vec2 bottom = Lerp(c, r, v00, c + 1, r, v10);
+                    Vec2 right = Lerp(c + 1, r, v10, c + 1, r + 1, v11);
+                    Vec2 top = Lerp(c, r + 1, v01, c + 1, r + 1, v11);
+                    Vec2 left = Lerp(c, r, v00, c, r + 1, v01);
+                    bool centreHigh = (v00 + v10 + v11 + v01) * 0.25 >= level;
+                    switch (code)
+                    {
+                        case 1: case 14: segments.Add((left, bottom)); break;
+                        case 2: case 13: segments.Add((bottom, right)); break;
+                        case 3: case 12: segments.Add((left, right)); break;
+                        case 4: case 11: segments.Add((right, top)); break;
+                        case 6: case 9: segments.Add((bottom, top)); break;
+                        case 7: case 8: segments.Add((left, top)); break;
+                        case 5:   // 00 and 11 high
+                            if (centreHigh) { segments.Add((left, top)); segments.Add((bottom, right)); }
+                            else { segments.Add((left, bottom)); segments.Add((right, top)); }
+                            break;
+                        case 10:  // 10 and 01 high
+                            if (centreHigh) { segments.Add((left, bottom)); segments.Add((right, top)); }
+                            else { segments.Add((left, top)); segments.Add((bottom, right)); }
+                            break;
+                    }
+                }
+            }
+            return JoinSegments(segments, sp * 1e-6);
+        }
+
+        /// <summary>Joins segments that share end points (within <paramref name="tol"/>) into polylines.</summary>
+        public static List<List<Vec2>> JoinSegments(List<(Vec2 A, Vec2 B)> segments, double tol)
+        {
+            double q = tol > 0 ? 1.0 / tol : 1e6;
+            (long, long) Key(Vec2 p) => ((long)Math.Round(p.X * q), (long)Math.Round(p.Y * q));
+            var ends = new Dictionary<(long, long), List<int>>();
+            for (int i = 0; i < segments.Count; i++)
+            {
+                foreach (Vec2 p in new[] { segments[i].A, segments[i].B })
+                {
+                    var k = Key(p);
+                    if (!ends.TryGetValue(k, out List<int> l)) ends[k] = l = new List<int>();
+                    l.Add(i);
+                }
+            }
+            var used = new bool[segments.Count];
+            var lines = new List<List<Vec2>>();
+            for (int i = 0; i < segments.Count; i++)
+            {
+                if (used[i]) continue;
+                used[i] = true;
+                var line = new LinkedList<Vec2>();
+                line.AddLast(segments[i].A);
+                line.AddLast(segments[i].B);
+                // Grow at the end, then at the start
+                for (int pass = 0; pass < 2; pass++)
+                {
+                    while (true)
+                    {
+                        Vec2 tip = pass == 0 ? line.Last.Value : line.First.Value;
+                        int next = -1;
+                        foreach (int j in ends[Key(tip)])
+                            if (!used[j]) { next = j; break; }
+                        if (next < 0) break;
+                        used[next] = true;
+                        Vec2 other = Key(segments[next].A).Equals(Key(tip)) ? segments[next].B : segments[next].A;
+                        if (pass == 0) line.AddLast(other); else line.AddFirst(other);
+                    }
+                }
+                lines.Add(line.ToList());
+            }
+            return lines;
         }
 
         // -------------------------------------------------------------------

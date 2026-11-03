@@ -9,7 +9,7 @@ namespace SoundCalcs.UI
     public partial class AcousticViewerControl
     {
         internal SkiaSharp.Views.WPF.SKElement SkCanvas = null;
-        internal Button ClearPinsBtn = null, ProbeBtn = null, FitBtn = null, WallCardCloseBtn = null;
+        internal Button ClearPinsBtn = null, ProbeBtn = null, FitBtn = null, WallCardCloseBtn = null, ContoursBtn = null;
         internal System.Windows.Controls.Border WallCard = null;
         internal TextBlock WallCardTitle = null, WallCardSubtitle = null, WallCardType = null, WallCardStc = null,
             WallCardSurface = null, WallCardHeight = null, WallCardSegment = null, WallCardGroup = null;
@@ -19,7 +19,8 @@ namespace SoundCalcs.UI
     {
         internal AcousticViewerControl AcousticViewer = null;
         internal ListBox LinksListBox = null;
-        internal ComboBox CategoryCombo = null;
+        internal ComboBox CategoryCombo = null, AreaCombo = null;
+        internal TextBox AreaNameBox = null;
         internal Grid RootGrid = null, SpeakersPage = null;
         internal ColumnDefinition SidebarColumn = null, PageColumn = null;
         internal TextBlock DocumentTitleText = null, ThemeText = null, PageTitleText = null, PageSubtitleText = null;
@@ -27,8 +28,16 @@ namespace SoundCalcs.UI
         internal Button ThemeButton = null, MaximizeButton = null;
         internal RadioButton NavModel = null, NavSpeakers = null, NavRoom = null, NavRun = null, NavResults = null;
         internal ScrollViewer ModelPage = null, RoomPage = null, RunPage = null, ResultsPage = null;
-        internal Border ViewerFrame = null, SidebarBorder = null;
+        internal Border ViewerFrame = null, SidebarBorder = null, AreaBar = null;
         internal DockPanel TitleArea = null, StatusLine = null;
+        public void InitializeComponent() { }
+    }
+    public partial class ReportWindow
+    {
+        internal SkiaSharp.Views.WPF.SKElement PreviewCanvas = null;
+        internal CheckBox CsvCheck = null;
+        internal Button OpenButton = null;
+        internal TextBlock ExportStatus = null;
         public void InitializeComponent() { }
     }
 }

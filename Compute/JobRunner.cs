@@ -83,6 +83,9 @@ namespace SoundCalcs.Compute
                     output = new AcousticJobOutput
                     {
                         JobId = input.JobId,
+                        ProjectKey = input.ProjectKey ?? "",
+                        AreaId = input.AreaId ?? "",
+                        AreaName = input.AreaName ?? "",
                         Timestamp = DateTime.UtcNow,
                         ComputeTimeSeconds = stopwatch.Elapsed.TotalSeconds,
                         WasCanceled = true
@@ -96,6 +99,9 @@ namespace SoundCalcs.Compute
                     output = new AcousticJobOutput
                     {
                         JobId = input.JobId,
+                        ProjectKey = input.ProjectKey ?? "",
+                        AreaId = input.AreaId ?? "",
+                        AreaName = input.AreaName ?? "",
                         Timestamp = DateTime.UtcNow,
                         ComputeTimeSeconds = stopwatch.Elapsed.TotalSeconds,
                         WasCanceled = false,
@@ -131,6 +137,9 @@ namespace SoundCalcs.Compute
             var output = new AcousticJobOutput
             {
                 JobId = input.JobId,
+                ProjectKey = input.ProjectKey ?? "",
+                AreaId = input.AreaId ?? "",
+                AreaName = input.AreaName ?? "",
                 Timestamp = DateTime.UtcNow,
                 SourceCount = input.Sources.Count,
                 ReceiverCount = results.Count,

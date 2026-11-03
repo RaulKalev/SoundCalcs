@@ -41,6 +41,17 @@ namespace SoundCalcs.IO
 
         /// <summary>True when the walls came from "Detect walls" (Refresh detects them again).</summary>
         public bool WallsDetected { get; set; }
+
+        /// <summary>
+        /// True once the layout above (written before projects had areas) has become an area of a project; it is then
+        /// never copied into another project. Layouts now live in the project files (<see cref="ProjectStore"/>).
+        /// </summary>
+        public bool LegacyLayoutMigrated { get; set; }
+
+        /// <summary>Whether the layout fields hold anything (a boundary, walls or speakers).</summary>
+        [JsonIgnore]
+        public bool HasLegacyLayout =>
+            (BoundaryRooms?.Count ?? 0) > 0 || (WallGroups?.Count ?? 0) > 0 || (SavedSpeakerGroups?.Count ?? 0) > 0;
     }
 
     /// <summary>
@@ -90,6 +101,31 @@ namespace SoundCalcs.IO
     }
 
     /// <summary>
+    /// Reads a wall type back as its catalog entry (by key). Without this, Newtonsoft fills the default entry the
+    /// property starts with (its properties are read-only), and every wall type came back as the default.
+    /// </summary>
+    class WallTypeInfoConverter : JsonConverter<WallTypeInfo>
+    {
+        public override bool CanWrite => false;
+
+        public override WallTypeInfo ReadJson(JsonReader reader, Type objectType, WallTypeInfo existingValue,
+            bool hasExistingValue, JsonSerializer serializer)
+        {
+            if (reader.TokenType == JsonToken.Null) return null;
+            var jo = JObject.Load(reader);
+            string key = jo["Key"]?.Value<string>() ?? "";
+            WallTypeInfo known = WallTypeCatalog.All.Find(w => w.Key == key);
+            if (known != null) return known;
+            // Unknown key (a type removed from the catalog): the nearest rating
+            int stc = jo["StcRating"]?.Value<int>() ?? WallTypeCatalog.Default.StcRating;
+            return WallTypeCatalog.FindClosestByStc(stc);
+        }
+
+        public override void WriteJson(JsonWriter writer, WallTypeInfo value, JsonSerializer serializer) =>
+            throw new NotSupportedException();
+    }
+
+    /// <summary>
     /// Reads and writes plugin settings to a JSON file under %AppData%.
     /// Path: %AppData%\RK Tools\SoundCalcs\settings.json
     /// </summary>
@@ -101,12 +137,15 @@ namespace SoundCalcs.IO
 
         private static readonly string SettingsPath = Path.Combine(SettingsDir, "settings.json");
 
-        private static readonly JsonSerializerSettings JsonSettings = new JsonSerializerSettings
+        internal static readonly JsonSerializerSettings JsonSettings = new JsonSerializerSettings
         {
             Formatting = Formatting.Indented,
             NullValueHandling = NullValueHandling.Ignore,
             DefaultValueHandling = DefaultValueHandling.Include,
-            Converters = { new Vec2Converter(), new Vec3Converter() }
+            // Stored lists replace the defaults a property starts with (by default Newtonsoft appends to them, so a
+            // default list grew by its stored copy on every load)
+            ObjectCreationHandling = ObjectCreationHandling.Replace,
+            Converters = { new Vec2Converter(), new Vec3Converter(), new WallTypeInfoConverter() }
         };
 
         public static PluginSettings Load()

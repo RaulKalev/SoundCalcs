@@ -145,7 +145,9 @@ namespace SoundCalcs.Harness
                     Position = instances[i].Position,
                     FacingDirection = JobInputBuilder.ResolveFacing(
                         Speakers[i].Profile.ProfileSource, instances[i].FacingDirection),
-                    Profile = Speakers[i].Profile
+                    Profile = Speakers[i].Profile,
+                    ElementId = instances[i].ElementId,
+                    TypeName = SpeakerTypeName(Speakers[i])
                 });
             }
 
@@ -217,6 +219,14 @@ namespace SoundCalcs.Harness
             return new AcousticJobInput
             {
                 JobId = "harness_" + Name,
+                AreaId = Name,
+                AreaName = Name,
+                Settings = new AnalysisSettings
+                {
+                    GridSpacingM = GridSpacingM, ReceiverHeightM = ReceiverHeightM, BoundaryOffsetM = BoundaryOffsetM,
+                    Occupants = Occupants, AutoRt60PerRoom = AutoRt60PerRoom,
+                    FloorSurface = Environment.FloorSurface, CeilingSurface = Environment.CeilingSurface
+                },
                 Sources = sources,
                 Receivers = receivers,
                 Rooms = rooms,
@@ -224,6 +234,51 @@ namespace SoundCalcs.Harness
                 Quality = Quality,
                 Environment = Environment
             };
+        }
+
+        /// <summary>"Family : Type" the plugin would record for a speaker of this spec.</summary>
+        public static string SpeakerTypeName(SpeakerSpec s) =>
+            "Harness speaker : " + (string.IsNullOrEmpty(s.Profile.TypeKey) ? s.Profile.ProfileSource.ToString() : s.Profile.TypeKey);
+
+        /// <summary>The walls as the line-style groups the plugin keeps (one group per wall type / rating).</summary>
+        public List<WallLineGroup> WallGroups()
+        {
+            var segs = WallSegments();
+            return Walls.Select((w, i) => (w, seg: segs[i]))
+                .GroupBy(x => (x.w.WallType ?? "STC " + x.w.Stc) + "|" + x.w.HeightM.ToString(System.Globalization.CultureInfo.InvariantCulture))
+                .Select(g =>
+                {
+                    WallSpec w0 = g.First().w;
+                    WallTypeInfo type = w0.CatalogType() ?? WallTypeCatalog.FindClosestByStc(w0.Stc);
+                    return new WallLineGroup
+                    {
+                        LineStyleName = w0.WallType != null ? type.DisplayName : "Walls STC " + w0.Stc,
+                        WallType = type,
+                        HeightM = w0.HeightM,
+                        SegmentCount = g.Count(),
+                        TotalLengthM = g.Sum(x => x.seg.Length),
+                        Segments = g.Select(x => x.seg).ToList()
+                    };
+                }).ToList();
+        }
+
+        /// <summary>The speakers as the type groups the plugin keeps.</summary>
+        public List<SpeakerTypeGroup> SpeakerGroups()
+        {
+            return Speakers.Select((s, i) => (s, i)).GroupBy(x => SpeakerTypeName(x.s)).Select(g => new SpeakerTypeGroup
+            {
+                TypeKey = g.First().s.Profile.TypeKey,
+                FamilyName = "Harness speaker",
+                TypeName = g.Key.Substring("Harness speaker : ".Length),
+                Mapping = g.First().s.Profile,
+                Instances = g.Select(x => new SpeakerInstance
+                {
+                    ElementId = 1000 + x.i, TypeKey = x.s.Profile.TypeKey,
+                    Position = new Vec3(x.s.X, x.s.Y, LevelElevationM + x.s.HeightM),
+                    FacingDirection = new Vec3(x.s.FacingX, x.s.FacingY, 0),
+                    LevelName = "Level 1", LevelElevationM = LevelElevationM, ElevationFromLevelM = x.s.HeightM
+                }).ToList()
+            }).ToList();
         }
 
         // ---------------------------------------------------------------

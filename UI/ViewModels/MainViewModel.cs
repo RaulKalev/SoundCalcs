@@ -43,61 +43,19 @@ namespace SoundCalcs.UI.ViewModels
             _undoTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(15) };
             _undoTimer.Tick += (s, e) => ClearUndo();
 
-            // Load persisted settings
-            PluginSettings settings = SettingsStore.Load();
-            _layoutProjectKey = settings.LayoutProjectKey;
-            _layoutProjectName = settings.LayoutProjectName;
-            _speakersProjectKey = settings.SpeakersProjectKey;
-            _speakersProjectName = settings.SpeakersProjectName;
-            _selectedLink = settings.LinkSelection;
-            GridSpacing = settings.AnalysisSettings.GridSpacingM;
-            ReceiverHeight = settings.AnalysisSettings.ReceiverHeightM;
-            BoundaryOffset = settings.AnalysisSettings.BoundaryOffsetM;
-            _speakerCategoryName = settings.AnalysisSettings.SpeakerCategoryName;
-            UseMinSplThreshold = settings.AnalysisSettings.UseMinSplThreshold;
-            MinSplThreshold = settings.AnalysisSettings.MinSplThresholdDb;
-            AbLineParameterName = settings.AnalysisSettings.AbLineParameterName ?? "";
-            LoadOctaveBandSettings(settings.AnalysisSettings);
-            _savedMappings = settings.SpeakerMappings;
-
-            // Restore saved speaker groups (instances + mappings)
-            if (settings.SavedSpeakerGroups != null && settings.SavedSpeakerGroups.Count > 0)
-            {
-                foreach (var grp in settings.SavedSpeakerGroups)
-                {
-                    var vm = new SpeakerGroupViewModel(grp);
-                    // Prefer the mapping embedded in the group; fall back to legacy SpeakerMappings list
-                    SpeakerProfileMapping legacy = _savedMappings
-                        .FirstOrDefault(m => m.TypeKey == grp.TypeKey);
-                    if (legacy != null) vm.ApplyMapping(legacy);
-                    _speakerGroups.Add(vm);
-                    foreach (var inst in grp.Instances)
-                        if (!_pickedSpeakerIds.Contains(inst.ElementId))
-                            _pickedSpeakerIds.Add(inst.ElementId);
-                }
-                OnPropertyChanged(nameof(PickedSpeakerSummary));
-            }
-
-            // Restore saved wall groups — normalise WallType to catalog reference so ComboBox binding works
-            foreach (var grp in settings.WallGroups)
-            {
-                grp.WallType = WallTypeCatalog.FindByKey(grp.WallType?.Key ?? "");
-                WallLineGroups.Add(new WallLineGroupViewModel(grp));
-            }
-            foreach (var room in settings.BoundaryRooms)
-                DetectedRooms.Add(room);
-            _boundaryLineIds = settings.BoundaryLineIds ?? new List<int>();
-            _wallsDetected = settings.WallsDetected;
-            if (string.IsNullOrEmpty(_selectedLink.IfcFileOverride) && !string.IsNullOrEmpty(settings.IfcFileOverride))
-                _selectedLink.IfcFileOverride = settings.IfcFileOverride;   // written by the first IFC version
+            // User-wide settings (speaker category, A/B parameter, the speaker type library); the layout and Room
+            // page values live in the project's areas.
+            _userSettings = SettingsStore.Load();
+            _speakerCategoryName = _userSettings.AnalysisSettings.SpeakerCategoryName;
+            AbLineParameterName = _userSettings.AnalysisSettings.AbLineParameterName ?? "";
+            _savedMappings = _userSettings.SpeakerMappings ?? new List<SpeakerProfileMapping>();
 
             // Every change is saved shortly after it is made; the checklist follows the inputs.
             _speakerGroups.CollectionChanged += OnInputCollectionChanged;
             _wallLineGroups.CollectionChanged += OnInputCollectionChanged;
             _detectedRooms.CollectionChanged += OnInputCollectionChanged;
-            foreach (var g in _speakerGroups) g.PropertyChanged += OnRowChanged;
-            foreach (var w in _wallLineGroups) w.PropertyChanged += OnRowChanged;
-            SelectedSpeakerGroup = _speakerGroups.FirstOrDefault();
+
+            LoadProjectForCurrentDocument();
 
             _loading = false;
             PreloadIfcFile();
@@ -168,6 +126,541 @@ namespace SoundCalcs.UI.ViewModels
 
         // A speaker or wall row was edited in a table.
         private void OnRowChanged(object sender, PropertyChangedEventArgs e) => ScheduleSave();
+
+        // ========================= PROJECT AND AREAS =========================
+
+        private PluginSettings _userSettings;
+        private SoundCalcsProject _project;
+
+        /// <summary>The open project (the active Revit document's SoundCalcs data).</summary>
+        public SoundCalcsProject Project => _project;
+
+        /// <summary>Name of the project's document, shown in the title area.</summary>
+        public string ProjectName => _project?.ProjectName ?? "";
+
+        public ObservableCollection<AreaItem> Areas { get; } = new ObservableCollection<AreaItem>();
+
+        private AreaItem _selectedAreaItem;
+        /// <summary>The area the pages edit; choosing another one saves this one and loads that one.</summary>
+        public AreaItem SelectedAreaItem
+        {
+            get => _selectedAreaItem;
+            set
+            {
+                if (value == null || ReferenceEquals(value, _selectedAreaItem)) return;
+                if (!SwitchArea(value.Id))
+                {
+                    // Refused (a run is going): keep showing the active area
+                    OnPropertyChanged(nameof(SelectedAreaItem));
+                    return;
+                }
+            }
+        }
+
+        /// <summary>Areas can be switched, added and deleted while nothing is being calculated.</summary>
+        public bool CanEditAreas => !_isRunning && _runQueue == null;
+
+        public bool CanDeleteArea => CanEditAreas && Areas.Count > 1;
+
+        /// <summary>More than one area (Run all areas is offered).</summary>
+        public bool HasSeveralAreas => Areas.Count > 1;
+
+        /// <summary>The active area's name (renaming it from the Areas bar).</summary>
+        public string ActiveAreaName
+        {
+            get => _project?.ActiveArea?.Name ?? "";
+            set
+            {
+                AnalysisArea a = _project?.ActiveArea;
+                string name = (value ?? "").Trim();
+                if (a == null || name.Length == 0 || name == a.Name) return;
+                a.Name = name;
+                OnPropertyChanged(nameof(ActiveAreaName));
+                SaveSettingsCore();
+            }
+        }
+
+        public string ActiveAreaNotes
+        {
+            get => _project?.ActiveArea?.Notes ?? "";
+            set
+            {
+                AnalysisArea a = _project?.ActiveArea;
+                if (a == null || (value ?? "") == a.Notes) return;
+                a.Notes = value ?? "";
+                OnPropertyChanged(nameof(ActiveAreaNotes));
+                ScheduleSave();
+            }
+        }
+
+        /// <summary>Loads (or creates) the project of the active document and shows its active area.</summary>
+        // The Revit document the open project belongs to (to recognise it after Save As)
+        private Document _projectDocument;
+
+        private void LoadProjectForCurrentDocument()
+        {
+            _projectDocument = _uiApp?.ActiveUIDocument?.Document;
+            CurrentProject(out string key, out string name);
+            _project = ProjectStore.LoadOrCreate(key, name, _userSettings, out bool usedLegacy);
+            if (string.IsNullOrEmpty(_project.ProjectName)) _project.ProjectName = name;
+            if (usedLegacy)
+            {
+                // The old single layout now lives in this project; never copy it into another one
+                _userSettings.LegacyLayoutMigrated = true;
+                SettingsStore.Save(_userSettings);
+                ProjectStore.Save(_project);
+                FileLogger.Log($"Layout from settings.json moved into project '{name}' as '{_project.ActiveArea.Name}'.");
+            }
+            ApplyArea(_project.ActiveArea);
+            RefreshAreaItems();
+            OnPropertyChanged(nameof(ProjectName));
+        }
+
+        /// <summary>
+        /// When Revit's active document is another project, saves this one and opens that one. A document saved for the
+        /// first time (its key changes from its title to its path) keeps its project.
+        /// </summary>
+        public void CheckActiveDocument()
+        {
+            if (_project == null || _isRunning || _runQueue != null) return;
+            CurrentProject(out string key, out string name);
+            if (string.IsNullOrEmpty(key) || string.Equals(key, _project.ProjectKey, StringComparison.OrdinalIgnoreCase)) return;
+
+            FlushPendingSave();
+            SaveSettingsCore();
+            string oldKey = _project.ProjectKey;
+
+            // The same document under a new path (first save, or Save As): the areas go with it. The file it was
+            // before keeps its own copy, except an unsaved document's (its key was only a title).
+            Document doc = _uiApp?.ActiveUIDocument?.Document;
+            bool sameDocument = doc != null && _projectDocument != null && doc.Equals(_projectDocument);
+            if (sameDocument && ProjectStore.Load(key) == null)
+            {
+                _project.ProjectKey = key;
+                _project.ProjectName = name;
+                ProjectStore.Save(_project);
+                if (!string.IsNullOrEmpty(oldKey) && oldKey.IndexOfAny(new[] { '\\', '/' }) < 0)
+                    try { System.IO.File.Delete(ProjectStore.PathFor(oldKey)); } catch { }
+                OnPropertyChanged(nameof(ProjectName));
+                return;
+            }
+            ClearUndo();
+            LoadProjectForCurrentDocument();
+            StatusMessage = $"Project '{name}': area '{_project.ActiveArea.Name}'.";
+        }
+
+        /// <summary>Keeps the Areas list in step with the project (names and result status), selecting the active area.</summary>
+        private void RefreshAreaItems()
+        {
+            if (_project == null) return;
+            var byId = Areas.ToDictionary(a => a.Id);
+            var wanted = _project.Areas.Select(a => byId.TryGetValue(a.Id, out AreaItem item) ? item : new AreaItem(a.Id)).ToList();
+            for (int i = 0; i < wanted.Count; i++)
+            {
+                if (i < Areas.Count && ReferenceEquals(Areas[i], wanted[i])) continue;
+                if (Areas.Contains(wanted[i])) Areas.Remove(wanted[i]);
+                Areas.Insert(i, wanted[i]);
+            }
+            while (Areas.Count > wanted.Count) Areas.RemoveAt(Areas.Count - 1);
+            foreach (AreaItem item in Areas)
+            {
+                AnalysisArea a = _project.Find(item.Id);
+                item.Update(a, a != null && JobSerializer.Exists(a.LastJobId));
+            }
+            _selectedAreaItem = Areas.FirstOrDefault(a => a.Id == _project.ActiveArea.Id);
+            OnPropertyChanged(nameof(SelectedAreaItem));
+            OnPropertyChanged(nameof(CanDeleteArea));
+            OnPropertyChanged(nameof(HasSeveralAreas));
+            OnPropertyChanged(nameof(ActiveAreaName));
+            OnPropertyChanged(nameof(ActiveAreaNotes));
+            OnPropertyChanged(nameof(ActiveAreaStatus));
+        }
+
+        /// <summary>One line about the active area's results, for the Run and Results pages.</summary>
+        public string ActiveAreaStatus => Areas.FirstOrDefault(a => a.Id == _project?.ActiveArea?.Id)?.StatusText ?? "";
+
+        /// <summary>Saves the active area and shows another one. False when a calculation is running.</summary>
+        public bool SwitchArea(string id) => SwitchArea(id, false);
+
+        private bool SwitchArea(string id, bool duringRunAll)
+        {
+            if (_project == null) return false;
+            AnalysisArea target = _project.Find(id);
+            if (target == null) return false;
+            if (target.Id == _project.ActiveArea.Id) return true;
+            if (_isRunning || (_runQueue != null && !duringRunAll))
+            {
+                StatusMessage = "Areas can be switched when the calculation has finished.";
+                return false;
+            }
+            _saveTimer.Stop();
+            SaveSettingsCore();
+            ClearUndo();
+            _project.ActiveAreaId = target.Id;
+            ApplyArea(target);
+            ProjectStore.Save(_project);
+            RefreshAreaItems();
+            if (!duringRunAll) StatusMessage = $"Area '{target.Name}'.";
+            return true;
+        }
+
+        /// <summary>A new empty area with the active area's link and Room page values, made active.</summary>
+        public void AddArea()
+        {
+            if (_project == null || !CanEditAreas) return;
+            SaveSettingsCore();
+            var area = new AnalysisArea
+            {
+                Name = _project.NextAreaName(),
+                LinkSelection = SelectedLink != null ? (LinkSelection)SelectedLink.Clone() : new LinkSelection(),
+                Settings = BuildAreaSettings()
+            };
+            _project.Areas.Add(area);
+            SwitchArea(area.Id);
+            StatusMessage = $"Area '{area.Name}' added. Select its boundary and speakers.";
+        }
+
+        /// <summary>A copy of the active area (layout, speakers and settings; not its results), made active.</summary>
+        public void DuplicateArea()
+        {
+            if (_project == null || !CanEditAreas) return;
+            SaveSettingsCore();
+            AnalysisArea source = _project.ActiveArea;
+            AnalysisArea copy = source.CloneAsNew(source.Name + " (copy)");
+            _project.Areas.Insert(_project.Areas.IndexOf(source) + 1, copy);
+            SwitchArea(copy.Id);
+            StatusMessage = $"Area '{source.Name}' duplicated.";
+        }
+
+        /// <summary>Deletes the active area (never the last one); Undo brings it back.</summary>
+        public void DeleteArea()
+        {
+            if (_project == null || !CanDeleteArea) return;
+            SaveSettingsCore();
+            AnalysisArea area = _project.ActiveArea;
+            int index = _project.Areas.IndexOf(area);
+            AnalysisArea next = _project.Areas[index + 1 < _project.Areas.Count ? index + 1 : index - 1];
+            _project.Areas.Remove(area);
+            _project.ActiveAreaId = next.Id;
+            ApplyArea(next);
+            ProjectStore.Save(_project);
+            RefreshAreaItems();
+            OfferUndo($"Area '{area.Name}' deleted.", "Undo", () =>
+            {
+                SaveSettingsCore();
+                _project.Areas.Insert(Math.Min(index, _project.Areas.Count), area);
+                _project.ActiveAreaId = area.Id;
+                ApplyArea(area);
+                ProjectStore.Save(_project);
+                RefreshAreaItems();
+                StatusMessage = $"Area '{area.Name}' restored.";
+            });
+        }
+
+        /// <summary>The Room page values as stored with an area.</summary>
+        private AnalysisSettings BuildAreaSettings() => new AnalysisSettings
+        {
+            GridSpacingM = GridSpacing,
+            ReceiverHeightM = ReceiverHeight,
+            BoundaryOffsetM = BoundaryOffset,
+            SpeakerCategoryName = SpeakerCategoryName,
+            UseMinSplThreshold = UseMinSplThreshold,
+            MinSplThresholdDb = MinSplThreshold,
+            BackgroundNoiseDb = BackgroundNoiseDb,
+            RT60ByBand = GetRT60Array(),
+            BackgroundNoiseByBand = GetNoiseArray(),
+            AbLineParameterName = AbLineParameterName,
+            RelativeHumidityPct = Humidity,
+            Occupants = Occupants,
+            AutoRt60PerRoom = AutoRt60PerRoom,
+            FloorSurface = FloorSurface.Preset,
+            CeilingSurface = CeilingSurface.Preset
+        };
+
+        /// <summary>Writes what the pages show into <paramref name="area"/> (its name, notes and results stay).</summary>
+        private void CaptureArea(AnalysisArea area)
+        {
+            if (area == null) return;
+            area.LinkSelection = SelectedLink ?? new LinkSelection();
+            area.Settings = BuildAreaSettings();
+            area.WallGroups = WallLineGroups.Select(vm => vm.GetGroup()).ToList();
+            area.BoundaryRooms = DetectedRooms.ToList();
+            area.BoundaryLineIds = _boundaryLineIds.ToList();
+            area.WallsDetected = _wallsDetected;
+            foreach (SpeakerGroupViewModel g in SpeakerGroups) g.GetMapping();   // stamps the type key on the mapping
+            area.SpeakerGroups = SpeakerGroups.Select(vm => vm.GetGroup()).ToList();
+            area.SpeakerLineFilter = _speakerLineFilter;
+            area.LayoutProjectKey = _layoutProjectKey;
+            area.LayoutProjectName = _layoutProjectName;
+            area.SpeakersProjectKey = _speakersProjectKey;
+            area.SpeakersProjectName = _speakersProjectName;
+        }
+
+        /// <summary>Shows <paramref name="area"/> on the pages (a copy: editing never touches the stored area directly).</summary>
+        private void ApplyArea(AnalysisArea area)
+        {
+            AnalysisArea a = area.DeepCopy();
+            bool wasLoading = _loading;
+            _loading = true;
+            try
+            {
+                _layoutProjectKey = a.LayoutProjectKey;
+                _layoutProjectName = a.LayoutProjectName;
+                _speakersProjectKey = a.SpeakersProjectKey;
+                _speakersProjectName = a.SpeakersProjectName;
+                SelectedLink = a.LinkSelection ?? new LinkSelection();
+
+                AnalysisSettings st = a.Settings ?? new AnalysisSettings();
+                GridSpacing = st.GridSpacingM;
+                ReceiverHeight = st.ReceiverHeightM;
+                BoundaryOffset = st.BoundaryOffsetM;
+                UseMinSplThreshold = st.UseMinSplThreshold;
+                MinSplThreshold = st.MinSplThresholdDb;
+                BackgroundNoiseDb = st.BackgroundNoiseDb;
+                LoadOctaveBandSettings(st);
+                SpeakerLineFilter = a.SpeakerLineFilter;
+
+                _unsavedAims.Clear();
+                SpeakerGroups.Clear();
+                _pickedSpeakerIds.Clear();
+                foreach (SpeakerTypeGroup grp in a.SpeakerGroups)
+                {
+                    // Settings written before groups carried their mapping: take the type's from the library
+                    if (grp.Mapping == null)
+                        grp.Mapping = _savedMappings.FirstOrDefault(m => m.TypeKey == grp.TypeKey)?.Clone() ?? new SpeakerProfileMapping { TypeKey = grp.TypeKey };
+                    SpeakerGroups.Add(new SpeakerGroupViewModel(grp));
+                    foreach (SpeakerInstance inst in grp.Instances)
+                        if (!_pickedSpeakerIds.Contains(inst.ElementId)) _pickedSpeakerIds.Add(inst.ElementId);
+                }
+                SelectedSpeakerGroup = SpeakerGroups.FirstOrDefault();
+                OnPropertyChanged(nameof(PickedSpeakerSummary));
+
+                WallLineGroups.Clear();
+                foreach (WallLineGroup grp in a.WallGroups)
+                {
+                    grp.WallType = WallTypeCatalog.FindByKey(grp.WallType?.Key ?? "");
+                    WallLineGroups.Add(new WallLineGroupViewModel(grp));
+                }
+                DetectedRooms.Clear();
+                foreach (RoomPolygon room in a.BoundaryRooms) DetectedRooms.Add(room);
+                _boundaryLineIds = a.BoundaryLineIds ?? new List<int>();
+                _wallsDetected = a.WallsDetected;
+
+                // The area's last results, if their files are still there
+                var (_, output) = JobSerializer.TryLoad(area.LastJobId);
+                LastOutput = output;
+                LastRunSummary = output == null ? "" : RunSummary(output);
+            }
+            finally
+            {
+                _loading = wasLoading;
+            }
+            if (!_loading)
+            {
+                ValidateStoredValues();
+                PreloadIfcFile();
+                RefreshPreflight();
+            }
+            OnPropertyChanged(nameof(ActiveAreaName));
+            OnPropertyChanged(nameof(ActiveAreaNotes));
+        }
+
+        private static string RunSummary(AcousticJobOutput output) =>
+            $"{output.ReceiverCount} points | {output.Quality} | " +
+            $"SPL: {output.MinSplDb:F1}–{output.MaxSplDb:F1} dB | dBA: {output.MinSplDbA:F1}–{output.MaxSplDbA:F1} | " +
+            $"STI: {output.MinSti:F2}–{output.MaxSti:F2} | C80 avg: {output.AvgC80Db:F1} dB | D50 avg: {output.AvgD50:F2} | " +
+            $"Time: {output.ComputeTimeSeconds:F1}s";
+
+        // ---- Run all areas ----
+
+        private Queue<string> _runQueue;
+        private string _runAllReturnId;
+        private CalculationQuality _runAllQuality;
+        private int _runAllTotal, _runAllDone;
+        private readonly List<string> _runAllSkipped = new List<string>();
+        private string _runningAreaId, _runningFingerprint;
+
+        /// <summary>"Area 2 of 5" while every area is being calculated; empty otherwise.</summary>
+        public string RunAllProgress => _runQueue == null ? "" : $"Area {_runAllDone + 1} of {_runAllTotal}";
+
+        public bool IsRunningAll => _runQueue != null;
+
+        /// <summary>Calculates every area in turn (areas that cannot run are skipped), then returns to the active one.</summary>
+        public void RunAllAreas(CalculationQuality quality) =>
+            RunAreas(_project?.Areas.Select(a => a.Id) ?? Enumerable.Empty<string>(), quality);
+
+        /// <summary>Calculates the given areas in project order (the report dialog's "Calculate").</summary>
+        public void RunAreas(IEnumerable<string> areaIds, CalculationQuality quality)
+        {
+            if (_project == null || _isRunning || _runQueue != null) return;
+            var wanted = new HashSet<string>(areaIds);
+            if (wanted.Count == 0) return;
+            SaveSettingsCore();
+            _runQueue = new Queue<string>(_project.Areas.Where(a => wanted.Contains(a.Id)).Select(a => a.Id));
+            _runAllReturnId = _project.ActiveArea.Id;
+            _runAllQuality = quality;
+            _runAllTotal = _runQueue.Count;
+            _runAllDone = 0;
+            _runAllSkipped.Clear();
+            OnPropertyChanged(nameof(IsRunningAll));
+            OnPropertyChanged(nameof(CanEditAreas));
+            OnPropertyChanged(nameof(CanDeleteArea));
+            RunNextQueuedArea();
+        }
+
+        private void RunNextQueuedArea()
+        {
+            while (_runQueue != null && _runQueue.Count > 0)
+            {
+                AnalysisArea area = _project.Find(_runQueue.Dequeue());
+                if (area == null) { _runAllDone++; continue; }
+                SwitchArea(area.Id, true);
+                OnPropertyChanged(nameof(RunAllProgress));
+                RefreshPreflight();
+                if (_runBlockedReason == null) StartJob(_runAllQuality);
+                if (_isRunning) return;
+                _runAllSkipped.Add($"{area.Name} ({_runBlockedReason ?? "could not start"})");
+                _runAllDone++;
+            }
+            FinishRunAll(false);
+        }
+
+        private void FinishRunAll(bool canceled)
+        {
+            if (_runQueue == null) return;
+            int done = _runAllDone - _runAllSkipped.Count;
+            _runQueue = null;
+            OnPropertyChanged(nameof(IsRunningAll));
+            OnPropertyChanged(nameof(RunAllProgress));
+            OnPropertyChanged(nameof(CanEditAreas));
+            OnPropertyChanged(nameof(CanDeleteArea));
+            if (_runAllReturnId != null) SwitchArea(_runAllReturnId, false);
+            string msg = canceled ? $"Calculation canceled after {done} area(s)." : $"Areas calculated: {done} of {_runAllTotal}.";
+            if (_runAllSkipped.Count > 0) msg += " Skipped: " + string.Join("; ", _runAllSkipped) + ".";
+            StatusMessage = msg;
+        }
+
+        /// <summary>
+        /// The project's areas as the report sees them: each area's last job (input and output read from the job files),
+        /// its walls and speakers and whether its results are current.
+        /// </summary>
+        public List<Report.ReportAreaData> BuildReportAreas()
+        {
+            var list = new List<Report.ReportAreaData>();
+            if (_project == null) return list;
+            SaveSettingsCore();
+            foreach (AnalysisArea a in _project.Areas)
+            {
+                var (input, output) = JobSerializer.TryLoad(a.LastJobId);
+                list.Add(new Report.ReportAreaData
+                {
+                    AreaId = a.Id,
+                    AreaName = a.Name,
+                    Notes = a.Notes,
+                    LevelName = a.SpeakerGroups.SelectMany(g => g.Instances).Select(i => i.LevelName).FirstOrDefault(n => !string.IsNullOrEmpty(n)) ?? "",
+                    Input = input,
+                    Output = output,
+                    WallGroups = a.WallGroups,
+                    SpeakerGroups = a.SpeakerGroups,
+                    Status = input == null || output == null ? Report.AreaResultStatus.NotCalculated : a.ResultStatus
+                });
+            }
+            return list;
+        }
+
+        // ---- Areas in the Revit model ----
+
+        /// <summary>Stores a copy of the project's areas and report settings in the model (Revit transaction).</summary>
+        public void StoreAreasInModel()
+        {
+            if (_project == null) return;
+            SaveSettingsCore();
+            string json = ProjectStore.Serialize(_project);
+            int count = _project.Areas.Count;
+            StatusMessage = "Storing the areas in the model...";
+            _dispatcher.Enqueue(uiApp =>
+            {
+                Document doc = uiApp.ActiveUIDocument?.Document;
+                if (doc == null) { SetStatusFromRevitThread("No active document."); return; }
+                try
+                {
+                    bool ok = ProjectModelStorage.Write(doc, json, out string error);
+                    SetStatusFromRevitThread(ok
+                        ? $"{count} area(s) stored in '{doc.Title}'. Save the model (and synchronise) so others get them; results stay on this computer."
+                        : $"The areas could not be stored: {error}.");
+                }
+                catch (Exception ex)
+                {
+                    FileLogger.Log($"Storing areas in the model failed: {ex}");
+                    SetStatusFromRevitThread($"The areas could not be stored: {ex.Message}");
+                }
+            });
+        }
+
+        /// <summary>Replaces the project's areas with the copy stored in the model (Undo brings the current ones back).</summary>
+        public void LoadAreasFromModel()
+        {
+            if (_project == null || !CanEditAreas) return;
+            StatusMessage = "Reading the areas stored in the model...";
+            _dispatcher.Enqueue(uiApp =>
+            {
+                Document doc = uiApp.ActiveUIDocument?.Document;
+                if (doc == null) { SetStatusFromRevitThread("No active document."); return; }
+                try
+                {
+                    var stored = ProjectModelStorage.Read(doc);
+                    _uiDispatcher?.Invoke(() => ApplyStoredProject(stored?.Json, stored?.SavedUtc, stored?.SavedBy));
+                }
+                catch (Exception ex)
+                {
+                    FileLogger.Log($"Reading areas from the model failed: {ex}");
+                    SetStatusFromRevitThread($"The areas could not be read: {ex.Message}");
+                }
+            });
+        }
+
+        private void ApplyStoredProject(string json, string savedUtc, string savedBy)
+        {
+            if (string.IsNullOrWhiteSpace(json)) { StatusMessage = "This model has no stored areas. Use Store in model first."; return; }
+            if (!CanEditAreas) { StatusMessage = "Areas can be loaded when the calculation has finished."; return; }
+            SoundCalcsProject stored;
+            try { stored = ProjectStore.Deserialize(json); }
+            catch (Exception ex) { StatusMessage = $"The stored areas could not be read: {ex.Message}"; return; }
+            if (stored == null) { StatusMessage = "The stored areas could not be read."; return; }
+            stored.Normalise();
+
+            SaveSettingsCore();
+            string before = ProjectStore.Serialize(_project);
+            // The copy belongs to this document now (whatever path it was stored from)
+            stored.ProjectKey = _project.ProjectKey;
+            stored.ProjectName = _project.ProjectName;
+            ReplaceProject(stored);
+            string when = DateTime.TryParse(savedUtc, null, System.Globalization.DateTimeStyles.RoundtripKind, out DateTime t)
+                ? t.ToLocalTime().ToString("d MMM yyyy HH:mm") : "";
+            OfferUndo($"{stored.Areas.Count} area(s) loaded from the model" +
+                (when.Length > 0 ? $" (stored {when}{(string.IsNullOrEmpty(savedBy) ? "" : " by " + savedBy)})" : "") + ".", "Undo", () =>
+            {
+                SoundCalcsProject previous = ProjectStore.Deserialize(before);
+                previous.Normalise();
+                ReplaceProject(previous);
+                StatusMessage = "The previous areas are back.";
+            });
+        }
+
+        private void ReplaceProject(SoundCalcsProject project)
+        {
+            _project = project;
+            ApplyArea(_project.ActiveArea);
+            ProjectStore.Save(_project);
+            RefreshAreaItems();
+            OnPropertyChanged(nameof(Project));
+        }
+
+        /// <summary>Saves the project after the report dialog changed its report settings.</summary>
+        public void SaveProject()
+        {
+            if (_project != null) ProjectStore.Save(_project);
+        }
 
         // ========================= PROJECT ORIGIN =========================
 
@@ -1315,7 +1808,14 @@ namespace SoundCalcs.UI.ViewModels
         public bool IsRunning
         {
             get => _isRunning;
-            set { _isRunning = value; OnPropertyChanged(nameof(IsRunning)); OnPropertyChanged(nameof(CanRun)); }
+            set
+            {
+                _isRunning = value;
+                OnPropertyChanged(nameof(IsRunning));
+                OnPropertyChanged(nameof(CanRun));
+                OnPropertyChanged(nameof(CanEditAreas));
+                OnPropertyChanged(nameof(CanDeleteArea));
+            }
         }
 
         /// <summary>Run is possible when nothing is running and the checklist has no blocker (see <see cref="RunBlockedReason"/>).</summary>
@@ -1589,42 +2089,24 @@ namespace SoundCalcs.UI.ViewModels
 
         void SaveSettingsCore(bool updateStatus = false)
         {
-            var settings = new PluginSettings
+            // The active area (layout, speakers, Room page values) goes to the project file
+            if (_project != null)
             {
-                LinkSelection = SelectedLink,
-                AnalysisSettings = new AnalysisSettings
-                {
-                    GridSpacingM = GridSpacing,
-                    ReceiverHeightM = ReceiverHeight,
-                    BoundaryOffsetM = BoundaryOffset,
-                    SpeakerCategoryName = SpeakerCategoryName,
-                    UseMinSplThreshold = UseMinSplThreshold,
-                    MinSplThresholdDb = MinSplThreshold,
-                    BackgroundNoiseDb = BackgroundNoiseDb,
-                    RT60ByBand = GetRT60Array(),
-                    BackgroundNoiseByBand = GetNoiseArray(),
-                    AbLineParameterName = AbLineParameterName,
-                    RelativeHumidityPct = Humidity,
-                    Occupants = Occupants,
-                    AutoRt60PerRoom = AutoRt60PerRoom,
-                    FloorSurface = FloorSurface.Preset,
-                    CeilingSurface = CeilingSurface.Preset
-                },
-                // Every type's settings, also of types not in the list now
-                SpeakerMappings    = SpeakerGroups.Select(g => g.GetMapping())
-                    .Concat(_savedMappings.Where(m => SpeakerGroups.All(g => g.TypeKey != m.TypeKey))).ToList(),
-                WallGroups         = WallLineGroups.Select(vm => vm.GetGroup()).ToList(),
-                BoundaryRooms      = DetectedRooms.ToList(),
-                SavedSpeakerGroups = SpeakerGroups.Select(vm => vm.GetGroup()).ToList(),
-                LayoutProjectKey    = _layoutProjectKey,
-                LayoutProjectName   = _layoutProjectName,
-                SpeakersProjectKey  = _speakersProjectKey,
-                SpeakersProjectName = _speakersProjectName,
-                BoundaryLineIds     = _boundaryLineIds.ToList(),
-                WallsDetected       = _wallsDetected
-            };
+                CaptureArea(_project.ActiveArea);
+                ProjectStore.Save(_project);
+            }
 
-            SettingsStore.Save(settings);
+            // User-wide: the speaker category, A/B parameter and every speaker type's settings (also of types not in
+            // the list now). The Room page values are kept as the starting point of new projects.
+            AnalysisSettings user = BuildAreaSettings();
+            user.SpeakerCategoryName = SpeakerCategoryName;
+            user.AbLineParameterName = AbLineParameterName;
+            _userSettings.AnalysisSettings = user;
+            _userSettings.SpeakerMappings = SpeakerGroups.Select(g => g.GetMapping())
+                .Concat(_savedMappings.Where(m => SpeakerGroups.All(g => g.TypeKey != m.TypeKey))).ToList();
+            SettingsStore.Save(_userSettings);
+
+            RefreshAreaItems();
             if (updateStatus) StatusMessage = "Settings saved.";
         }
 
@@ -1736,7 +2218,9 @@ namespace SoundCalcs.UI.ViewModels
                         {
                             Position = inst.Position,
                             FacingDirection = facing,
-                            Profile = mapping
+                            Profile = mapping,
+                            ElementId = inst.ElementId,
+                            TypeName = gvm.DisplayName
                         });
                         FileLogger.Log($"Source: Id={inst.ElementId}, Pos={inst.Position}, " +
                             $"Level='{inst.LevelName}', LevelElev={inst.LevelElevationM:F3}m, " +
@@ -1838,9 +2322,18 @@ namespace SoundCalcs.UI.ViewModels
                 FileLogger.Log($"Wall segments for calc: {computeWalls.Count} " +
                     $"(groups: {WallLineGroups.Count})");
 
+                CurrentProject(out string projectKey, out string projectName);
+                AnalysisArea runArea = _project?.ActiveArea;
+                AnalysisSettings snapshot = BuildAreaSettings();
                 var input = new AcousticJobInput
                 {
                     JobId = jobId,
+                    ProjectKey = projectKey,
+                    ProjectName = projectName,
+                    AreaId = runArea?.Id ?? "",
+                    AreaName = runArea?.Name ?? "",
+                    Settings = snapshot,
+                    SpeakerLineFilter = _speakerLineFilter,
                     Sources = sources,
                     Surfaces = surfaces,
                     Receivers = receivers,
@@ -1870,9 +2363,12 @@ namespace SoundCalcs.UI.ViewModels
                         $"Receiver Z=[{rcvMinZ:F3}..{rcvMaxZ:F3}]m");
                 }
 
-                // Save settings before running (silently: the status line shows the run)
+                // Save settings before running (silently: the status line shows the run); the fingerprint of the
+                // area's inputs tells later whether these results still match them
                 _saveTimer.Stop();
                 SaveSettingsCore();
+                _runningAreaId = runArea?.Id;
+                _runningFingerprint = runArea != null ? AreaFingerprint.Compute(runArea) : "";
 
                 StatusMessage = $"Job started ({quality}): {sources.Count} sources, {receivers.Count} receivers...";
 
@@ -1913,6 +2409,7 @@ namespace SoundCalcs.UI.ViewModels
         /// </summary>
         public void CancelJob()
         {
+            if (_runQueue != null) _runQueue.Clear();
             _jobRunner.Cancel();
             StatusMessage = "Cancelling...";
         }
@@ -1935,23 +2432,44 @@ namespace SoundCalcs.UI.ViewModels
             {
                 StatusMessage = LastOutput != null ? "Job canceled. The previous results are still shown." : "Job canceled.";
                 LastRunSummary = $"Canceled after {output.ComputeTimeSeconds:F1}s";
+                FinishRunAll(true);
+                return;
             }
-            else if (output.Error != null)
+            if (output.Error != null)
             {
                 StatusMessage = $"The calculation failed: {output.Error} (details in the log).";
                 LastRunSummary = $"Failed after {output.ComputeTimeSeconds:F1}s";
+                if (_runQueue != null)
+                {
+                    _runAllSkipped.Add($"{output.AreaName} (failed: {output.Error})");
+                    _runAllDone++;
+                    _uiDispatcher?.BeginInvoke(new Action(RunNextQueuedArea));
+                }
+                return;
             }
-            else
+
+            // The results belong to the area the run was started for (it is recorded even if it is no longer shown)
+            AnalysisArea area = _project?.Find(string.IsNullOrEmpty(output.AreaId) ? _runningAreaId : output.AreaId);
+            if (area != null)
+            {
+                area.LastJobId = output.JobId;
+                area.LastRunUtc = output.Timestamp;
+                area.LastRunQuality = output.Quality;
+                area.ResultFingerprint = _runningFingerprint ?? "";
+                ProjectStore.Save(_project);
+            }
+            if (area == null || area.Id == _project.ActiveArea.Id)
             {
                 LastOutput = output;
-                StatusMessage = $"Results ready: {DateTime.Now:HH:mm:ss}";
-                LastRunSummary = $"{output.ReceiverCount} points | " +
-                    $"{output.Quality} | " +
-                    $"SPL: {output.MinSplDb:F1}–{output.MaxSplDb:F1} dB | " +
-                    $"dBA: {output.MinSplDbA:F1}–{output.MaxSplDbA:F1} | " +
-                    $"STI: {output.MinSti:F2}–{output.MaxSti:F2} | " +
-                    $"C80 avg: {output.AvgC80Db:F1} dB | D50 avg: {output.AvgD50:F2} | " +
-                    $"Time: {output.ComputeTimeSeconds:F1}s";
+                LastRunSummary = RunSummary(output);
+            }
+            RefreshAreaItems();
+            StatusMessage = $"Results ready{(area != null && _project.Areas.Count > 1 ? $" for '{area.Name}'" : "")}: {DateTime.Now:HH:mm:ss}";
+
+            if (_runQueue != null)
+            {
+                _runAllDone++;
+                _uiDispatcher?.BeginInvoke(new Action(RunNextQueuedArea));
             }
         }
 
@@ -2073,11 +2591,29 @@ namespace SoundCalcs.UI.ViewModels
         {
             try
             {
-                AcousticJobOutput output = JobSerializer.LoadLatestOutput();
+                // The active area's latest results; else (results saved before areas) the latest of any run, which
+                // then becomes this area's results, marked as changed since calculated (its inputs are unknown)
+                AnalysisArea area = _project?.ActiveArea;
+                AcousticJobOutput output = area != null ? JobSerializer.LoadLatestOutputForArea(area.Id) : null;
                 if (output == null)
                 {
-                    StatusMessage = "No result files found.";
+                    output = JobSerializer.LoadLatestOutput();
+                    if (output != null && !string.IsNullOrEmpty(output.AreaId) && _project?.Find(output.AreaId) != null)
+                        output = null;   // belongs to another area of this project
+                }
+                if (output == null)
+                {
+                    StatusMessage = "No result files found for this area.";
                     return;
+                }
+                if (area != null && area.LastJobId != output.JobId)
+                {
+                    area.LastJobId = output.JobId;
+                    area.LastRunUtc = output.Timestamp;
+                    area.LastRunQuality = output.Quality;
+                    area.ResultFingerprint = output.AreaId == area.Id ? area.ResultFingerprint : "";
+                    ProjectStore.Save(_project);
+                    RefreshAreaItems();
                 }
 
                 LastOutput = output;

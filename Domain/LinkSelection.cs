@@ -5,6 +5,9 @@ namespace SoundCalcs.Domain
     /// </summary>
     public class LinkSelection
     {
+        public object Clone() => MemberwiseClone();
+
+
         /// <summary>
         /// Display name of the linked model (e.g., "Arch_Model.rvt").
         /// </summary>

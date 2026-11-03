@@ -14,6 +14,12 @@ namespace SoundCalcs.Domain
         /// Profile type + parameters for directivity lookup.
         /// </summary>
         public SpeakerProfileMapping Profile { get; set; }
+
+        /// <summary>The Revit element the source was read from (0 = unknown, e.g. harness scenes).</summary>
+        public int ElementId { get; set; }
+
+        /// <summary>"Family: Type" of the speaker, for reports. Empty when unknown.</summary>
+        public string TypeName { get; set; } = "";
     }
 
     /// <summary>
@@ -118,6 +124,21 @@ namespace SoundCalcs.Domain
     public class AcousticJobInput
     {
         public string JobId { get; set; } = "";
+
+        /// <summary>The project (document path, else title) and area the job was built for; empty in older files.</summary>
+        public string ProjectKey { get; set; } = "";
+        public string ProjectName { get; set; } = "";
+        public string AreaId { get; set; } = "";
+        public string AreaName { get; set; } = "";
+
+        /// <summary>
+        /// The grid and room settings the job was built with (grid spacing, receiver height, occupants, ...), for
+        /// reports. Null in older files.
+        /// </summary>
+        public AnalysisSettings Settings { get; set; }
+
+        /// <summary>Which speaker line the run included (A/B filter).</summary>
+        public SpeakerLineFilterType SpeakerLineFilter { get; set; } = SpeakerLineFilterType.Both;
 
         public List<ComputeSource> Sources { get; set; } = new List<ComputeSource>();
         public List<Polygon> Surfaces { get; set; } = new List<Polygon>();

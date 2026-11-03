@@ -19,6 +19,9 @@
 
   <ItemGroup>
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+    <!-- Report pages (PDF + PNG) are painted by the plugin's Skia painter; the Linux native library lets it run headless -->
+    <PackageReference Include="SkiaSharp" Version="2.88.8" />
+    <PackageReference Include="SkiaSharp.NativeAssets.Linux.NoDependencies" Version="2.88.8" />
   </ItemGroup>
 
   <!-- Plugin sources that are free of Revit / WPF / SkiaSharp references -->
@@ -29,6 +32,10 @@
     <Compile Include="../Compute/*.cs" />
     <Compile Include="../Visualization/HeatmapMath.cs" />
     <Compile Include="../Visualization/VisualizationMode.cs" />
+
+    <!-- Report content (statistics, builder, criteria); the Skia painter in Report/Pdf is not included here -->
+    <Compile Include="../Report/*.cs" />
+    <Compile Include="../Report/Pdf/*.cs" />
   </ItemGroup>
 
 </Project>

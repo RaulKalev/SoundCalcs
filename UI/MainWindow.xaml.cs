@@ -46,12 +46,13 @@ namespace SoundCalcs.UI
             _vm = new MainViewModel(uiApp);
             DataContext = _vm;
 
-            string docTitle = uiApp?.ActiveUIDocument?.Document?.Title;
-            if (!string.IsNullOrEmpty(docTitle))
+            UpdateDocumentTitle();
+            _vm.PropertyChanged += (s, e) =>
             {
-                DocumentTitleText.Text = docTitle;
-                DocumentTitleText.ToolTip = docTitle;
-            }
+                if (e.PropertyName == nameof(MainViewModel.ProjectName)) UpdateDocumentTitle();
+            };
+            // Revit may have another document active when the window comes back: open that project's areas
+            Activated += (s, e) => _vm.CheckActiveDocument();
 
             // Wire speaker rotation: viewer drag → ViewModel → Revit ExtensibleStorage
             AcousticViewer.OnSpeakerRotated = (elementId, angleDeg) =>
@@ -66,6 +67,14 @@ namespace SoundCalcs.UI
             StateChanged += (s, e) => UpdateMaximizedState();
             PreviewKeyDown += OnPreviewKeyDown;
             Closing += OnClosing;
+        }
+
+        private void UpdateDocumentTitle()
+        {
+            string title = _vm.ProjectName;
+            if (string.IsNullOrEmpty(title)) return;
+            DocumentTitleText.Text = title;
+            DocumentTitleText.ToolTip = title;
         }
 
         public bool IsCompact
@@ -173,7 +182,7 @@ namespace SoundCalcs.UI
             _textScale = ThemeManager.TextScaleFactor;
             if (_textScale <= 1.01) return;
             var scale = new System.Windows.Media.ScaleTransform(_textScale, _textScale);
-            foreach (FrameworkElement el in new FrameworkElement[] { SidebarBorder, TitleArea, ModelPage, SpeakersPage, RoomPage, RunPage, ResultsPage, StatusLine })
+            foreach (FrameworkElement el in new FrameworkElement[] { SidebarBorder, TitleArea, AreaBar, ModelPage, SpeakersPage, RoomPage, RunPage, ResultsPage, StatusLine })
                 el.LayoutTransform = scale;
             PageColumn.MinWidth *= _textScale;
             UpdateLayoutMode();
@@ -308,6 +317,10 @@ namespace SoundCalcs.UI
             _vm.RefreshLayoutFromModel();
         }
 
+        private void StoreAreasInModel_Click(object sender, RoutedEventArgs e) => _vm.StoreAreasInModel();
+
+        private void LoadAreasFromModel_Click(object sender, RoutedEventArgs e) => _vm.LoadAreasFromModel();
+
         // ============ Speakers page ============
 
         private void PickSpeaker_Click(object sender, RoutedEventArgs e)
@@ -379,5 +392,50 @@ namespace SoundCalcs.UI
         {
             _vm.ImportLatestResults();
         }
+
+        private void RunAllAreas_Click(object sender, RoutedEventArgs e)
+        {
+            _vm.RunAllAreas(SoundCalcs.Domain.CalculationQuality.Full);
+        }
+
+        private void CreateReport_Click(object sender, RoutedEventArgs e)
+        {
+            var dialog = new ReportWindow(_vm) { Owner = this };
+            dialog.ShowDialog();
+        }
+
+        // ============ Areas ============
+
+        private void AddArea_Click(object sender, RoutedEventArgs e) => _vm.AddArea();
+
+        private void DuplicateArea_Click(object sender, RoutedEventArgs e) => _vm.DuplicateArea();
+
+        private void DeleteArea_Click(object sender, RoutedEventArgs e) => _vm.DeleteArea();
+
+        /// <summary>Swaps the area list for a text field with the name; Enter or leaving it renames, Esc cancels.</summary>
+        private void RenameArea_Click(object sender, RoutedEventArgs e)
+        {
+            AreaNameBox.Text = _vm.ActiveAreaName;
+            AreaCombo.Visibility = Visibility.Collapsed;
+            AreaNameBox.Visibility = Visibility.Visible;
+            AreaNameBox.Focus();
+            AreaNameBox.SelectAll();
+        }
+
+        private void EndRename(bool commit)
+        {
+            if (AreaNameBox.Visibility != Visibility.Visible) return;
+            if (commit) _vm.ActiveAreaName = AreaNameBox.Text;
+            AreaNameBox.Visibility = Visibility.Collapsed;
+            AreaCombo.Visibility = Visibility.Visible;
+        }
+
+        private void AreaNameBox_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.Key == Key.Enter) { EndRename(true); e.Handled = true; }
+            else if (e.Key == Key.Escape) { EndRename(false); e.Handled = true; }
+        }
+
+        private void AreaNameBox_LostKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e) => EndRename(true);
     }
 }

@@ -6,6 +6,9 @@ namespace SoundCalcs.Domain
     /// </summary>
     public class SpeakerInstance
     {
+        public SpeakerInstance Clone() => (SpeakerInstance)MemberwiseClone();
+
+
         /// <summary>
         /// Revit ElementId as integer for round-tripping.
         /// </summary>

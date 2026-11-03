@@ -26,7 +26,8 @@ UI = os.path.join(ROOT, 'UI')
 THEMES = os.path.join(UI, 'Themes')
 STYLES = os.path.join(THEMES, 'SoundCalcsStyles.xaml')
 VIEWS = [(os.path.join(UI, 'MainWindow.xaml'), os.path.join(UI, 'MainWindow.xaml.cs')),
-         (os.path.join(UI, 'AcousticViewerControl.xaml'), os.path.join(UI, 'AcousticViewerControl.xaml.cs'))]
+         (os.path.join(UI, 'AcousticViewerControl.xaml'), os.path.join(UI, 'AcousticViewerControl.xaml.cs')),
+         (os.path.join(UI, 'ReportWindow.xaml'), os.path.join(UI, 'ReportWindow.xaml.cs'))]
 STUBS = os.path.join(ROOT, 'SoundCalcs.CompileCheck', 'XamlStubs.cs')
 ICONS_OUT = os.path.join(ROOT, 'SoundCalcs.CompileCheck', 'XamlIcons.g.cs')
 
@@ -109,7 +110,8 @@ for path in [STYLES] + [v for v, _ in VIEWS]:
 
 # ---------------------------------------------------------------- views
 vm_dir = os.path.join(UI, 'ViewModels')
-members = public_members(glob.glob(os.path.join(vm_dir, '*.cs')) + glob.glob(os.path.join(ROOT, 'Domain', '*.cs')))
+members = public_members(glob.glob(os.path.join(vm_dir, '*.cs')) + glob.glob(os.path.join(ROOT, 'Domain', '*.cs')) +
+                         glob.glob(os.path.join(ROOT, 'Report', '*.cs')))
 stubs = read(STUBS)
 icons = set()
 
@@ -142,7 +144,7 @@ for xaml, cs in VIEWS:
         if target_types.get(m.group(2)) != want:
             problems.append(f'{name}: {m.group(1)} {m.group(2)} must target {want}')
 
-    handler_attrs = r'Click|Checked|Unchecked|MouseDown|MouseMove|MouseUp|MouseWheel|PaintSurface|DragCompleted|MouseLeftButtonDown'
+    handler_attrs = r'Click|Checked|Unchecked|MouseDown|MouseMove|MouseUp|MouseWheel|PaintSurface|DragCompleted|MouseLeftButtonDown|KeyDown|LostKeyboardFocus|SizeChanged'
     for m in re.finditer(r'\b(?:' + handler_attrs + r')="(\w+)"', text):
         if not re.search(r'void\s+' + m.group(1) + r'\s*\(', code):
             problems.append(f'{name}: event handler {m.group(1)} is missing from {rel(cs)}')
