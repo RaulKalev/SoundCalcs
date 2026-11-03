@@ -42,6 +42,14 @@
                         ToolTip="Probe: click the plan to pin a reading">
                     <materialDesign:PackIcon Width="16" Height="16" Kind="CrosshairsGps" />
                 </Button>
+                <Button x:Name="ContoursBtn"
+                        AutomationProperties.Name="Contour lines"
+                        Click="ContoursBtn_Click"
+                        Cursor="Arrow"
+                        Style="{DynamicResource ViewerTool}"
+                        ToolTip="Contour lines: show lines of equal level on the heatmap">
+                    <materialDesign:PackIcon Width="16" Height="16" Kind="Waves" />
+                </Button>
                 <Button x:Name="ClearPinsBtn"
                         AutomationProperties.Name="Clear probe pins"
                         Click="ClearPinsBtn_Click"

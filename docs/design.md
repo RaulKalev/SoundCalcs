@@ -62,6 +62,9 @@ Apple-style clarity and hierarchy, built from native WPF so it behaves like a Wi
 - Empty states say what to do: *No walls yet*, *No speakers yet*, *No results yet* (with *Go to Run* and
   *Import latest*).
 - The results summary shows ranges (min – max) for SPL, dBA and STI.
+- The Model page ends with **Areas in the Revit model**: *Store in model* (secondary) writes a copy of every area and
+  the report settings to a DataStorage element in one transaction; *Load from model* (plain) replaces the areas with
+  that copy, with Undo. Results are not stored (they stay in each computer's job files).
 - The Run page offers *Run all areas* (secondary) when the project has more than one area; the line under the
   buttons shows *Area 2 of 5* while it runs.
 - **Report dialog** (Results → *Create report…*, a window of its own with the same palette and styles): areas and
@@ -80,8 +83,9 @@ Apple-style clarity and hierarchy, built from native WPF so it behaves like a Wi
   colours, plans with the viewer's colour range, room outlines, walls, speakers (blue, labelled S1…), contour lines
   with labels that keep clear of room names and speakers, a legend and a scale bar.
 - The plan viewer follows the appearance (canvas, walls, legend and text colours come from the `Viewer.*` keys).
-  Its tools (Fit, Probe, Clear pins) are icon buttons on one floating bar, top left, clear of the legend; Probe
-  shows the accent fill while it is on.
+  Its tools (Fit, Probe, Contour lines, Clear pins) are icon buttons on one floating bar, top left, clear of the
+  legend; Probe and Contour lines show the accent fill while they are on. Contour lines are the report's (traced per
+  room at round levels of the colour range, labelled in screen space).
 - **Plan viewer motion**: dragging tracks the pointer 1:1 at any display scaling (mouse DIPs are converted to the
   Skia surface's pixels) and a flick glides on and slows down; the wheel zoom settles smoothly around the cursor
   in steps proportional to the wheel delta (precision touchpads zoom finely); *Fit* and new content animate to

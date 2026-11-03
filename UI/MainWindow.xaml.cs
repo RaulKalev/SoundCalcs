@@ -317,6 +317,10 @@ namespace SoundCalcs.UI
             _vm.RefreshLayoutFromModel();
         }
 
+        private void StoreAreasInModel_Click(object sender, RoutedEventArgs e) => _vm.StoreAreasInModel();
+
+        private void LoadAreasFromModel_Click(object sender, RoutedEventArgs e) => _vm.LoadAreasFromModel();
+
         // ============ Speakers page ============
 
         private void PickSpeaker_Click(object sender, RoutedEventArgs e)

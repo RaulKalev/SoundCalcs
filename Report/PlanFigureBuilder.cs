@@ -238,20 +238,35 @@ namespace SoundCalcs.Report
         static void AddIsolines(PlanFigure f, VisualizationMode mode, int[] cellRoom, int? onlyRoom)
         {
             if (f.Grid == null) return;
+            f.Isolines.AddRange(Isolines(f.Grid, cellRoom, mode, f.MinVal, f.MaxVal, onlyRoom));
+        }
+
+        /// <summary>
+        /// Contour lines of a job's grid at the round levels of the range (<see cref="HeatmapMath.ContourLevels"/>),
+        /// traced per room so no line runs along a wall between rooms. Also used by the plan viewer.
+        /// </summary>
+        public static List<FigureIsoline> Isolines(HeatmapGrid grid, AcousticJobOutput output, VisualizationMode mode, double min, double max) =>
+            Isolines(grid, CellRooms(grid, output), mode, min, max, null);
+
+        static List<FigureIsoline> Isolines(HeatmapGrid grid, int[] cellRoom, VisualizationMode mode, double min, double max, int? onlyRoom)
+        {
+            var result = new List<FigureIsoline>();
+            if (grid?.Values == null) return result;
             var rooms = onlyRoom.HasValue ? new List<int> { onlyRoom.Value }
-                : Enumerable.Range(0, cellRoom.Length).Where(i => f.Grid.Filled[i]).Select(i => cellRoom[i]).Distinct().ToList();
-            var grids = rooms.Select(ri => HeatmapMath.MaskGrid(f.Grid, i => cellRoom[i] == ri)).ToList();
-            foreach (double level in HeatmapMath.ContourLevels(f.MinVal, f.MaxVal, mode))
+                : Enumerable.Range(0, cellRoom.Length).Where(i => grid.Filled[i]).Select(i => cellRoom[i]).Distinct().ToList();
+            var grids = rooms.Select(ri => HeatmapMath.MaskGrid(grid, i => cellRoom[i] == ri)).ToList();
+            foreach (double level in HeatmapMath.ContourLevels(min, max, mode))
             {
                 var lines = grids.SelectMany(g => HeatmapMath.Contour(g, level)).ToList();
                 if (lines.Count == 0) continue;
-                f.Isolines.Add(new FigureIsoline
+                result.Add(new FigureIsoline
                 {
                     Level = level,
                     Label = mode == VisualizationMode.STI ? level.ToString("0.00", Inv) : level.ToString("0.#", Inv),
                     Lines = lines
                 });
             }
+            return result;
         }
 
         class Extent

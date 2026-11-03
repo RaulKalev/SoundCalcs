@@ -568,6 +568,94 @@ namespace SoundCalcs.UI.ViewModels
             return list;
         }
 
+        // ---- Areas in the Revit model ----
+
+        /// <summary>Stores a copy of the project's areas and report settings in the model (Revit transaction).</summary>
+        public void StoreAreasInModel()
+        {
+            if (_project == null) return;
+            SaveSettingsCore();
+            string json = ProjectStore.Serialize(_project);
+            int count = _project.Areas.Count;
+            StatusMessage = "Storing the areas in the model...";
+            _dispatcher.Enqueue(uiApp =>
+            {
+                Document doc = uiApp.ActiveUIDocument?.Document;
+                if (doc == null) { SetStatusFromRevitThread("No active document."); return; }
+                try
+                {
+                    bool ok = ProjectModelStorage.Write(doc, json, out string error);
+                    SetStatusFromRevitThread(ok
+                        ? $"{count} area(s) stored in '{doc.Title}'. Save the model (and synchronise) so others get them; results stay on this computer."
+                        : $"The areas could not be stored: {error}.");
+                }
+                catch (Exception ex)
+                {
+                    FileLogger.Log($"Storing areas in the model failed: {ex}");
+                    SetStatusFromRevitThread($"The areas could not be stored: {ex.Message}");
+                }
+            });
+        }
+
+        /// <summary>Replaces the project's areas with the copy stored in the model (Undo brings the current ones back).</summary>
+        public void LoadAreasFromModel()
+        {
+            if (_project == null || !CanEditAreas) return;
+            StatusMessage = "Reading the areas stored in the model...";
+            _dispatcher.Enqueue(uiApp =>
+            {
+                Document doc = uiApp.ActiveUIDocument?.Document;
+                if (doc == null) { SetStatusFromRevitThread("No active document."); return; }
+                try
+                {
+                    var stored = ProjectModelStorage.Read(doc);
+                    _uiDispatcher?.Invoke(() => ApplyStoredProject(stored?.Json, stored?.SavedUtc, stored?.SavedBy));
+                }
+                catch (Exception ex)
+                {
+                    FileLogger.Log($"Reading areas from the model failed: {ex}");
+                    SetStatusFromRevitThread($"The areas could not be read: {ex.Message}");
+                }
+            });
+        }
+
+        private void ApplyStoredProject(string json, string savedUtc, string savedBy)
+        {
+            if (string.IsNullOrWhiteSpace(json)) { StatusMessage = "This model has no stored areas. Use Store in model first."; return; }
+            if (!CanEditAreas) { StatusMessage = "Areas can be loaded when the calculation has finished."; return; }
+            SoundCalcsProject stored;
+            try { stored = ProjectStore.Deserialize(json); }
+            catch (Exception ex) { StatusMessage = $"The stored areas could not be read: {ex.Message}"; return; }
+            if (stored == null) { StatusMessage = "The stored areas could not be read."; return; }
+            stored.Normalise();
+
+            SaveSettingsCore();
+            string before = ProjectStore.Serialize(_project);
+            // The copy belongs to this document now (whatever path it was stored from)
+            stored.ProjectKey = _project.ProjectKey;
+            stored.ProjectName = _project.ProjectName;
+            ReplaceProject(stored);
+            string when = DateTime.TryParse(savedUtc, null, System.Globalization.DateTimeStyles.RoundtripKind, out DateTime t)
+                ? t.ToLocalTime().ToString("d MMM yyyy HH:mm") : "";
+            OfferUndo($"{stored.Areas.Count} area(s) loaded from the model" +
+                (when.Length > 0 ? $" (stored {when}{(string.IsNullOrEmpty(savedBy) ? "" : " by " + savedBy)})" : "") + ".", "Undo", () =>
+            {
+                SoundCalcsProject previous = ProjectStore.Deserialize(before);
+                previous.Normalise();
+                ReplaceProject(previous);
+                StatusMessage = "The previous areas are back.";
+            });
+        }
+
+        private void ReplaceProject(SoundCalcsProject project)
+        {
+            _project = project;
+            ApplyArea(_project.ActiveArea);
+            ProjectStore.Save(_project);
+            RefreshAreaItems();
+            OnPropertyChanged(nameof(Project));
+        }
+
         /// <summary>Saves the project after the report dialog changed its report settings.</summary>
         public void SaveProject()
         {

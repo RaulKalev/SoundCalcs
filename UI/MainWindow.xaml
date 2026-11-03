@@ -752,6 +752,41 @@
                                 </StackPanel>
                             </Grid>
                         </Border>
+
+                        <TextBlock Style="{StaticResource Type.GroupTitle}" Text="Areas in the Revit model" />
+                        <Border Padding="0,2" Style="{StaticResource Card}">
+                            <DockPanel Style="{StaticResource SettingRow}">
+                                <StackPanel
+                                    VerticalAlignment="Center"
+                                    DockPanel.Dock="Right"
+                                    Orientation="Horizontal">
+                                    <Button
+                                        Margin="0,0,4,0"
+                                        Click="LoadAreasFromModel_Click"
+                                        IsEnabled="{Binding CanEditAreas}"
+                                        Style="{StaticResource Button.Plain}"
+                                        ToolTip="Replace this project's areas with the ones stored in the model (Undo brings these back)">
+                                        Load from model
+                                    </Button>
+                                    <Button
+                                        Click="StoreAreasInModel_Click"
+                                        Style="{StaticResource Button.Secondary}"
+                                        ToolTip="Store a copy of every area and the report settings in the model">
+                                        <StackPanel Orientation="Horizontal">
+                                            <materialDesign:PackIcon Kind="DatabaseExportOutline" Style="{StaticResource ButtonIconLabel}" />
+                                            <TextBlock Text="Store in model" />
+                                        </StackPanel>
+                                    </Button>
+                                </StackPanel>
+                                <StackPanel Style="{StaticResource SettingText}">
+                                    <TextBlock Style="{StaticResource Type.RowLabel}" Text="Share the areas" />
+                                    <TextBlock
+                                        Style="{StaticResource Type.RowHint}"
+                                        Text="Colleagues who open this model can load them. Results stay on each computer."
+                                        TextWrapping="Wrap" />
+                                </StackPanel>
+                            </DockPanel>
+                        </Border>
                     </StackPanel>
                 </ScrollViewer>
 

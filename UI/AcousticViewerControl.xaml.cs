@@ -552,6 +552,7 @@ namespace SoundCalcs.UI
             canvas.Scale(_zoom, -_zoom);
 
             DrawHeatmap(canvas);
+            DrawContours(canvas);
             DrawWalls(canvas);
             DrawSpeakers(canvas);
             DrawPinMarkers(canvas);
@@ -562,6 +563,7 @@ namespace SoundCalcs.UI
             DrawLegend(canvas, w, h);
             DrawLodBadge(canvas, w, h);
             DrawScaleBar(canvas, w, h);
+            DrawContourLabels(canvas);
             DrawPinLabels(canvas, w, h);
             DrawAimHint(canvas);
             PositionWallCard();
@@ -1107,6 +1109,90 @@ namespace SoundCalcs.UI
         }
 
         // ── Probe button ───────────────────────────────────────────────────
+        // ── Contour lines ──────────────────────────────────────────────────
+        bool _showContours;
+        List<Report.FigureIsoline> _contours;
+        AcousticJobOutput _contoursSource;
+        VisualizationMode _contoursMode;
+
+        void ContoursBtn_Click(object sender, RoutedEventArgs e)
+        {
+            _showContours = !_showContours;
+            if (TryFindResource(_showContours ? "ViewerTool.Active" : "ViewerTool") is Style style)
+                ContoursBtn.Style = style;
+            ContoursBtn.ToolTip = _showContours
+                ? "Contour lines are on. Click to hide them."
+                : "Contour lines: show lines of equal level on the heatmap";
+            Refresh();
+        }
+
+        /// <summary>The same contour lines as the report's plans (per room, round levels of the colour range).</summary>
+        void DrawContours(SKCanvas canvas)
+        {
+            if (!_showContours || _heatBitmap == null || JobOutput == null || JobOutput.Results.Count == 0) return;
+            if (_contours == null || !ReferenceEquals(_contoursSource, JobOutput) || _contoursMode != Mode)
+            {
+                var results = JobOutput.Results;
+                var vals = new double[results.Count];
+                for (int i = 0; i < results.Count; i++) vals[i] = HeatmapMath.GetValue(results[i], Mode);
+                HeatmapGrid grid = HeatmapMath.BuildViewerGrid(results, vals, _heatMinVal, _heatMaxVal - _heatMinVal,
+                    HeatmapMath.ViewerGridSpacing(results));
+                _contours = Report.PlanFigureBuilder.Isolines(grid, JobOutput, Mode, _heatMinVal, _heatMaxVal);
+                _contoursSource = JobOutput;
+                _contoursMode = Mode;
+            }
+            using var paint = new SKPaint
+            {
+                Style = SKPaintStyle.Stroke,
+                StrokeWidth = 1.2f * PixelScale / _zoom,
+                Color = new SKColor(0, 0, 0, 160),
+                IsAntialias = true
+            };
+            foreach (var iso in _contours)
+                foreach (var line in iso.Lines)
+                {
+                    if (line.Count < 2) continue;
+                    using var path = new SKPath();
+                    path.MoveTo((float)line[0].X, (float)line[0].Y);
+                    for (int i = 1; i < line.Count; i++) path.LineTo((float)line[i].X, (float)line[i].Y);
+                    canvas.DrawPath(path, paint);
+                }
+        }
+
+        /// <summary>Each level's value at the middle of its longest line, in screen space.</summary>
+        void DrawContourLabels(SKCanvas canvas)
+        {
+            if (!_showContours || _contours == null || _heatBitmap == null) return;
+            using var text = new SKPaint
+            {
+                Color = new SKColor(0x10, 0x10, 0x10),
+                TextSize = 11f * PixelScale,
+                IsAntialias = true,
+                Typeface = SKTypeface.FromFamilyName("Segoe UI", SKFontStyle.Bold) ?? SKTypeface.Default
+            };
+            using var halo = text.Clone();
+            halo.Color = new SKColor(0xFF, 0xFF, 0xFF, 220);
+            halo.Style = SKPaintStyle.Stroke;
+            halo.StrokeWidth = 3f * PixelScale;
+            foreach (var iso in _contours)
+            {
+                List<Vec2> longest = null;
+                double best = 0;
+                foreach (var line in iso.Lines)
+                {
+                    double len = 0;
+                    for (int i = 1; i < line.Count; i++) len += Vec2.Distance(line[i - 1], line[i]);
+                    if (len > best) { best = len; longest = line; }
+                }
+                if (longest == null || best * _zoom < 60 * PixelScale) continue;
+                Vec2 mid = longest[longest.Count / 2];
+                float sx = (float)mid.X * _zoom + _panX, sy = -(float)mid.Y * _zoom + _panY;
+                float tw = text.MeasureText(iso.Label);
+                canvas.DrawText(iso.Label, sx - tw / 2, sy + 4f * PixelScale, halo);
+                canvas.DrawText(iso.Label, sx - tw / 2, sy + 4f * PixelScale, text);
+            }
+        }
+
         void ProbeBtn_Click(object sender, RoutedEventArgs e)
         {
             _probeMode = !_probeMode;
