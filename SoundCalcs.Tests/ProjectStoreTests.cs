@@ -71,6 +71,17 @@ namespace SoundCalcs.Tests
         }
 
         [Fact]
+        public void RoundTrip_DoesNotDuplicateDefaultLists()
+        {
+            // Regression: Newtonsoft added the stored items to the lists' default contents on every load
+            var p = new SoundCalcsProject { ProjectKey = "Lists" };
+            p.ReportOptions.PlanModes = new List<SoundCalcs.UI.ViewModels.VisualizationMode> { SoundCalcs.UI.ViewModels.VisualizationMode.STI };
+            for (int i = 0; i < 3; i++) p = ProjectStore.Deserialize(ProjectStore.Serialize(p));
+            Assert.Equal(new[] { SoundCalcs.UI.ViewModels.VisualizationMode.STI }, p.ReportOptions.PlanModes);
+            Assert.Equal(new ReportOptions().ValueChartModes, p.ReportOptions.ValueChartModes);
+        }
+
+        [Fact]
         public void PathFor_DiffersForSameNameInAnotherFolder()
         {
             Assert.NotEqual(ProjectStore.PathFor(@"C:\A\Office.rvt"), ProjectStore.PathFor(@"C:\B\Office.rvt"));

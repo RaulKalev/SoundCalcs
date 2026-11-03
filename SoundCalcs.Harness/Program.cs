@@ -39,6 +39,8 @@ Options:
   --report                Also build each scenario's PDF report (report.pdf + one PNG per page) and a
                           combined report of all scenarios as areas (report_all.pdf)
   --report-lang <en|et>   Report language (implies --report)
+  --report-quantities <l> Quantities in the report tables and CSV, e.g. SPL,STI (add 'bands' for the
+                          octave bands; implies --report)
   --list                  List built-in scenarios and exit
   --example-spec <file>   Write an example ScenarioSpec JSON and exit
   --help                  Show this help
@@ -84,6 +86,11 @@ Exit code: 0 = all checks passed (warnings allowed), 1 = a check failed, 2 = usa
                             break;
                         case "--no-images": images = false; break;
                         case "--report": report = true; break;
+                        case "--report-quantities":
+                            report = true;
+                            ReportChecks.TableQuantities = args[++i].Split(',', StringSplitOptions.RemoveEmptyEntries)
+                                .Select(q => q.Trim()).ToList();
+                            break;
                         case "--report-lang":
                             report = true;
                             reportLang = args[++i].StartsWith("et", StringComparison.OrdinalIgnoreCase)
@@ -202,7 +209,7 @@ Exit code: 0 = all checks passed (warnings allowed), 1 = a check failed, 2 = usa
             string pdf = Path.Combine(outDir, "report_all.pdf");
             int pages = SoundCalcs.Report.Pdf.PdfReportWriter.Write(built.Document, pdf);
             File.WriteAllText(Path.Combine(outDir, "report_all_summary.csv"),
-                SoundCalcs.Report.ReportBuilder.SummaryCsv(built.Areas, new SoundCalcs.Report.ReportText(_reportLang), CultureInfo.InvariantCulture));
+                SoundCalcs.Report.ReportBuilder.SummaryCsv(built.Areas, new SoundCalcs.Report.ReportText(_reportLang), CultureInfo.InvariantCulture, req.Options));
             Console.WriteLine($"Combined report: {pdf} ({pages} pages, {areas.Count} areas)");
         }
 

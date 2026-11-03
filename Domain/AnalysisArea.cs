@@ -134,6 +134,10 @@ namespace SoundCalcs.Domain
             if (ProjectInfo == null) ProjectInfo = new ProjectInfo();
             if (Criteria == null) Criteria = new ReportCriteria();
             if (ReportOptions == null) ReportOptions = new ReportOptions();
+            // Files written before lists were replaced on load hold each default many times over
+            ReportOptions.TableModes = (ReportOptions.TableModes ?? new ReportOptions().TableModes).Distinct().ToList();
+            ReportOptions.PlanModes = (ReportOptions.PlanModes ?? new ReportOptions().PlanModes).Distinct().ToList();
+            ReportOptions.ValueChartModes = (ReportOptions.ValueChartModes ?? new ReportOptions().ValueChartModes).Distinct().ToList();
         }
     }
 

@@ -97,6 +97,22 @@ namespace SoundCalcs.Report
         /// <summary>Contour lines on the plan figures.</summary>
         public bool ShowIsolines { get; set; } = true;
 
+        /// <summary>
+        /// Quantities in the tables (summary, room statistics) and the CSV files. Criteria are checked whatever is
+        /// chosen here.
+        /// </summary>
+        public List<VisualizationMode> TableModes { get; set; } = new List<VisualizationMode>
+        {
+            VisualizationMode.SPL, VisualizationMode.SPL_A, VisualizationMode.STI, VisualizationMode.C80
+        };
+
+        /// <summary>The seven octave-band levels in the room statistics and the grid-values CSV.</summary>
+        public bool IncludeOctaveBands { get; set; } = true;
+
+        /// <summary>Whether the tables show <paramref name="mode"/> (octave bands through <see cref="IncludeOctaveBands"/>).</summary>
+        public bool InTables(VisualizationMode mode) =>
+            Visualization.HeatmapMath.GetOctaveBandIndex(mode) >= 0 ? IncludeOctaveBands : (TableModes?.Contains(mode) ?? false);
+
         /// <summary>Quantities drawn as plan figures for every area.</summary>
         public List<VisualizationMode> PlanModes { get; set; } =
             new List<VisualizationMode> { VisualizationMode.SPL_A, VisualizationMode.STI };
@@ -117,6 +133,7 @@ namespace SoundCalcs.Report
         public ReportOptions Clone()
         {
             var c = (ReportOptions)MemberwiseClone();
+            c.TableModes = new List<VisualizationMode>(TableModes ?? new List<VisualizationMode>());
             c.PlanModes = new List<VisualizationMode>(PlanModes ?? new List<VisualizationMode>());
             c.ValueChartModes = new List<VisualizationMode>(ValueChartModes ?? new List<VisualizationMode>());
             c.ExcludedAreaIds = new List<string>(ExcludedAreaIds ?? new List<string>());

@@ -24,7 +24,7 @@ For every scenario it writes, under `harness-output/`:
 - `<scenario>/revit_<MODE>.png` shows what `FilledRegionRenderer` creates in the plan view: the merged rectangles per colour band, with the panel legend.
 - `<scenario>/input.json` and `output.json` hold the exact job input and results.
 - `compute.log` is the calculator's diagnostic log. Normally it goes to `Documents\SoundCalcs_Debug.log`.
-- With `--report` (or `--report-lang et` for Estonian): `<scenario>/report.pdf` and `<scenario>/report_pNN.png` (every page at 110 dpi, to look at), plus `report_all.pdf` and `report_all_summary.csv` with every scenario as an area of one project. `report.md` also lists every scenario's rooms (area, volume, points, speakers, SPL, dBA, STI, C80, RT60).
+- With `--report` (or `--report-lang et` for Estonian, `--report-quantities SPL,STI` to limit the tables and CSV to those quantities; add `bands` for the octave bands): `<scenario>/report.pdf` and `<scenario>/report_pNN.png` (every page at 110 dpi, to look at), plus `report_all.pdf` and `report_all_summary.csv` with every scenario as an area of one project. `report.md` also lists every scenario's rooms (area, volume, points, speakers, SPL, dBA, STI, C80, RT60).
 
 The exit code is 0 when there are no failures. Warnings are allowed.
 

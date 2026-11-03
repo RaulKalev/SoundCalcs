@@ -71,8 +71,8 @@ Apple-style clarity and hierarchy, built from native WPF so it behaves like a Wi
   their rooms on the left as a checklist (an area's glyph and caption say whether its results are current; areas
   without results cannot be ticked; each room shows its area, mean STI and pass/fail in the status colours), with
   *Calculate N areas* for the ones that are not current. The middle column holds grouped cards: project details
-  (cover and header fields, logo, description), contents (one checkbox per section), quantities (plans and value
-  charts), criteria (each with its checkbox and value; share of points; rooms without speakers) and page (language,
+  (cover and header fields, logo, description), contents (one checkbox per section), quantities (a small grid: SPL, dBA, STI, C80 and
+  octave bands against *Tables, CSV* / *Plans* / *Value charts*), criteria (each with its checkbox and value; share of points; rooms without speakers) and page (language,
   paper as segmented controls). The right column is the preview: the pages exactly as the PDF prints them, on the
   viewer canvas colour with a soft page shadow, *Updating…* while it rebuilds (half a second after the last edit),
   page arrows, Page Up/Down and the wheel to page. The footer has *Also save CSV tables*, the result of the last save

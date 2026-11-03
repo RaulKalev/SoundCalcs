@@ -273,6 +273,7 @@ namespace SoundCalcs.UI.ViewModels
 
         private void Set(List<VisualizationMode> list, VisualizationMode m, bool on, string property)
         {
+            if (list == null) return;
             if (on && !list.Contains(m)) list.Add(m);
             if (!on) list.Remove(m);
             // Keep the order of the quantities fixed (plans and charts appear in this order)
@@ -280,6 +281,17 @@ namespace SoundCalcs.UI.ViewModels
             list.Sort((a, b) => Array.IndexOf(order, a).CompareTo(Array.IndexOf(order, b)));
             OnPropertyChanged(property);
             OnOptionChanged();
+        }
+
+        public bool TableSpl { get => Has(Options.TableModes, VisualizationMode.SPL); set => Set(Options.TableModes, VisualizationMode.SPL, value, nameof(TableSpl)); }
+        public bool TableSplA { get => Has(Options.TableModes, VisualizationMode.SPL_A); set => Set(Options.TableModes, VisualizationMode.SPL_A, value, nameof(TableSplA)); }
+        public bool TableSti { get => Has(Options.TableModes, VisualizationMode.STI); set => Set(Options.TableModes, VisualizationMode.STI, value, nameof(TableSti)); }
+        public bool TableC80 { get => Has(Options.TableModes, VisualizationMode.C80); set => Set(Options.TableModes, VisualizationMode.C80, value, nameof(TableC80)); }
+
+        public bool TableBands
+        {
+            get => Options.IncludeOctaveBands;
+            set { Options.IncludeOctaveBands = value; OnPropertyChanged(nameof(TableBands)); OnOptionChanged(); }
         }
 
         public bool PlanSplA { get => Has(Options.PlanModes, VisualizationMode.SPL_A); set => Set(Options.PlanModes, VisualizationMode.SPL_A, value, nameof(PlanSplA)); }
@@ -523,8 +535,8 @@ namespace SoundCalcs.UI.ViewModels
                     var t = new ReportText(req.Options.Language);
                     string stem = Path.Combine(Path.GetDirectoryName(pdfPath) ?? "", Path.GetFileNameWithoutExtension(pdfPath));
                     // UTF-8 with a byte order mark, so a spreadsheet reads ä, õ and ² correctly
-                    File.WriteAllText(stem + " – rooms.csv", ReportBuilder.SummaryCsv(built.Areas, t, culture), new System.Text.UTF8Encoding(true));
-                    File.WriteAllText(stem + " – grid values.csv", ReportBuilder.ValuesCsv(built.Areas, t, culture), new System.Text.UTF8Encoding(true));
+                    File.WriteAllText(stem + " – rooms.csv", ReportBuilder.SummaryCsv(built.Areas, t, culture, req.Options), new System.Text.UTF8Encoding(true));
+                    File.WriteAllText(stem + " – grid values.csv", ReportBuilder.ValuesCsv(built.Areas, t, culture, req.Options), new System.Text.UTF8Encoding(true));
                 }
                 return pages;
             });

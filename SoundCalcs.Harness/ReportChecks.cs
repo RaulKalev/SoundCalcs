@@ -43,6 +43,21 @@ namespace SoundCalcs.Harness
             SpeakerGroups = run.Spec.SpeakerGroups()
         };
 
+        /// <summary>--report-quantities: mode names (SPL, SPL_A, STI, C80) and "bands"; null = the defaults.</summary>
+        public static List<string> TableQuantities;
+
+        static ReportOptions Options(ReportLanguage lang)
+        {
+            var o = new ReportOptions { Language = lang };
+            if (TableQuantities != null)
+            {
+                o.TableModes = TableQuantities.Where(q => Enum.TryParse(q, true, out VisualizationMode _))
+                    .Select(q => (VisualizationMode)Enum.Parse(typeof(VisualizationMode), q, true)).ToList();
+                o.IncludeOctaveBands = TableQuantities.Any(q => q.Equals("bands", StringComparison.OrdinalIgnoreCase));
+            }
+            return o;
+        }
+
         public static ReportRequest Request(IEnumerable<ReportAreaData> areas, ReportLanguage lang) => new ReportRequest
         {
             Project = new ProjectInfo
@@ -50,7 +65,7 @@ namespace SoundCalcs.Harness
                 ProjectName = "SoundCalcs harness", ProjectNumber = "H-001", Client = "Test client", Company = "RK Tools",
                 Author = "Harness", CheckedBy = "Reviewer", Revision = "A", Description = "Headless report built from the harness scenarios."
             },
-            Options = new ReportOptions { Language = lang },
+            Options = Options(lang),
             Areas = areas.ToList(),
             ModelName = "harness.rvt",
             PluginVersion = "harness",

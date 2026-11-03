@@ -394,69 +394,163 @@
                 </Border>
 
                 <TextBlock Style="{StaticResource Type.GroupTitle}" Text="Quantities" />
-                <Border Padding="0,2" Style="{StaticResource Card}">
+                <Border Padding="14,8,8,10" Style="{StaticResource Card}">
                     <StackPanel>
-                                <DockPanel Margin="14,8,8,8">
-                                    <TextBlock
-                                        Width="110"
-                                        VerticalAlignment="Center"
-                                        DockPanel.Dock="Left"
-                                        Style="{StaticResource Type.RowLabel}"
-                                        Text="Plans" />
-                                    <WrapPanel VerticalAlignment="Center">
-                                            <CheckBox
-                                                Margin="0,0,14,0"
-                                                Content="dBA"
-                                                IsChecked="{Binding PlanSplA}"
-                                                Style="{StaticResource Input.Check}" />
-                                            <CheckBox
-                                                Margin="0,0,14,0"
-                                                Content="SPL"
-                                                IsChecked="{Binding PlanSpl}"
-                                                Style="{StaticResource Input.Check}" />
-                                            <CheckBox
-                                                Margin="0,0,14,0"
-                                                Content="STI"
-                                                IsChecked="{Binding PlanSti}"
-                                                Style="{StaticResource Input.Check}" />
-                                            <CheckBox
-                                                Margin="0,0,14,0"
-                                                Content="C80"
-                                                IsChecked="{Binding PlanC80}"
-                                                Style="{StaticResource Input.Check}" />
-                                    </WrapPanel>
-                                </DockPanel>
-                                <Rectangle Style="{StaticResource Hairline}" />
-                                <DockPanel Margin="14,8,8,8">
-                                    <TextBlock
-                                        Width="110"
-                                        VerticalAlignment="Center"
-                                        DockPanel.Dock="Left"
-                                        Style="{StaticResource Type.RowLabel}"
-                                        Text="Value charts" />
-                                    <WrapPanel VerticalAlignment="Center">
-                                            <CheckBox
-                                                Margin="0,0,14,0"
-                                                Content="dBA"
-                                                IsChecked="{Binding ChartSplA}"
-                                                Style="{StaticResource Input.Check}" />
-                                            <CheckBox
-                                                Margin="0,0,14,0"
-                                                Content="SPL"
-                                                IsChecked="{Binding ChartSpl}"
-                                                Style="{StaticResource Input.Check}" />
-                                            <CheckBox
-                                                Margin="0,0,14,0"
-                                                Content="STI"
-                                                IsChecked="{Binding ChartSti}"
-                                                Style="{StaticResource Input.Check}" />
-                                            <CheckBox
-                                                Margin="0,0,14,0"
-                                                Content="C80"
-                                                IsChecked="{Binding ChartC80}"
-                                                Style="{StaticResource Input.Check}" />
-                                    </WrapPanel>
-                                </DockPanel>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="72" />
+                            <ColumnDefinition Width="56" />
+                            <ColumnDefinition Width="72" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="30" />
+                            <RowDefinition Height="30" />
+                            <RowDefinition Height="30" />
+                            <RowDefinition Height="30" />
+                            <RowDefinition Height="30" />
+                        </Grid.RowDefinitions>
+                        <TextBlock
+                            Grid.Column="1"
+                            HorizontalAlignment="Center"
+                            Style="{StaticResource Type.Caption}"
+                            Text="Tables, CSV"
+                            ToolTip="Summary, room statistics and the CSV files" />
+                        <TextBlock
+                            Grid.Column="2"
+                            HorizontalAlignment="Center"
+                            Style="{StaticResource Type.Caption}"
+                            Text="Plans"
+                            ToolTip="A coloured plan of each area" />
+                        <TextBlock
+                            Grid.Column="3"
+                            HorizontalAlignment="Center"
+                            Style="{StaticResource Type.Caption}"
+                            Text="Value charts"
+                            ToolTip="The number at every grid point, per room" />
+                        <TextBlock
+                            Grid.Row="1"
+                            VerticalAlignment="Center"
+                            Style="{StaticResource Type.RowLabel}"
+                            Text="Sound level SPL (dB)" />
+                        <CheckBox
+                            Grid.Row="1"
+                            Grid.Column="1"
+                            HorizontalAlignment="Center"
+                            AutomationProperties.Name="Sound level SPL (dB) in tables"
+                            IsChecked="{Binding TableSpl}"
+                            Style="{StaticResource Input.Check}" />
+                        <CheckBox
+                            Grid.Row="1"
+                            Grid.Column="2"
+                            HorizontalAlignment="Center"
+                            AutomationProperties.Name="Sound level SPL (dB) plans"
+                            IsChecked="{Binding PlanSpl}"
+                            Style="{StaticResource Input.Check}" />
+                        <CheckBox
+                            Grid.Row="1"
+                            Grid.Column="3"
+                            HorizontalAlignment="Center"
+                            AutomationProperties.Name="Sound level SPL (dB) value charts"
+                            IsChecked="{Binding ChartSpl}"
+                            Style="{StaticResource Input.Check}" />
+                        <TextBlock
+                            Grid.Row="2"
+                            VerticalAlignment="Center"
+                            Style="{StaticResource Type.RowLabel}"
+                            Text="A-weighted level (dBA)" />
+                        <CheckBox
+                            Grid.Row="2"
+                            Grid.Column="1"
+                            HorizontalAlignment="Center"
+                            AutomationProperties.Name="A-weighted level (dBA) in tables"
+                            IsChecked="{Binding TableSplA}"
+                            Style="{StaticResource Input.Check}" />
+                        <CheckBox
+                            Grid.Row="2"
+                            Grid.Column="2"
+                            HorizontalAlignment="Center"
+                            AutomationProperties.Name="A-weighted level (dBA) plans"
+                            IsChecked="{Binding PlanSplA}"
+                            Style="{StaticResource Input.Check}" />
+                        <CheckBox
+                            Grid.Row="2"
+                            Grid.Column="3"
+                            HorizontalAlignment="Center"
+                            AutomationProperties.Name="A-weighted level (dBA) value charts"
+                            IsChecked="{Binding ChartSplA}"
+                            Style="{StaticResource Input.Check}" />
+                        <TextBlock
+                            Grid.Row="3"
+                            VerticalAlignment="Center"
+                            Style="{StaticResource Type.RowLabel}"
+                            Text="Speech intelligibility STI" />
+                        <CheckBox
+                            Grid.Row="3"
+                            Grid.Column="1"
+                            HorizontalAlignment="Center"
+                            AutomationProperties.Name="Speech intelligibility STI in tables"
+                            IsChecked="{Binding TableSti}"
+                            Style="{StaticResource Input.Check}" />
+                        <CheckBox
+                            Grid.Row="3"
+                            Grid.Column="2"
+                            HorizontalAlignment="Center"
+                            AutomationProperties.Name="Speech intelligibility STI plans"
+                            IsChecked="{Binding PlanSti}"
+                            Style="{StaticResource Input.Check}" />
+                        <CheckBox
+                            Grid.Row="3"
+                            Grid.Column="3"
+                            HorizontalAlignment="Center"
+                            AutomationProperties.Name="Speech intelligibility STI value charts"
+                            IsChecked="{Binding ChartSti}"
+                            Style="{StaticResource Input.Check}" />
+                        <TextBlock
+                            Grid.Row="4"
+                            VerticalAlignment="Center"
+                            Style="{StaticResource Type.RowLabel}"
+                            Text="Clarity C80 (and D50)" />
+                        <CheckBox
+                            Grid.Row="4"
+                            Grid.Column="1"
+                            HorizontalAlignment="Center"
+                            AutomationProperties.Name="Clarity C80 (and D50) in tables"
+                            IsChecked="{Binding TableC80}"
+                            Style="{StaticResource Input.Check}" />
+                        <CheckBox
+                            Grid.Row="4"
+                            Grid.Column="2"
+                            HorizontalAlignment="Center"
+                            AutomationProperties.Name="Clarity C80 (and D50) plans"
+                            IsChecked="{Binding PlanC80}"
+                            Style="{StaticResource Input.Check}" />
+                        <CheckBox
+                            Grid.Row="4"
+                            Grid.Column="3"
+                            HorizontalAlignment="Center"
+                            AutomationProperties.Name="Clarity C80 (and D50) value charts"
+                            IsChecked="{Binding ChartC80}"
+                            Style="{StaticResource Input.Check}" />
+                        <TextBlock
+                            Grid.Row="5"
+                            VerticalAlignment="Center"
+                            Style="{StaticResource Type.RowLabel}"
+                            Text="Octave bands 125 Hz – 8 kHz" />
+                        <CheckBox
+                            Grid.Row="5"
+                            Grid.Column="1"
+                            HorizontalAlignment="Center"
+                            AutomationProperties.Name="Octave bands 125 Hz – 8 kHz in tables"
+                            IsChecked="{Binding TableBands}"
+                            Style="{StaticResource Input.Check}" />
+                    </Grid>
+                    <TextBlock
+                        Margin="0,6,0,0"
+                        Style="{StaticResource Type.RowHint}"
+                        Text="Criteria are checked whatever is chosen here."
+                        TextWrapping="Wrap" />
                     </StackPanel>
                 </Border>
 

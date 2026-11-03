@@ -142,6 +142,9 @@ namespace SoundCalcs.IO
             Formatting = Formatting.Indented,
             NullValueHandling = NullValueHandling.Ignore,
             DefaultValueHandling = DefaultValueHandling.Include,
+            // Stored lists replace the defaults a property starts with (by default Newtonsoft appends to them, so a
+            // default list grew by its stored copy on every load)
+            ObjectCreationHandling = ObjectCreationHandling.Replace,
             Converters = { new Vec2Converter(), new Vec3Converter(), new WallTypeInfoConverter() }
         };
 

@@ -146,7 +146,7 @@ namespace SoundCalcs.Report
 
             if (o.IncludeCover) AddCover(b, req, t, areas, projectTitle);
             if (o.IncludeContents) b.Add(new ContentsBlock());
-            if (o.IncludeSummary) AddSummary(b, areas, t, o.IncludeContents && !o.IncludeCover);
+            if (o.IncludeSummary) AddSummary(b, areas, o, t, o.IncludeContents && !o.IncludeCover);
             foreach (AreaAnalysis a in areas)
             {
                 token.ThrowIfCancellationRequested();
@@ -184,47 +184,60 @@ namespace SoundCalcs.Report
             b.Add(cover);
         }
 
-        static void AddSummary(Blocks b, List<AreaAnalysis> areas, ReportText t, bool samePage)
+        /// <summary>A summary column: header, width, alignment and the cell of a room.</summary>
+        class SummaryColumn
+        {
+            public TableColumn Column;
+            public Func<RoomStatistics, RoomAssessment, string> Cell;
+            public bool IsResult;
+        }
+
+        /// <summary>The summary's columns for the quantities the options put in the tables.</summary>
+        static List<SummaryColumn> SummaryColumns(ReportOptions o, ReportText t)
+        {
+            string mean = t.Mean.ToLowerInvariant();
+            var cols = new List<SummaryColumn>
+            {
+                new SummaryColumn { Column = new TableColumn(t.Room, 2.6f), Cell = (r, a) => PlanFigureBuilder.RoomDisplayName(r.Name) },
+                new SummaryColumn { Column = new TableColumn(t.FloorArea, 0.9f, CellAlign.Right), Cell = (r, a) => r.AreaM2 > 0 ? r.AreaM2.ToString("0.0", Inv) : "–" },
+                new SummaryColumn { Column = new TableColumn(t.Speakers, 0.8f, CellAlign.Right), Cell = (r, a) => r.SpeakerCount.ToString(Inv) }
+            };
+            string Range(ModeStatistics m) => F1(m.Mean) + " (" + F1(m.Min) + "–" + F1(m.Max) + ")";
+            if (o.InTables(VisualizationMode.SPL))
+                cols.Add(new SummaryColumn { Column = new TableColumn("SPL dB " + mean + " (min–max)", 2.0f, CellAlign.Right), Cell = (r, a) => Range(r[VisualizationMode.SPL]) });
+            if (o.InTables(VisualizationMode.SPL_A))
+                cols.Add(new SummaryColumn { Column = new TableColumn("dBA " + mean + " (min–max)", 2.0f, CellAlign.Right), Cell = (r, a) => Range(r[VisualizationMode.SPL_A]) });
+            if (o.InTables(VisualizationMode.SPL) || o.InTables(VisualizationMode.SPL_A))
+                cols.Add(new SummaryColumn { Column = new TableColumn(t.Spread + " dB", 0.9f, CellAlign.Right), Cell = (r, a) => F1(r[VisualizationMode.SPL].Spread) });
+            if (o.InTables(VisualizationMode.STI))
+            {
+                cols.Add(new SummaryColumn { Column = new TableColumn("STI " + mean + " (min)", 1.4f, CellAlign.Right), Cell = (r, a) => F2(r[VisualizationMode.STI].Mean) + " (" + F2(r[VisualizationMode.STI].Min) + ")" });
+                cols.Add(new SummaryColumn { Column = new TableColumn(t.StiClass, 1.1f), Cell = (r, a) => t.StiCategory(r[VisualizationMode.STI].Mean) });
+            }
+            if (o.InTables(VisualizationMode.C80))
+                cols.Add(new SummaryColumn { Column = new TableColumn("C80 dB " + mean, 1.0f, CellAlign.Right), Cell = (r, a) => F1(r[VisualizationMode.C80].Mean) });
+            cols.Add(new SummaryColumn { Column = new TableColumn(t.Rt60At500, 0.9f, CellAlign.Right), Cell = (r, a) => r.Rt60ByBand[2].ToString("0.00", Inv) });
+            cols.Add(new SummaryColumn { Column = new TableColumn(t.Result, 1.1f), Cell = (r, a) => CriteriaEvaluator.OutcomeText(a.Outcome, t), IsResult = true });
+            return cols;
+        }
+
+        static void AddSummary(Blocks b, List<AreaAnalysis> areas, ReportOptions o, ReportText t, bool samePage)
         {
             b.Heading(1, t.Summary, !samePage);
             b.Add(new ParagraphBlock { Text = t.SummaryIntro, Style = ParagraphStyle.Note });
-            var table = new TableBlock
-            {
-                TextScale = 0.86f,
-                Columns =
-                {
-                    new TableColumn(t.Room, 2.6f),
-                    new TableColumn(t.FloorArea, 0.9f, CellAlign.Right),
-                    new TableColumn(t.Speakers, 0.8f, CellAlign.Right),
-                    new TableColumn("dBA " + t.Mean.ToLowerInvariant() + " (min–max)", 2.0f, CellAlign.Right),
-                    new TableColumn(t.Spread + " dB", 0.9f, CellAlign.Right),
-                    new TableColumn("STI " + t.Mean.ToLowerInvariant() + " (min)", 1.4f, CellAlign.Right),
-                    new TableColumn(t.StiClass, 1.1f),
-                    new TableColumn(t.Rt60At500, 0.9f, CellAlign.Right),
-                    new TableColumn(t.Result, 1.1f)
-                }
-            };
+            List<SummaryColumn> cols = SummaryColumns(o, t);
+            var table = new TableBlock { TextScale = 0.86f };
+            table.Columns.AddRange(cols.Select(c => c.Column));
             foreach (AreaAnalysis a in areas)
             {
                 if (areas.Count > 1)
-                    table.Rows.Add(new TableRow(a.Area.AreaName, "", "", "", "", "", "", "", "") { IsGroup = true });
+                    table.Rows.Add(new TableRow(new[] { a.Area.AreaName }.Concat(Enumerable.Repeat("", cols.Count - 1)).ToArray()) { IsGroup = true });
                 for (int i = 0; i < a.Rooms.Count; i++)
                 {
                     RoomStatistics r = a.Rooms[i];
                     RoomAssessment ra = a.Assessments[i];
-                    ModeStatistics spla = r[VisualizationMode.SPL_A], spl = r[VisualizationMode.SPL], sti = r[VisualizationMode.STI];
-                    var row = table.AddRow(
-                        PlanFigureBuilder.RoomDisplayName(r.Name),
-                        r.AreaM2 > 0 ? r.AreaM2.ToString("0.0", Inv) : "–",
-                        r.SpeakerCount.ToString(Inv),
-                        F1(spla.Mean) + " (" + F1(spla.Min) + "–" + F1(spla.Max) + ")",
-                        F1(spl.Spread),
-                        F2(sti.Mean) + " (" + F2(sti.Min) + ")",
-                        t.StiCategory(sti.Mean),
-                        r.Rt60ByBand[2].ToString("0.00", Inv),
-                        CriteriaEvaluator.OutcomeText(ra.Outcome, t));
-                    row.Status = new CellStatus[9];
-                    row.Status[8] = CriteriaEvaluator.OutcomeStatus(ra.Outcome);
+                    var row = table.AddRow(cols.Select(c => c.Cell(r, ra)).ToArray());
+                    row.Status = cols.Select(c => c.IsResult ? CriteriaEvaluator.OutcomeStatus(ra.Outcome) : CellStatus.None).ToArray();
                 }
             }
             b.Add(table);
@@ -475,12 +488,12 @@ namespace SoundCalcs.Report
                 foreach (VisualizationMode m in RoomStatisticsCalculator.SummaryModes)
                 {
                     ModeStatistics s = r[m];
-                    if (s == null || s.Count == 0) continue;
+                    if (s == null || s.Count == 0 || !o.InTables(m)) continue;
                     var row = stats.AddRow(ReportText.ModeShort(m), ReportText.Format(m, s.Mean), ReportText.Format(m, s.Min),
                         ReportText.Format(m, s.Max), ReportText.Format(m, s.Spread), ReportText.Format(m, s.P10), ReportText.Format(m, s.P90));
                     row.Bold = m == VisualizationMode.SPL_A || m == VisualizationMode.STI;
                 }
-                b.Add(stats);
+                if (stats.Rows.Count > 0) b.Add(stats);
 
                 var dist = new DistributionBlock { Caption = t.StiDistribution };
                 Rgba[] stiColors = StiCategoryColors;
@@ -494,7 +507,7 @@ namespace SoundCalcs.Report
                         Color = stiColors[k]
                     });
                 }
-                b.Add(dist);
+                if (o.InTables(VisualizationMode.STI)) b.Add(dist);
 
                 if (ra.Results.Count > 0)
                 {
@@ -618,46 +631,76 @@ namespace SoundCalcs.Report
         // ------------------------------------------------------------------ CSV
 
         /// <summary>
-        /// The summary as CSV, one row per room, in <paramref name="culture"/>'s number format and list separator (so a
+        /// The summary as CSV, one row per room, with the quantities the options put in the tables (all when
+        /// <paramref name="options"/> is null), in <paramref name="culture"/>'s number format and list separator (so a
         /// spreadsheet in that locale opens it in columns).
         /// </summary>
-        public static string SummaryCsv(List<AreaAnalysis> areas, ReportText t, CultureInfo culture)
+        public static string SummaryCsv(List<AreaAnalysis> areas, ReportText t, CultureInfo culture, ReportOptions options = null)
         {
-            string sep = culture.TextInfo.ListSeparator;
-            if (string.IsNullOrEmpty(sep) || sep == culture.NumberFormat.NumberDecimalSeparator) sep = ";";
+            ReportOptions o = options ?? new ReportOptions();
+            string sep = Separator(culture);
             var sb = new StringBuilder();
             string N(double v, string fmt) => double.IsNaN(v) ? "" : v.ToString(fmt, culture);
             string Q(string s) => s == null ? "" : (s.Contains(sep) || s.Contains("\"") || s.Contains("\n")) ? "\"" + s.Replace("\"", "\"\"") + "\"" : s;
-            sb.AppendLine(string.Join(sep, new[]
+
+            var head = new List<string> { t.Area, t.Room, t.FloorArea, t.Volume, t.Speakers, t.Points };
+            var cells = new List<Func<RoomStatistics, string>>();
+            void Mode(VisualizationMode m, string name, string fmt)
             {
-                t.Area, t.Room, t.FloorArea, t.Volume, t.Speakers, t.Points, "SPL mean dB", "SPL min dB", "SPL max dB",
-                "dBA mean", "dBA min", "dBA max", "STI mean", "STI min", "STI max", "C80 mean dB", "RT60 500 Hz s", t.Result
-            }.Select(Q)));
+                if (!o.InTables(m)) return;
+                head.AddRange(new[] { name + " mean", name + " min", name + " max" });
+                cells.Add(r => N(r[m].Mean, fmt));
+                cells.Add(r => N(r[m].Min, fmt));
+                cells.Add(r => N(r[m].Max, fmt));
+            }
+            Mode(VisualizationMode.SPL, "SPL dB", "0.0");
+            Mode(VisualizationMode.SPL_A, "SPL dBA", "0.0");
+            Mode(VisualizationMode.STI, "STI", "0.00");
+            Mode(VisualizationMode.C80, "C80 dB", "0.0");
+            head.Add("RT60 500 Hz s");
+            head.Add(t.Result);
+            sb.AppendLine(string.Join(sep, head.Select(Q)));
             foreach (AreaAnalysis a in areas)
                 for (int i = 0; i < a.Rooms.Count; i++)
                 {
                     RoomStatistics r = a.Rooms[i];
-                    ModeStatistics spl = r[VisualizationMode.SPL], spla = r[VisualizationMode.SPL_A], sti = r[VisualizationMode.STI], c80 = r[VisualizationMode.C80];
-                    sb.AppendLine(string.Join(sep, new[]
+                    var row = new List<string>
                     {
                         Q(a.Area.AreaName), Q(PlanFigureBuilder.RoomDisplayName(r.Name)), N(r.AreaM2, "0.0"), N(r.VolumeM3, "0"),
-                        r.SpeakerCount.ToString(culture), r.ReceiverCount.ToString(culture),
-                        N(spl.Mean, "0.0"), N(spl.Min, "0.0"), N(spl.Max, "0.0"), N(spla.Mean, "0.0"), N(spla.Min, "0.0"), N(spla.Max, "0.0"),
-                        N(sti.Mean, "0.00"), N(sti.Min, "0.00"), N(sti.Max, "0.00"), N(c80.Mean, "0.0"), N(r.Rt60ByBand[2], "0.00"),
-                        Q(CriteriaEvaluator.OutcomeText(a.Assessments[i].Outcome, t))
-                    }));
+                        r.SpeakerCount.ToString(culture), r.ReceiverCount.ToString(culture)
+                    };
+                    row.AddRange(cells.Select(c => c(r)));
+                    row.Add(N(r.Rt60ByBand[2], "0.00"));
+                    row.Add(Q(CriteriaEvaluator.OutcomeText(a.Assessments[i].Outcome, t)));
+                    sb.AppendLine(string.Join(sep, row));
                 }
             return sb.ToString();
         }
 
-        /// <summary>Every grid point of the included rooms as CSV (area, room, x, y and all quantities).</summary>
-        public static string ValuesCsv(List<AreaAnalysis> areas, ReportText t, CultureInfo culture)
+        /// <summary>Every grid point of the included rooms as CSV (area, room, x, y and the chosen quantities).</summary>
+        public static string ValuesCsv(List<AreaAnalysis> areas, ReportText t, CultureInfo culture, ReportOptions options = null)
         {
-            string sep = culture.TextInfo.ListSeparator;
-            if (string.IsNullOrEmpty(sep) || sep == culture.NumberFormat.NumberDecimalSeparator) sep = ";";
+            ReportOptions o = options ?? new ReportOptions();
+            string sep = Separator(culture);
+            var cols = new List<(string Name, Func<ReceiverResult, string> Cell)>();
+            if (o.InTables(VisualizationMode.SPL)) cols.Add(("SPL dB", x => x.SplDb.ToString("0.0", culture)));
+            if (o.InTables(VisualizationMode.SPL_A)) cols.Add(("SPL dBA", x => x.SplDbA.ToString("0.0", culture)));
+            if (o.InTables(VisualizationMode.STI)) cols.Add(("STI", x => x.Sti.ToString("0.00", culture)));
+            if (o.InTables(VisualizationMode.C80))
+            {
+                cols.Add(("C80 dB", x => x.C80Db.ToString("0.0", culture)));
+                cols.Add(("D50", x => x.D50.ToString("0.00", culture)));
+            }
+            if (o.IncludeOctaveBands)
+                for (int k = 0; k < OctaveBands.Count; k++)
+                {
+                    int band = k;
+                    cols.Add(("SPL " + OctaveBands.Labels[k] + " Hz",
+                        x => (x.SplDbByBand != null && x.SplDbByBand.Length > band ? x.SplDbByBand[band] : double.NaN).ToString("0.0", culture)));
+                }
+
             var sb = new StringBuilder();
-            sb.AppendLine(string.Join(sep, new[] { t.Area, t.Room, "X m", "Y m", "SPL dB", "SPL dBA", "STI", "C80 dB", "D50" }
-                .Concat(OctaveBands.Labels.Select(l => "SPL " + l + " Hz"))));
+            sb.AppendLine(string.Join(sep, new[] { t.Area, t.Room, "X m", "Y m" }.Concat(cols.Select(c => c.Name))));
             foreach (AreaAnalysis a in areas)
                 foreach (RoomStatistics r in a.Rooms)
                     foreach (int i in r.ResultIndices)
@@ -666,14 +709,19 @@ namespace SoundCalcs.Report
                         var cells = new List<string>
                         {
                             a.Area.AreaName.Replace(sep, " "), PlanFigureBuilder.RoomDisplayName(r.Name).Replace(sep, " "),
-                            x.Position.X.ToString("0.00", culture), x.Position.Y.ToString("0.00", culture),
-                            x.SplDb.ToString("0.0", culture), x.SplDbA.ToString("0.0", culture), x.Sti.ToString("0.00", culture),
-                            x.C80Db.ToString("0.0", culture), x.D50.ToString("0.00", culture)
+                            x.Position.X.ToString("0.00", culture), x.Position.Y.ToString("0.00", culture)
                         };
-                        cells.AddRange((x.SplDbByBand ?? new double[7]).Select(v => v.ToString("0.0", culture)));
+                        cells.AddRange(cols.Select(c => c.Cell(x)));
                         sb.AppendLine(string.Join(sep, cells));
                     }
             return sb.ToString();
+        }
+
+        /// <summary>The culture's list separator, or ';' when it clashes with the decimal separator.</summary>
+        static string Separator(CultureInfo culture)
+        {
+            string sep = culture.TextInfo.ListSeparator;
+            return string.IsNullOrEmpty(sep) || sep == culture.NumberFormat.NumberDecimalSeparator ? ";" : sep;
         }
 
         // ------------------------------------------------------------------ helpers

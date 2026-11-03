@@ -120,6 +120,44 @@ namespace SoundCalcs.Tests
         }
 
         [Fact]
+        public void TableQuantities_LimitSummaryStatisticsAndCsv()
+        {
+            var req = Request(Area("1"));
+            req.Options.TableModes = new List<VisualizationMode> { VisualizationMode.SPL, VisualizationMode.STI };
+            req.Options.IncludeOctaveBands = false;
+            ReportBuildResult built = ReportBuilder.Build(req);
+
+            // Summary: SPL and STI columns, no dBA or C80
+            TableBlock summary = built.Document.Blocks.OfType<TableBlock>().First();
+            var headers = summary.Columns.Select(c => c.Header).ToList();
+            Assert.Contains(headers, h => h.StartsWith("SPL dB"));
+            Assert.Contains(headers, h => h.StartsWith("STI"));
+            Assert.DoesNotContain(headers, h => h.StartsWith("dBA") || h.StartsWith("C80"));
+            Assert.All(summary.Rows, r => Assert.Equal(headers.Count, r.Cells.Length));
+
+            // Room statistics: only the SPL and STI rows
+            var stats = built.Document.Blocks.OfType<TableBlock>().Where(tb => tb.Columns.Count > 0 && tb.Columns[0].Header == "Quantity").ToList();
+            Assert.NotEmpty(stats);
+            Assert.All(stats, tb => Assert.Equal(new[] { "SPL dB", "STI" }, tb.Rows.Select(r => r.Cells[0])));
+            Assert.NotEmpty(built.Document.Blocks.OfType<DistributionBlock>());
+
+            var t = new ReportText(ReportLanguage.English);
+            string rooms = ReportBuilder.SummaryCsv(built.Areas, t, CultureInfo.InvariantCulture, req.Options);
+            Assert.Contains("SPL dB mean", rooms);
+            Assert.Contains("STI mean", rooms);
+            Assert.DoesNotContain("dBA", rooms);
+            Assert.DoesNotContain("C80", rooms);
+            string values = ReportBuilder.ValuesCsv(built.Areas, t, CultureInfo.InvariantCulture, req.Options);
+            Assert.Equal("Area,Room,X m,Y m,SPL dB,STI", values.Split('\n')[0].Trim());
+
+            // Without STI in the tables the distribution goes too; criteria are still checked
+            req.Options.TableModes = new List<VisualizationMode> { VisualizationMode.SPL };
+            built = ReportBuilder.Build(req);
+            Assert.Empty(built.Document.Blocks.OfType<DistributionBlock>());
+            Assert.Equal(RoomOutcome.Pass, built.Areas[0].Assessments[0].Outcome);
+        }
+
+        [Fact]
         public void SummaryCsv_UsesTheCulturesSeparators()
         {
             var areas = ReportBuilder.Analyse(Request(Area("1")));
