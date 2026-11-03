@@ -233,7 +233,8 @@ namespace SoundCalcs.Report
                 {
                     Style = ParagraphStyle.Note,
                     Text = (areas.Count > 1 ? a.Area.AreaName + ": " : "") +
-                           string.Format(Inv, t.AreaSummaryLine, a.Rooms.Count, a.PassCount, a.FailCount, a.NotAssessedCount)
+                           string.Format(Inv, a.Rooms.Count == 1 ? t.AreaSummaryLineOne : t.AreaSummaryLine,
+                               a.Rooms.Count, a.PassCount, a.FailCount, a.NotAssessedCount)
                 });
         }
 

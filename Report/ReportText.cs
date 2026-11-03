@@ -56,8 +56,11 @@ namespace SoundCalcs.Report
             StiClass = et ? "STI klass" : "STI class";
             Rt60At500 = et ? "T60 500 Hz" : "RT60 500 Hz";
             AreaSummaryLine = et
-                ? "{0} ruumi, {1} vastab, {2} ei vasta, {3} hindamata."
+                ? "{0} ruumi: {1} vastab, {2} ei vasta, {3} hindamata."
                 : "{0} rooms: {1} pass, {2} fail, {3} not assessed.";
+            AreaSummaryLineOne = et
+                ? "1 ruum: {1} vastab, {2} ei vasta, {3} hindamata."
+                : "1 room: {1} pass, {2} fail, {3} not assessed.";
 
             AreaHeading = et ? "Ala: {0}" : "Area: {0}";
             Level = et ? "Korrus" : "Level";
@@ -212,7 +215,7 @@ namespace SoundCalcs.Report
         public readonly string ReportTitle, ReportSubtitle, Contents, PageOf, Project, ProjectNumber, Client, Company, Author,
             CheckedBy, Revision, Date, Description, Model, AreasInReport, CoverNote;
         public readonly string Summary, SummaryIntro, Area, Room, FloorArea, Volume, Speakers, Points, Mean, Min, Max, Spread,
-            P10, P90, Result, Pass, Fail, NotAssessed, NoCriteria, StiClass, Rt60At500, AreaSummaryLine;
+            P10, P90, Result, Pass, Fail, NotAssessed, NoCriteria, StiClass, Rt60At500, AreaSummaryLine, AreaSummaryLineOne;
         public readonly string AreaHeading, Level, Calculated, Quality, QualityDraft, QualityFull, Receivers, RoomsCount,
             SpeakerLine, LineBoth, Outdated, NotCalculated, Notes, PlanCaption, IsolinesCaption;
         public readonly string Inputs, GridSpacing, ReceiverHeight, BoundaryOffset, Temperature, Humidity, Occupants, FloorFinish,
